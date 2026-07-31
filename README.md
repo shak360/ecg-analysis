@@ -17,8 +17,18 @@ overlay is meaningless. Registration is what makes the comparison valid.
 ## Privacy
 
 Everything runs in the browser. There is no backend and no upload — tracings never leave the machine,
-and nothing is written to disk between sessions. `sample_ECGs/` is gitignored, as are `*.pdf`,
-`*.png`, and `*.jpg` anywhere in the tree, so real patient data cannot be committed by accident.
+and nothing is written to disk between sessions.
+
+`sample_ECGs/` is gitignored, as are `*.pdf`, `*.png`, and `*.jpg` anywhere in the tree, so real
+patient data cannot be committed by accident. **Gitignoring is not the same as being safe**, though:
+it governs git and nothing else. Agents, shell commands, and search tools read the working tree
+regardless, so `.claude/settings.json` additionally denies reads of `sample_ECGs/**`.
+
+**Until the de-identifying ingest exists, do not put real patient ECGs anywhere inside this
+repository.** The synthetic fixtures cover the pipeline; the first real file the system touches
+should be one it can strip identifiers from at the door. See
+[docs/decisions/0002-real-ecg-handling.md](docs/decisions/0002-real-ecg-handling.md) for the incident
+that motivated this.
 
 ## Status
 

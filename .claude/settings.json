@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./sample_ECGs/**)",
+      "Read(//Users/svisagan/Programs/ecg-analysis/sample_ECGs/**)",
+      "Glob(./sample_ECGs/**)",
+      "Grep(./sample_ECGs/**)",
+      "Bash(cat:*sample_ECGs*)",
+      "Bash(head:*sample_ECGs*)",
+      "Bash(tail:*sample_ECGs*)",
+      "Bash(strings:*sample_ECGs*)",
+      "Bash(pdftotext:*sample_ECGs*)",
+      "Bash(python3:*sample_ECGs*)",
+      "Bash(deno:*sample_ECGs*)",
+      "Bash(node:*sample_ECGs*)",
+      "Bash(cp:*sample_ECGs*)"
+    ]
+  }
+}
