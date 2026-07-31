@@ -477,6 +477,19 @@ impl StudyAnalysis {
         self.index_of(lead).map(|i| self.sigmas[i].clone())
     }
 
+    /// ST level at the J point for one lead, millivolts; NaN when unmeasurable.
+    ///
+    /// A scalar accessor alongside `measurements_json`, so callers that want one
+    /// number do not have to parse the whole report.
+    pub fn st_j_mv(&self, lead: &str) -> f64 {
+        self.lead_measurements()
+            .iter()
+            .find(|l| l.lead == lead)
+            .and_then(|l| l.st_j_mv)
+            .map(|v| v as f64)
+            .unwrap_or(f64::NAN)
+    }
+
     /// Beats combined into this lead's ensemble.
     pub fn beats_used(&self, lead: &str) -> u32 {
         self.index_of(lead).map(|i| self.n_used[i]).unwrap_or(0)
@@ -553,6 +566,25 @@ fn opt(v: Option<f32>) -> String {
 
 fn optd(v: Option<f64>) -> String {
     v.filter(|x| x.is_finite()).map(|x| format!("{x:.2}")).unwrap_or_else(|| "null".into())
+}
+
+/// Leads whose ST change cleared both the detection limit and the clinical
+/// threshold.
+///
+/// The same gate `st_deltas_json` applies, as a plain list — this is the
+/// question the acceptance test asks, and the one a caller usually wants.
+#[wasm_bindgen]
+pub fn notable_st_leads(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> Vec<String> {
+    let (a, b) = (reference.lead_measurements(), comparison.lead_measurements());
+    LEAD_ORDER
+        .iter()
+        .filter_map(|name| {
+            let ra = a.iter().find(|l| l.lead == *name)?;
+            let rb = b.iter().find(|l| l.lead == *name)?;
+            let d = st_delta(ra, rb, reference.bias_mv, comparison.bias_mv);
+            d.notable.then_some(d.lead)
+        })
+        .collect()
 }
 
 /// Serial ST deltas between two studies, gated by their combined uncertainty.

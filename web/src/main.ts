@@ -8,7 +8,8 @@
  * parsed in-process; there is no upload path in this code, and none should ever
  * be added — these are patient tracings.
  */
-import init, { compare_studies, st_deltas_json } from "../wasm/ecg_core.js";
+import { createEngine } from "./engine/client.ts";
+import type { ComparisonSnapshot, Measures, StDelta } from "./engine/protocol.ts";
 import {
   analyse,
   type Assumptions,
@@ -31,10 +32,32 @@ const $ = <T extends HTMLElement>(id: string): T => {
   return el as T;
 };
 
+const engine = createEngine();
+
 let studies: Study[] = [];
 const selected = new Set<string>();
 let lastLeads: OverlayLead[] = [];
 let lastAnchor = DEFAULT_OVERLAY.anchorIndex;
+
+/**
+ * The comparison the screen is currently showing, kept so that a change of
+ * colour or view can redraw without going back to the engine.
+ *
+ * Colour is deliberately not part of what the engine is asked for. The picker
+ * fires on every pointer move while a user drags it, and each of those used to
+ * re-run the whole registration.
+ */
+let lastSnapshot: ComparisonSnapshot | null = null;
+
+/**
+ * Guards against an older comparison landing after a newer one.
+ *
+ * Every request takes a ticket; a reply whose ticket is stale is dropped. With
+ * the compute on another thread, "the user changed the selection while a
+ * comparison was in flight" stops being hypothetical, and the failure it causes
+ * — the screen settling on the *previous* selection — is silent.
+ */
+let compareTicket = 0;
 
 const assumptions = (): Assumptions => ({
   mmPerSec: Number($<HTMLSelectElement>("speed").value),
@@ -56,7 +79,7 @@ async function accept(files: FileList): Promise<void> {
   // Analyse sequentially: pdf.js is single-worker, and a progressive list reads
   // better than everything appearing at once after a stall.
   for (const s of incoming) {
-    await analyse(s);
+    await analyse(s, engine);
     if (!s.error && selected.size < 2) selected.add(s.id);
     renderStudies();
     compare();
@@ -67,6 +90,10 @@ function removeStudy(id: string): void {
   studies = studies.filter((s) => s.id !== id);
   selected.delete(id);
   studies = placeOnTimeline(studies);
+  // The engine holds this study's WASM handle until told otherwise. Dropping it
+  // from the list is not enough: over a session of loading and clearing files,
+  // the difference is a heap that stays flat and one that only grows.
+  void engine.release([id]);
   renderStudies();
   compare();
 }
@@ -99,7 +126,7 @@ function renderStudies(): void {
     box.type = "checkbox";
     box.className = "study__check";
     box.checked = selected.has(s.id);
-    box.disabled = !!s.error || !s.analysis;
+    box.disabled = !!s.error || !s.summary;
     box.setAttribute("aria-label", `Include ${s.fileName} in the comparison`);
     box.addEventListener("change", () => {
       if (box.checked) selected.add(s.id);
@@ -118,7 +145,9 @@ function renderStudies(): void {
     swatch.setAttribute("aria-label", `Trace colour for ${s.fileName}`);
     swatch.addEventListener("input", () => {
       s.colour = swatch.value;
-      compare();
+      // Colour is drawn, not computed. Repainting the snapshot we already have
+      // keeps a drag at frame rate instead of re-registering on every event.
+      if (lastSnapshot) paintComparison(lastSnapshot);
     });
 
     const body = document.createElement("div");
@@ -152,17 +181,17 @@ function renderStudies(): void {
     if (s.error) {
       status.classList.add("study__status--error");
       status.textContent = s.error;
-    } else if (!s.analysis) {
+    } else if (!s.summary) {
       status.textContent = "analysing…";
     } else {
-      const hr = s.analysis.hr_bpm;
+      const hr = s.summary.hrBpm;
       const bits = [
-        `${s.analysis.lead_names.length} leads`,
+        `${s.summary.leadNames.length} leads`,
         Number.isFinite(hr) ? `${hr.toFixed(0)} bpm` : "rate n/a",
       ];
-      if (s.identity && !s.identity.passed) bits.push("identity check failed");
+      if (s.summary.identityPassed === false) bits.push("identity check failed");
       status.textContent = bits.join(" · ");
-      if (s.identity && !s.identity.passed) {
+      if (s.summary.identityPassed === false) {
         status.classList.add("study__status--warn");
       }
     }
@@ -201,18 +230,30 @@ function renderStudies(): void {
 // Comparison
 // ---------------------------------------------------------------------------
 
+/**
+ * Ask the engine for a comparison, then paint it.
+ *
+ * Split in two on purpose: `compare` decides *what* to compare and awaits the
+ * engine; `paintComparison` turns a snapshot into pixels using only main-thread
+ * state. That split is what lets a colour change repaint the last snapshot
+ * instead of recomputing it.
+ */
 function compare(): void {
-  const chosen = studies.filter((s) => selected.has(s.id) && s.analysis && !s.error);
+  const chosen = studies.filter((s) => selected.has(s.id) && s.summary && !s.error);
   const placeholder = $("view-placeholder");
   const panel = $("view-panel");
-  const report = $("report");
 
   if (chosen.length < 2) {
+    lastSnapshot = null;
+    lastLeads = [];
+    lastPrintout = [];
+    compareTicket++;
     placeholder.hidden = false;
     panel.hidden = true;
     placeholder.querySelector("p")!.textContent = chosen.length === 1
       ? "Select one more study to compare."
       : "Load two or more ECGs to compare them.";
+    render();
     return;
   }
   placeholder.hidden = true;
@@ -220,158 +261,103 @@ function compare(): void {
 
   // The earliest selected study is the reference; every later one is registered
   // against it. Comparing each to the index rather than to its predecessor
-  // shows cumulative change, which is what a series is usually read for — an
+  // shows cumulative change, which is what a series is usually read for -- an
   // evolving infarct is a story about distance from baseline.
-  const [refMaybe, ...rest] = chosen;
-  const ref = refMaybe!;
-  const registrations = rest.map((s) => ({
-    study: s,
-    leads: compare_studies(ref.analysis, s.analysis),
-  }));
+  const ids = chosen.map((s) => s.id);
+  const ticket = ++compareTicket;
 
-  lastAnchor = ref.analysis.qrs_onset >= 0
-    ? ref.analysis.qrs_onset
-    : ref.analysis.anchor_index;
+  void engine.compare(ids).then(
+    (snapshot) => {
+      if (ticket !== compareTicket) return;
+      lastSnapshot = snapshot;
+      paintComparison(snapshot);
+    },
+    (err: unknown) => {
+      if (ticket !== compareTicket) return;
+      $("report").textContent = `Comparison failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`;
+    },
+  );
+}
 
-  const leadNames: string[] = registrations[0]?.leads.map((c) => c.lead) ??
-    Array.from(ref.analysis.lead_names);
+/** Turn a snapshot plus current UI state into everything the canvases read. */
+function paintComparison(snapshot: ComparisonSnapshot): void {
+  // The snapshot is positional; recover the studies it refers to. A study
+  // removed while the comparison was in flight simply drops out.
+  const byId = new Map(studies.map((s) => [s.id, s]));
+  const chosen = snapshot.studyIds.map((id) => byId.get(id)).filter((s): s is Study => !!s);
+  if (chosen.length !== snapshot.studyIds.length) return;
 
-  lastLeads = leadNames.map((lead) => {
-    const refBeat = ref.analysis.beat(lead);
-    if (!refBeat) {
-      return { lead, traces: [], unavailable: true } satisfies OverlayLead;
-    }
+  const ref = chosen[0]!;
 
-    const traces = [{
-      label: ref.fileName,
-      colour: ref.colour,
-      samples: refBeat,
-      sigma: ref.analysis.sigma(lead),
-      beatsUsed: ref.analysis.beats_used(lead),
-    }];
-    const differences: OverlayDifference[] = [];
-    let worstRms = 0;
-    let morphologyChanged = false;
-
-    registrations.forEach((reg, k) => {
-      const c = reg.leads.find((x) => x.lead === lead);
-      if (!c) return;
-      traces.push({
-        label: reg.study.fileName,
-        colour: reg.study.colour,
-        samples: c.aligned_mv,
-        sigma: reg.study.analysis.sigma(lead),
-        beatsUsed: reg.study.analysis.beats_used(lead),
-      });
-      differences.push({
-        samples: c.difference_mv,
-        traceIndex: k + 1,
-        rmsMv: c.rms_difference_mv,
-      });
-      worstRms = Math.max(worstRms, c.rms_difference_mv);
-      if (c.morphology_changed) morphologyChanged = true;
-    });
-
+  lastLeads = snapshot.leads.map((l): OverlayLead => {
+    if (l.unavailable) return { lead: l.lead, traces: [], unavailable: true };
     return {
-      lead,
-      traces,
-      differences,
-      rmsDifferenceMv: worstRms,
-      morphologyChanged,
-    } satisfies OverlayLead;
+      lead: l.lead,
+      traces: l.traces.map((tr, i) => ({
+        label: chosen[i]?.fileName ?? "",
+        colour: chosen[i]?.colour ?? "#888",
+        samples: tr.samples,
+        sigma: tr.sigma ?? undefined,
+        beatsUsed: tr.beatsUsed,
+      })),
+      differences: l.differences.map((d): OverlayDifference => ({
+        samples: d.samples,
+        traceIndex: d.traceIndex,
+        rmsMv: d.rmsMv,
+      })),
+      rmsDifferenceMv: l.rmsDifferenceMv,
+      morphologyChanged: l.morphologyChanged,
+    };
   });
-  lastColumnSeconds = ref.layout?.columnSeconds ?? 2.5;
-  lastPrintout = chosen.map((s) => {
-    const leadMap = new Map<string, Float32Array>();
-    for (const name of leadNames) {
-      const sig = s.analysis.lead_signal(name);
-      if (sig) leadMap.set(name, sig);
-    }
-    return {
-      label: s.fileName,
-      colour: s.colour,
-      leads: leadMap,
-      rhythm: s.analysis.rhythm_signal ?? null,
-    } satisfies PrintoutStudy;
-  });
+
+  lastAnchor = snapshot.anchorIndex;
+  lastColumnSeconds = snapshot.columnSeconds;
+  lastPrintout = snapshot.printouts.map((p, i) => ({
+    label: chosen[i]?.fileName ?? "",
+    colour: chosen[i]?.colour ?? "#888",
+    leads: p.leads,
+    rhythm: p.rhythm,
+  } satisfies PrintoutStudy));
+
   render();
 
-  const measures = chosen.map((s) =>
-    JSON.parse(s.analysis.measurements_json()) as Measures
-  );
-  const deltaSets = registrations.map((reg) =>
-    (JSON.parse(st_deltas_json(ref.analysis, reg.study.analysis)) as { leads: StDelta[] }).leads
-  );
-  renderMeasurements(chosen, measures, deltaSets);
+  const measures = chosen.map((s) => s.summary!.measurements);
+  renderMeasurements(chosen, measures, snapshot.deltaSets);
 
   const lines: string[] = [
-    `reference  ${ref.fileName}   ${fmtHr(ref.analysis.hr_bpm)}`,
+    `reference  ${ref.fileName}   ${fmtHr(ref.summary!.hrBpm)}`,
   ];
-  registrations.forEach((reg) => {
-    const gap = ref.offsetSec != null && reg.study.offsetSec != null
-      ? `+${formatInterval(reg.study.offsetSec - ref.offsetSec)}`
+  chosen.slice(1).forEach((s) => {
+    const gap = ref.offsetSec != null && s.offsetSec != null
+      ? `+${formatInterval(s.offsetSec - ref.offsetSec)}`
       : "interval unknown";
-    lines.push(
-      `           ${reg.study.fileName}   ${fmtHr(reg.study.analysis.hr_bpm)}   ${gap}`,
-    );
+    lines.push(`           ${s.fileName}   ${fmtHr(s.summary!.hrBpm)}   ${gap}`);
   });
-  lines.push("", `leads      ${leadNames.length} compared across ${chosen.length} studies`, "");
+  lines.push(
+    "",
+    `leads      ${snapshot.leads.length} compared across ${chosen.length} studies`,
+    "",
+  );
 
   // Rank by the largest change any study in the series shows, so a lead that
   // moved late is not buried by averaging.
-  const worst = leadNames
-    .map((lead) => ({
-      lead,
-      rms: Math.max(
-        0,
-        ...registrations.map((r) =>
-          r.leads.find((x) => x.lead === lead)?.rms_difference_mv ?? 0
-        ),
-      ),
-    }))
+  const worst = [...snapshot.leads]
+    .map((l) => ({ lead: l.lead, rms: l.rmsDifferenceMv }))
     .sort((a, b) => b.rms - a.rms);
 
   lines.push("largest shape difference by lead, across the series:");
   for (const w of worst) {
-    lines.push(`  ${w.lead.padEnd(4)} Δrms ${w.rms.toFixed(3)} mV`);
+    lines.push(`  ${w.lead.padEnd(4)} \u0394rms ${w.rms.toFixed(3)} mV`);
   }
 
-  report.textContent = lines.join("\n");
+  $("report").textContent = lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
 // Measurements
 // ---------------------------------------------------------------------------
-
-interface LeadMeasure {
-  lead: string;
-  stJ: number | null;
-  stJ60: number | null;
-  r: number | null;
-  s: number | null;
-  q: number | null;
-  t: number | null;
-  sigmaSt: number | null;
-  note: string | null;
-}
-
-interface Measures {
-  hr: number | null;
-  qrs: number | null;
-  qt: number | null;
-  qtcF: number | null;
-  qtcB: number | null;
-  axis: number | null;
-  leads: LeadMeasure[];
-}
-
-interface StDelta {
-  lead: string;
-  delta: number | null;
-  mdc: number | null;
-  notable: boolean;
-  belowLimit: boolean;
-}
 
 const num = (v: number | null, digits: number, unit: string) =>
   v === null ? "\u2014" : `${v.toFixed(digits)}${unit ? " " + unit : ""}`;
@@ -396,9 +382,9 @@ function renderMeasurements(
 
   const calRows = studies.map((s) =>
     `<div><strong>${s.fileName}</strong> \u2014 ${
-      s.calibration?.source === "pulse"
-        ? `${s.calibration.mmPerMv} mm/mV measured from the calibration pulse`
-        : `${s.calibration?.mmPerMv ?? "?"} mm/mV assumed \u2014 no pulse found`
+      s.summary?.calibration?.source === "pulse"
+        ? `${s.summary.calibration.mmPerMv} mm/mV measured from the calibration pulse`
+        : `${s.summary?.calibration?.mmPerMv ?? "?"} mm/mV assumed \u2014 no pulse found`
     }</div>`
   ).join("");
 
@@ -554,6 +540,7 @@ function wireIngest(): void {
   });
 
   $("clear-all").addEventListener("click", () => {
+    void engine.release(studies.map((s) => s.id));
     studies = [];
     selected.clear();
     lastLeads = [];
@@ -598,13 +585,13 @@ async function reanalyse(): Promise<void> {
   const a = assumptions();
   for (const s of studies) {
     s.assumptions = a;
-    s.analysis = null;
+    s.summary = null;
     s.error = null;
     s.warnings = [];
   }
   renderStudies();
   for (const s of studies) {
-    await analyse(s);
+    await analyse(s, engine);
     renderStudies();
   }
   compare();
@@ -621,8 +608,10 @@ function wireTheme(): void {
 async function boot(): Promise<void> {
   const status = $("engine-status");
   try {
-    await init();
-    status.textContent = "Engine ready";
+    await engine.ready();
+    status.textContent = engine.where === "worker"
+      ? "Engine ready \u00b7 worker"
+      : "Engine ready \u00b7 main thread";
     status.classList.add("statusbar__item--ok");
   } catch (err) {
     status.textContent = `Engine failed to start: ${

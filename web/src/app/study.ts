@@ -4,22 +4,10 @@
  * Shared by the app and the comparison harness so there is one ingestion path
  * rather than two that can drift.
  */
-import { StudyBuilder } from "../../wasm/ecg_core.js";
-import { extractPageGeometry } from "../ingest/pdf-paths.ts";
-import { classifyPolylines } from "../ingest/classify.ts";
-import { type Calibration, calibrateGain } from "../ingest/calibrate.ts";
-import {
-  checkIdentities,
-  detectLayout,
-  type Layout,
-  sampleUniform,
-  toPhysical,
-} from "../ingest/layout.ts";
+import type { Engine } from "../engine/client.ts";
+import type { Assumptions, StudySummary } from "../engine/protocol.ts";
 
-export interface Assumptions {
-  mmPerSec: number;
-  mmPerMv: number;
-}
+export type { Assumptions };
 
 export interface Study {
   id: string;
@@ -28,12 +16,15 @@ export interface Study {
   assumptions: Assumptions;
   /** Acquisition instant, when the filename encodes one. */
   acquiredAt: Date | null;
-  layout: Layout | null;
-  // deno-lint-ignore no-explicit-any
-  analysis: any | null;
-  identity: ReturnType<typeof checkIdentities> | null;
-  /** Gain as measured from the calibration pulse, or the assumed fallback. */
-  calibration: Calibration | null;
+  /**
+   * The analysed result, as plain data.
+   *
+   * This used to be a live `StudyAnalysis` handle into the WASM heap, which the
+   * UI reached into during rendering. It cannot be, now that the heap lives on
+   * another thread — and it should not have been: the engine now hands back a
+   * snapshot, and the draw path is a pure function of it.
+   */
+  summary: StudySummary | null;
   warnings: string[];
   error: string | null;
   /** Position on the shared timeline, seconds from the index study. */
@@ -135,10 +126,7 @@ export async function loadFile(file: File, assumptions: Assumptions): Promise<St
     bytes: new Uint8Array(await file.arrayBuffer()),
     assumptions,
     acquiredAt: parseTimestamp(file.name),
-    layout: null,
-    analysis: null,
-    identity: null,
-    calibration: null,
+    summary: null,
     warnings: [],
     error: null,
     offsetSec: null,
@@ -147,80 +135,16 @@ export async function loadFile(file: File, assumptions: Assumptions): Promise<St
 }
 
 /**
- * Extract, lay out, and analyse a study in place.
+ * Analyse a study in place, via the engine.
  *
  * Failures are recorded on the study rather than thrown, so one unreadable file
- * does not take the others down with it.
+ * does not take down the others loaded alongside it. The ingest itself now
+ * lives in `engine/core.ts`, on whichever thread the engine chose.
  */
-export function analyse(study: Study): Promise<Study> {
-  return (async () => {
-    try {
-      // pdf.js transfers the buffer it is given, so hand it a copy and keep the
-      // original for a re-run under different assumptions.
-      const geom = await extractPageGeometry(study.bytes.slice(), 1, 1);
-      if (!geom.isVector) {
-        study.error = geom.imageOps > 0
-          ? `This is a raster PDF (${geom.imageOps} embedded images). The image ` +
-            `pipeline is not built yet, so its tracing cannot be recovered.`
-          : `No vector geometry found in this PDF.`;
-        return study;
-      }
-
-      const cls = classifyPolylines(geom.polylines);
-      if (!cls.gridPitch) {
-        study.error = `No grid lattice detected, so the millimetre scale is unknown. ` +
-          `Refusing to guess — every amplitude would inherit the error.`;
-        return study;
-      }
-
-      const a = study.assumptions;
-
-      // Read the gain from the calibration pulse where one exists. The pulse is
-      // 1 mV whatever the cart's gain setting was, so its height measures
-      // mm/mV directly -- strictly better than trusting the user's assumption.
-      const cal = calibrateGain(cls.other, cls.gridPitch, a.mmPerMv);
-      study.calibration = cal;
-      const mmPerMv = cal.mmPerMv;
-
-      const layout = detectLayout(cls.traces, cls.gridPitch, a.mmPerSec);
-      study.layout = layout;
-      study.warnings = [...layout.warnings, ...cal.notes];
-
-      const sampled = new Map<string, Float32Array>();
-      for (const p of layout.panels) {
-        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, mmPerMv);
-        sampled.set(p.lead, sampleUniform(t, v));
-      }
-      study.identity = checkIdentities(sampled);
-      study.warnings.push(...study.identity.notes);
-
-      const builder = new StudyBuilder();
-      for (const p of layout.panels) {
-        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, mmPerMv);
-        builder.add_lead(p.lead, t, v, p.timeOffsetSec);
-      }
-      if (layout.rhythm) {
-        const { t, v } = toPhysical(layout.rhythm, cls.gridPitch, a.mmPerSec, mmPerMv);
-        builder.set_rhythm(t, v);
-      } else {
-        study.warnings.push("No rhythm strip found — rate and beat timing unavailable.");
-      }
-
-      study.analysis = builder.analyze(true);
-      // Panel exclusions and edge-dropped beats come back from the engine. A
-      // lead missing from the comparison because its timing did not match the
-      // rhythm strip must be visible, or its absence reads as "unchanged".
-      study.warnings.push(...(study.analysis.warnings as string[]));
-      // Hand the measured calibration quality to the engine so it can propagate
-      // gain error into every amplitude's uncertainty.
-      study.analysis.set_calibration_quality(cal.relativeUncertainty, 0.002);
-      if (study.analysis.lead_names.length === 0) {
-        study.error = "No lead produced a usable beat. The tracing may be too short " +
-          "or too noisy to digitize.";
-      }
-    } catch (err) {
-      study.error = err instanceof Error ? err.message : String(err);
-    }
-    return study;
-  })();
+export async function analyse(study: Study, engine: Engine): Promise<Study> {
+  const { summary, error } = await engine.analyse(study.id, study.bytes, study.assumptions);
+  study.summary = summary;
+  study.error = error;
+  study.warnings = summary?.warnings ?? [];
+  return study;
 }

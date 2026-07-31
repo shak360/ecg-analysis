@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig, type Plugin } from "vite";
 import { readFile } from "node:fs/promises";
 import { resolve, extname, normalize } from "node:path";
