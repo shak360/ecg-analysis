@@ -1,0 +1,35 @@
+{
+  "name": "ecg-analysis",
+  "version": "0.1.0",
+  "tasks": {
+    "wasm": "wasm-pack build crates/ecg-core --release --target web --out-dir ../../web/wasm --out-name ecg_core",
+    "wasm:dev": "wasm-pack build crates/ecg-core --dev --target web --out-dir ../../web/wasm --out-name ecg_core",
+    "bundle": "deno run -A tools/bundle.ts",
+    "fixtures": "deno run -A tools/make-fixtures.ts",
+    "dev": "deno task wasm:dev && deno task bundle && deno run -A tools/dev.ts",
+    "build": "deno task wasm && deno run -A tools/bundle.ts --minify",
+    "test": "deno task test:rust && deno task test:web",
+    "test:rust": "cargo test --workspace",
+    "test:web": "deno test -A test/",
+    "fmt": "deno fmt && cargo fmt --all",
+    "check": "deno check tools/ web/src/ && cargo clippy --workspace --all-targets"
+  },
+  "imports": {
+    "@std/http": "jsr:@std/http@^1.0.13",
+    "@std/assert": "jsr:@std/assert@^1.0.10",
+    "@std/fs": "jsr:@std/fs@^1.0.8",
+    "@std/path": "jsr:@std/path@^1.0.8"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": ["web/wasm/", "web/vendor/", "dist/", "target/"]
+  },
+  "lint": {
+    "exclude": ["web/wasm/", "web/vendor/", "dist/", "target/"]
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

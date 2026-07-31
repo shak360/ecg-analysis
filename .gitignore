@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------------------
+# PATIENT DATA — NEVER COMMIT
+# ---------------------------------------------------------------------------
+# sample_ECGs/ holds real ECGs. Everything in it stays local, always.
+sample_ECGs/
+**/private/
+
+# Any loose tracing that lands elsewhere in the tree. Deliberately broad:
+# a false positive costs one `git add -f`, a false negative leaks PHI.
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.tif
+*.tiff
+*.bmp
+*.dcm
+*.scp
+*.edf
+*.bdf
+*.hea
+*.dat
+
+# Synthetic fixtures contain no patient data, but they are build artifacts —
+# ~3 MB of PDFs and sample dumps reproducible with `deno task fixtures`.
+test/fixtures/synthetic/
+
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+dist/
+target/
+web/wasm/
+node_modules/
+
+# ---------------------------------------------------------------------------
+# Editor / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+*.log
+.vscode/
+.idea/

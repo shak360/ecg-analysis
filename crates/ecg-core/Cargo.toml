@@ -1,0 +1,11 @@
+[package]
+name = "ecg-core"
+version.workspace = true
+edition.workspace = true
+description = "Signal processing, digitization, and registration for serial ECG comparison."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
