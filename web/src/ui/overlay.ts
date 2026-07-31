@@ -16,6 +16,8 @@
 /** One study's contribution to a lead panel. */
 export interface OverlayTrace {
   label: string;
+  /** Colour this study is drawn in; set by the study list. */
+  colour: string;
   /** Ensemble beat, millivolts, on the standard frame. */
   samples: Float32Array;
   /** Per-sample standard deviation, millivolts. Infinite entries are skipped. */
@@ -306,8 +308,8 @@ function drawPanel(
   // The beats.
   ctx.lineWidth = 1.4;
   ctx.lineJoin = "round";
-  lead.traces.forEach((tr, k) => {
-    ctx.strokeStyle = traceColour(k, lead.traces.length);
+  lead.traces.forEach((tr) => {
+    ctx.strokeStyle = tr.colour;
     ctx.beginPath();
     for (let i = 0; i < tr.samples.length; i++) {
       const px = xOf(i), py = yOf(tr.samples[i]!);
@@ -333,9 +335,12 @@ function drawPanel(
       // A single comparison gets the dedicated difference colour; a series is
       // drawn in each study's own colour, so a trace above and its difference
       // below are visibly the same study.
+      // A single comparison gets the dedicated difference colour; a series is
+      // drawn in each study's own colour, so a trace above and its difference
+      // below are visibly the same study.
       ctx.strokeStyle = lead.differences.length === 1
         ? th.diff
-        : traceColour(diff.traceIndex, lead.traces.length);
+        : (lead.traces[diff.traceIndex]?.colour ?? th.diff);
       ctx.beginPath();
       for (let i = 0; i < diff.samples.length; i++) {
         const px = xOf(i), py = dY(diff.samples[i]!);

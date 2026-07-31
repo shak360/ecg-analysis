@@ -151,12 +151,14 @@ async function run(): Promise<void> {
           ? [
             {
               label: ref.label,
+              colour: "#1b4a8f",
               samples: refBeat,
               sigma: ref.analysis.sigma(c.lead),
               beatsUsed: ref.analysis.beats_used(c.lead),
             },
             {
               label: cmp.label,
+              colour: "#c2410c",
               samples: c.aligned_mv,
               sigma: cmp.analysis.sigma(c.lead),
               beatsUsed: cmp.analysis.beats_used(c.lead),

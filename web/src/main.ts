@@ -17,6 +17,7 @@ import {
   placeOnTimeline,
   type Study,
 } from "./app/study.ts";
+import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
 import {
   DEFAULT_OVERLAY,
   drawOverlay,
@@ -107,6 +108,19 @@ function renderStudies(): void {
       compare();
     });
 
+    // The colour lives beside the study it identifies, rather than in a legend
+    // that has to be read back and forth against the canvas.
+    const swatch = document.createElement("input");
+    swatch.type = "color";
+    swatch.className = "study__colour";
+    swatch.value = s.colour;
+    swatch.title = `Colour for ${s.fileName}`;
+    swatch.setAttribute("aria-label", `Trace colour for ${s.fileName}`);
+    swatch.addEventListener("input", () => {
+      s.colour = swatch.value;
+      compare();
+    });
+
     const body = document.createElement("div");
     body.className = "study__body";
 
@@ -178,7 +192,7 @@ function renderStudies(): void {
     del.setAttribute("aria-label", `Remove ${s.fileName}`);
     del.addEventListener("click", () => removeStudy(s.id));
 
-    li.append(box, body, del);
+    li.append(box, swatch, body, del);
     list.appendChild(li);
   });
 }
@@ -230,6 +244,7 @@ function compare(): void {
 
     const traces = [{
       label: ref.fileName,
+      colour: ref.colour,
       samples: refBeat,
       sigma: ref.analysis.sigma(lead),
       beatsUsed: ref.analysis.beats_used(lead),
@@ -243,6 +258,7 @@ function compare(): void {
       if (!c) return;
       traces.push({
         label: reg.study.fileName,
+        colour: reg.study.colour,
         samples: c.aligned_mv,
         sigma: reg.study.analysis.sigma(lead),
         beatsUsed: reg.study.analysis.beats_used(lead),
@@ -263,6 +279,20 @@ function compare(): void {
       rmsDifferenceMv: worstRms,
       morphologyChanged,
     } satisfies OverlayLead;
+  });
+  lastColumnSeconds = ref.layout?.columnSeconds ?? 2.5;
+  lastPrintout = chosen.map((s) => {
+    const leadMap = new Map<string, Float32Array>();
+    for (const name of leadNames) {
+      const sig = s.analysis.lead_signal(name);
+      if (sig) leadMap.set(name, sig);
+    }
+    return {
+      label: s.fileName,
+      colour: s.colour,
+      leads: leadMap,
+      rhythm: s.analysis.rhythm_signal ?? null,
+    } satisfies PrintoutStudy;
   });
   render();
 
@@ -456,15 +486,26 @@ function renderMeasurements(
 
 const fmtHr = (v: number) => Number.isFinite(v) ? `${v.toFixed(0)} bpm` : "rate n/a";
 
-/** Translate the layout selector into overlay options. */
-function layoutChoice(): { arrangement: "standard" | "grid"; columns: number } {
-  const v = $<HTMLSelectElement>("cols").value;
-  return v === "standard"
-    ? { arrangement: "standard", columns: 4 }
-    : { arrangement: "grid", columns: Number(v) };
-}
+let lastPrintout: PrintoutStudy[] = [];
+let lastColumnSeconds = 2.5;
 
 function render(): void {
+  const printoutMode = $<HTMLSelectElement>("view").value === "printout";
+  $("overlay").hidden = printoutMode;
+  $("printout").hidden = !printoutMode;
+  $("beat-key").hidden = printoutMode;
+
+  if (printoutMode) {
+    if (lastPrintout.length) {
+      drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
+        ...DEFAULT_PRINTOUT,
+        mmPerMv: Number($<HTMLSelectElement>("scale").value),
+        columnSeconds: lastColumnSeconds,
+      });
+    }
+    return;
+  }
+
   if (!lastLeads.length) return;
   drawOverlay($<HTMLCanvasElement>("overlay"), lastLeads, {
     ...DEFAULT_OVERLAY,
@@ -472,7 +513,8 @@ function render(): void {
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     showDifference: $<HTMLInputElement>("show-diff").checked,
     showSigma: $<HTMLInputElement>("show-sigma").checked,
-    ...layoutChoice(),
+    arrangement: "standard",
+    columns: 4,
   });
 }
 
@@ -520,8 +562,29 @@ function wireIngest(): void {
   });
 }
 
+/**
+ * Redraw whenever a canvas actually changes size.
+ *
+ * Drawing once on show is not enough: a canvas unhidden in the same frame still
+ * reports its pre-layout width, and `requestAnimationFrame` does not fire at all
+ * while the document is hidden — so a deferred draw can simply never happen. An
+ * observer fires when the size is real, whenever that turns out to be.
+ */
+function observeCanvases(): void {
+  if (typeof ResizeObserver === "undefined") return;
+  let last = "";
+  const ro = new ResizeObserver((entries) => {
+    const key = entries.map((e) => `${e.contentRect.width}`).join("|");
+    if (key === last) return;
+    last = key;
+    render();
+  });
+  ro.observe($("overlay"));
+  ro.observe($("printout"));
+}
+
 function wireControls(): void {
-  for (const id of ["scale", "cols", "show-diff", "show-sigma"]) {
+  for (const id of ["scale", "view", "show-diff", "show-sigma"]) {
     $(id).addEventListener("change", render);
   }
   // Changing the assumed calibration invalidates every analysis, so re-run.
@@ -572,6 +635,7 @@ async function boot(): Promise<void> {
 
 wireIngest();
 wireControls();
+observeCanvases();
 wireTheme();
 renderStudies();
 void boot();

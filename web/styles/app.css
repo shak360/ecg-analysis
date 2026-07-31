@@ -479,3 +479,14 @@ ol, ul { padding: 0; list-style: none; }
 }
 .mtable .chg { color: var(--text-muted); font-size: 10.5px; }
 .mtable tr.notable .chg { color: var(--warn); font-weight: 650; }
+
+/* Per-study colour control, beside the study it identifies. */
+.study__colour {
+  flex: none; width: 20px; height: 20px; margin-top: 1px;
+  padding: 0; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: none; cursor: pointer;
+}
+.study__colour::-webkit-color-swatch-wrapper { padding: 2px; }
+.study__colour::-webkit-color-swatch { border: none; border-radius: 3px; }
+
+.panel--view #printout { width: 100%; display: block; }

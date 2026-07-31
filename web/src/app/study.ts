@@ -38,6 +38,29 @@ export interface Study {
   error: string | null;
   /** Position on the shared timeline, seconds from the index study. */
   offsetSec: number | null;
+  /** Colour this study is drawn in, everywhere. User-changeable. */
+  colour: string;
+}
+
+/**
+ * Default trace colours, oldest to newest.
+ *
+ * Ordered so that *consecutive* entries are maximally separable, not so that the
+ * full list forms a smooth ramp. Two studies is the common case, and a ramp puts
+ * two near-identical blues on screen for it. Blue against orange is the pairing
+ * that survives both greyscale and the common colour-vision deficiencies.
+ */
+export const STUDY_COLOURS = [
+  "#1b4a8f", // deep blue
+  "#c2410c", // burnt orange
+  "#3fb0a5", // teal
+  "#8b2f8b", // purple
+  "#d98c1f", // amber
+  "#2e7fbf", // light blue
+] as const;
+
+export function defaultColour(index: number): string {
+  return STUDY_COLOURS[index % STUDY_COLOURS.length]!;
 }
 
 let nextId = 1;
@@ -119,6 +142,7 @@ export async function loadFile(file: File, assumptions: Assumptions): Promise<St
     warnings: [],
     error: null,
     offsetSec: null,
+    colour: defaultColour(nextId - 2),
   };
 }
 

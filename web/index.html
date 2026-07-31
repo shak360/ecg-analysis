@@ -106,13 +106,10 @@
             </select>
           </label>
           <label class="field field--inline">
-            <span>Layout</span>
-            <select id="cols">
-              <option value="standard" selected>Standard 3&times;4</option>
-              <option value="2">2 columns</option>
-              <option value="3">3 columns</option>
-              <option value="4">4 columns</option>
-              <option value="6">6 columns</option>
+            <span>View</span>
+            <select id="view">
+              <option value="beats" selected>Beats (3&times;4)</option>
+              <option value="printout">Full ECG</option>
             </select>
           </label>
           <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
@@ -130,12 +127,12 @@
 
       <div id="view-panel" hidden>
         <canvas id="overlay"></canvas>
-        <div class="key">
-          <span><i class="swatch" style="background:#1b4a8f"></i> earlier</span>
-          <span><i class="swatch" style="background:#c2410c"></i> later</span>
-          <span><i class="swatch" style="background:#7c3aed"></i> difference</span>
+        <canvas id="printout" hidden></canvas>
+        <div class="key" id="beat-key">
           <span>shaded band = beat-to-beat spread</span>
           <span>dashed line = alignment anchor (QRS onset)</span>
+          <span>lower lane = difference from the reference</span>
+          <span>trace colours are set per study, on the left</span>
         </div>
         <div id="measurements" class="measurements"></div>
         <pre id="report" class="report"></pre>

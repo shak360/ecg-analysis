@@ -115,6 +115,8 @@ impl StudyBuilder {
         };
 
         let mut names = Vec::new();
+        let mut signals: Vec<Vec<f32>> = Vec::new();
+        let mut offsets: Vec<f64> = Vec::new();
         let mut beats: Vec<Vec<f32>> = Vec::new();
         let mut sigmas: Vec<Vec<f32>> = Vec::new();
         let mut n_used: Vec<u32> = Vec::new();
@@ -154,6 +156,10 @@ impl StudyBuilder {
                 continue;
             };
             names.push(lead.name.clone());
+            // The conditioned continuous panel, kept so the printout view can
+            // draw the recording as it was printed rather than an ensemble beat.
+            signals.push(measurement.clone());
+            offsets.push(lead.time_offset_s);
             beats.push(eb.v_mv.clone());
             sigmas.push(eb.sigma_mv.clone());
             n_used.push(eb.n_used as u32);
@@ -167,6 +173,9 @@ impl StudyBuilder {
 
         StudyAnalysis {
             names,
+            signals,
+            offsets,
+            rhythm: strip.clone().unwrap_or_default(),
             beats,
             sigmas,
             n_used,
@@ -191,6 +200,12 @@ impl Default for StudyBuilder {
 #[wasm_bindgen]
 pub struct StudyAnalysis {
     names: Vec<String>,
+    /// Conditioned continuous panel per lead, millivolts at `FS`.
+    signals: Vec<Vec<f32>>,
+    /// Where each panel's window starts within the record, seconds.
+    offsets: Vec<f64>,
+    /// The conditioned rhythm strip.
+    rhythm: Vec<f32>,
     beats: Vec<Vec<f32>>,
     sigmas: Vec<Vec<f32>>,
     n_used: Vec<u32>,
@@ -249,6 +264,25 @@ impl StudyAnalysis {
     /// One lead's ensemble beat: `FRAME_LEN` samples in millivolts.
     pub fn beat(&self, lead: &str) -> Option<Vec<f32>> {
         self.index_of(lead).map(|i| self.beats[i].clone())
+    }
+
+    /// One lead's conditioned continuous panel, millivolts at `FS`.
+    ///
+    /// This is what the printout view draws: the recording as it ran, not a
+    /// combined beat.
+    pub fn lead_signal(&self, lead: &str) -> Option<Vec<f32>> {
+        self.index_of(lead).map(|i| self.signals[i].clone())
+    }
+
+    /// Where a lead's panel starts within the record, seconds.
+    pub fn lead_offset_s(&self, lead: &str) -> f64 {
+        self.index_of(lead).map(|i| self.offsets[i]).unwrap_or(0.0)
+    }
+
+    /// The conditioned rhythm strip, millivolts at `FS`.
+    #[wasm_bindgen(getter)]
+    pub fn rhythm_signal(&self) -> Vec<f32> {
+        self.rhythm.clone()
     }
 
     /// One lead's per-sample standard deviation, millivolts.
