@@ -11,8 +11,10 @@ overlay is meaningless. Registration is what makes the comparison valid.
 
 > **Not a medical device.** This tool assists visual comparison of ECG tracings for research and
 > educational use. Measurements are derived from digitized images and carry uncertainty that depends
-> on source quality. It does not provide diagnosis or interpretation. All findings must be verified
-> against the original tracings by a qualified clinician.
+> on source quality. Suggested labels are automated pattern-matching against published criteria — a
+> starting point for your own reading, never a diagnosis. They are applied only when you accept them,
+> they omit conditions this tool cannot assess, and an absent suggestion means nothing. All findings
+> must be verified against the original tracings by a qualified clinician.
 
 ## Privacy
 
