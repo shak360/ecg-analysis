@@ -198,9 +198,14 @@ fn template_window(fs_hz: f64) -> (usize, usize) {
 
 /// Build the ensemble beat for one lead.
 ///
-/// `anchors` are per-beat alignment points in `sig` — QRS onset where available,
-/// R peak otherwise. `sigma_prov_mv` is the provenance noise floor, used to keep
-/// the reported σ from claiming better precision than the source supports.
+/// `anchors` are per-beat alignment points in `sig`. In the assembled pipeline
+/// these are always **R-peak** times: `wasm_api` derives them from
+/// `project_strip_beats` and its two-pass logic re-anchors the detrend baseline
+/// rather than the frame. This said "QRS onset where available", which was never
+/// true of any live caller.
+///
+/// `sigma_prov_mv` is the provenance noise floor, used to keep the reported σ
+/// from claiming better precision than the source supports.
 pub fn ensemble(
     sig: &[f32],
     fs_hz: f64,

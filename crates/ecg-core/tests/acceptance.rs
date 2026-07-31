@@ -177,6 +177,61 @@ fn generate_wide(hr_bpm: f64, st: &[(&str, f32)], qrs_scale: f64) -> Vec<(String
     generate_scaled(hr_bpm, st, 0.0, 3, qrs_scale)
 }
 
+/// A beat whose terminal QRS is delayed, leaving onset and the T wave alone.
+///
+/// This is the shape `serial/register.rs`'s anchoring argument is about: new
+/// RBBB displaces the J point relative to the R peak without moving QRS onset.
+fn beat_value_terminal(dt: f64, b: Beat, s_delay_s: f64) -> f32 {
+    gaussian(dt, -0.17, 0.022, b.p)
+        + gaussian(dt, -0.026, 0.007, b.q)
+        + gaussian(dt, 0.0, 0.011, b.r)
+        + gaussian(dt, 0.028 + s_delay_s, 0.011 + s_delay_s * 0.5, b.s)
+        + gaussian(dt, 0.21, 0.048, b.t)
+}
+
+/// A record whose terminal QRS is delayed by `s_delay_s` seconds.
+fn generate_terminal(hr_bpm: f64, s_delay_s: f64) -> Vec<(String, Vec<f32>)> {
+    let n = (DURATION_S * FS) as usize;
+    let rr = 60.0 / hr_bpm;
+    let mut r_peaks = Vec::new();
+    let mut t0 = 0.4;
+    while t0 < DURATION_S {
+        r_peaks.push(t0);
+        t0 += rr;
+    }
+
+    let independent = ["I", "II", "V1", "V2", "V3", "V4", "V5", "V6"];
+    let mut out: Vec<(String, Vec<f32>)> = Vec::new();
+    for lead in independent {
+        let b = morphology(lead);
+        let sig: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / FS;
+                r_peaks
+                    .iter()
+                    .filter(|&&rp| (t - rp) > -0.45 && (t - rp) < 0.55)
+                    .map(|&rp| beat_value_terminal(t - rp, b, s_delay_s))
+                    .sum()
+            })
+            .collect();
+        out.push((lead.to_string(), sig));
+    }
+
+    let get = |name: &str, out: &Vec<(String, Vec<f32>)>| {
+        out.iter().find(|(l, _)| l == name).unwrap().1.clone()
+    };
+    let i = get("I", &out);
+    let ii = get("II", &out);
+    let derive = |f: &dyn Fn(f32, f32) -> f32| -> Vec<f32> {
+        (0..n).map(|k| f(i[k], ii[k])).collect()
+    };
+    out.push(("III".into(), derive(&|a, b| b - a)));
+    out.push(("aVR".into(), derive(&|a, b| -(a + b) / 2.0)));
+    out.push(("aVL".into(), derive(&|a, b| a - b / 2.0)));
+    out.push(("aVF".into(), derive(&|a, b| b - a / 2.0)));
+    out
+}
+
 /// A causal one-pole high-pass, for the negative control.
 ///
 /// This is the filter the research disqualified: it fabricates J-point offset of
@@ -489,5 +544,48 @@ fn an_unchanged_qrs_produces_no_conduction_finding() {
     assert!(
         ecg_core::serial_findings(&a, &b).is_empty(),
         "unchanged conduction must not be reported as changed"
+    );
+}
+
+/// R-peak frame anchoring does not fabricate ST the way the docs claim.
+///
+/// `serial/register.rs` argues that anchoring frames on the R peak rather than
+/// QRS onset manufactures 100-300 uV of apparent ST shift, reasoning that a
+/// 20 ms displacement of the J point across the ST upstroke (5-15 uV/ms) must
+/// produce that much error.
+///
+/// Measured on this pipeline, it does not. A terminal-QRS delay that moves the
+/// J point 14 ms relative to R produces 12.5 uV, twenty times less. The reason
+/// the arithmetic does not apply: ST is sampled at the *measured* J point, which
+/// is a global fiducial and tracks the morphology, not at a fixed frame index.
+/// The frame anchor sets where the beat is drawn, not where it is measured.
+///
+/// Nothing is injected here, so the true serial delta is zero and every
+/// microvolt reported is fabricated.
+#[test]
+fn r_peak_anchoring_does_not_fabricate_st() {
+    let a = build_study(&generate_terminal(68.0, 0.0), None);
+    let b = build_study(&generate_terminal(68.0, 0.008), None);
+
+    // Sanity: the fixture really did move the J point relative to R.
+    let r2j = |s: &ecg_core::StudyAnalysis| {
+        (s.qrs_offset() - s.anchor_index() as i32) as f64 / FS * 1000.0
+    };
+    assert!(
+        r2j(&b) - r2j(&a) >= 10.0,
+        "the fixture must displace the J point to test anything: {:.0} -> {:.0} ms",
+        r2j(&a),
+        r2j(&b)
+    );
+
+    let worst = LEADS
+        .iter()
+        .map(|l| delta_st(&a, &b, l).abs())
+        .fold(0.0f64, f64::max);
+    assert!(
+        worst < 0.030,
+        "a displaced J point fabricated {:.1} uV of ST; if this has grown, the \
+         anchoring argument in serial/register.rs may have become true",
+        worst * 1000.0
     );
 }

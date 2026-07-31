@@ -13,7 +13,16 @@
 /// resampling — every comparison, measurement, and stored signal is on this grid.
 pub const FS: f64 = 500.0;
 
-/// Seconds, frame start relative to the global QRS onset.
+/// Seconds, frame start relative to the **R peak**.
+///
+/// This said "relative to the global QRS onset" and was wrong: `ensemble` is
+/// called with R-peak times, so index `r_index(FS)` = 200 ms into the frame is
+/// the R peak, and the measured QRS onset sits about 30 ms before it. The
+/// two-pass logic in `wasm_api` re-anchors the detrend baseline, not the frame.
+///
+/// `fiducial::r_index` derives from this constant, and the QRS clamps are
+/// evaluated relative to it — so this is the definition the whole frame geometry
+/// hangs off, and changing it is not a local edit.
 pub const FRAME_T0_S: f64 = -0.200;
 
 /// Frame length in samples, so the frame ends at +0.600 s.
