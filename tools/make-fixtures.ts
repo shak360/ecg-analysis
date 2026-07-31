@@ -1,7 +1,7 @@
 /**
  * Generates the synthetic fixture set.
  *
- *   deno run -A tools/make-fixtures.ts
+ *   npm run fixtures
  *
  * The centrepiece is a *serial pair*: a baseline study and a follow-up that
  * differs by one precisely known change — 0.25 mV of ST elevation across V2-V4,
@@ -12,12 +12,14 @@
  * registration the app must report roughly 0.25 mV of ST change in V2, V3 and V4
  * and essentially none elsewhere. Anything else is a bug with a known answer.
  */
+import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { generateEcg, LEAD_IDS, type LeadId } from "./synth/ecg.ts";
 import { renderPrintoutPdf } from "./synth/pdf.ts";
 
-const OUT = new URL("../test/fixtures/synthetic/", import.meta.url);
+const OUT = fileURLToPath(new URL("../test/fixtures/synthetic/", import.meta.url));
 
-await Deno.mkdir(OUT, { recursive: true });
+await mkdir(OUT, { recursive: true });
 
 interface Fixture {
   name: string;
@@ -86,7 +88,7 @@ for (const fx of FIXTURES) {
     headerText: fx.headerText,
   });
 
-  await Deno.writeFile(new URL(`${fx.name}.pdf`, OUT), pdf);
+  await writeFile(`${OUT}${fx.name}.pdf`, pdf);
 
   // Ground truth alongside the PDF: the exact samples that were drawn, so a test
   // can compare recovered millivolts against intended millivolts sample by sample.
@@ -102,10 +104,7 @@ for (const fx of FIXTURES) {
       LEAD_IDS.map((l) => [l, Array.from(ecg.leads[l], (v) => Math.round(v * 1e4) / 1e4)]),
     ),
   };
-  await Deno.writeFile(
-    new URL(`${fx.name}.truth.json`, OUT),
-    new TextEncoder().encode(JSON.stringify(truth)),
-  );
+  await writeFile(`${OUT}${fx.name}.truth.json`, JSON.stringify(truth));
 
   summary.push({
     name: fx.name,

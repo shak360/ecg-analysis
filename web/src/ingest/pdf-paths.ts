@@ -42,14 +42,48 @@ export interface PageGeometry {
  */
 const MIN_VECTOR_POLYLINES = 8;
 
+/**
+ * Look up a pdf.js operator code, failing loudly if the name has moved.
+ *
+ * `OPS` is an untyped name→code map, so a renamed operator would silently
+ * resolve to `undefined`, compare equal to nothing, and leave extraction
+ * returning an empty page rather than an error. Since the operator table is a
+ * pinned contract with the vendored build, a mismatch is a build problem and
+ * should say so.
+ */
+function op(name: string): number {
+  const code = OPS[name];
+  if (typeof code !== "number") {
+    throw new Error(
+      `pdf.js operator "${name}" is missing. The vendored build ` +
+        `(web/vendor/pdfjs/VERSION) has changed its operator table; extraction ` +
+        `would otherwise silently recover nothing.`,
+    );
+  }
+  return code;
+}
+
+const OP_SAVE = op("save");
+const OP_RESTORE = op("restore");
+const OP_TRANSFORM = op("transform");
+const OP_SET_LINE_WIDTH = op("setLineWidth");
+const OP_SET_STROKE_RGB = op("setStrokeRGBColor");
+const OP_SET_STROKE_GRAY = op("setStrokeGray");
+const OP_CONSTRUCT_PATH = op("constructPath");
+const OP_IMAGE = [
+  op("paintImageXObject"),
+  op("paintInlineImageXObject"),
+  op("paintImageXObjectRepeat"),
+];
+
 /** Ops that paint a stroke, and therefore produce a visible trace. */
 const STROKE_OPS = new Set<number>([
-  OPS.stroke,
-  OPS.closeStroke,
-  OPS.fillStroke,
-  OPS.eoFillStroke,
-  OPS.closeFillStroke,
-  OPS.closeEOFillStroke,
+  op("stroke"),
+  op("closeStroke"),
+  op("fillStroke"),
+  op("eoFillStroke"),
+  op("closeFillStroke"),
+  op("closeEOFillStroke"),
 ]);
 
 /** Walk an already-fetched operator list. Split out so it can be driven in tests. */
@@ -72,31 +106,36 @@ export function walkOperatorList(
     const fn = fnArray[i]!;
     const args = argsArray[i];
 
+    if (OP_IMAGE.includes(fn)) {
+      imageOps++;
+      continue;
+    }
+
     switch (fn) {
-      case OPS.save:
+      case OP_SAVE:
         stack.push({ ...gs, ctm: [...gs.ctm] as Matrix });
         break;
 
-      case OPS.restore: {
+      case OP_RESTORE: {
         const prev = stack.pop();
         if (prev) gs = prev;
         break;
       }
 
-      case OPS.transform:
+      case OP_TRANSFORM:
         if (args) gs.ctm = Util.transform(gs.ctm, args as number[]);
         break;
 
-      case OPS.setLineWidth:
+      case OP_SET_LINE_WIDTH:
         if (args) gs.lineWidth = args[0] as number;
         break;
 
-      case OPS.setStrokeRGBColor:
+      case OP_SET_STROKE_RGB:
         // pdf.js hands the canvas a ready-made CSS colour string.
         if (args) gs.stroke = typeof args[0] === "string" ? args[0] : null;
         break;
 
-      case OPS.setStrokeGray: {
+      case OP_SET_STROKE_GRAY: {
         const v = args?.[0];
         if (typeof v === "number") {
           const c = Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
@@ -107,13 +146,8 @@ export function walkOperatorList(
         break;
       }
 
-      case OPS.paintImageXObject:
-      case OPS.paintInlineImageXObject:
-      case OPS.paintImageXObjectRepeat:
-        imageOps++;
-        break;
 
-      case OPS.constructPath: {
+      case OP_CONSTRUCT_PATH: {
         // args = [paintOp, [pathData], minMax]
         const paintOp = args?.[0] as number | undefined;
         if (paintOp === undefined || !STROKE_OPS.has(paintOp)) break;

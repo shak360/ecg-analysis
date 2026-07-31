@@ -70,6 +70,25 @@ narrows to that line's regions.
 
 ## Regions per rule
 
+### Sources, and the split between them
+
+Two kinds of source, used for different things, because they are good at
+different things:
+
+- **Where to look** — LITFL (Life in the Fast Lane) and the electrocardiographers'
+  consensus statements. These describe which leads and which part of the complex
+  a clinician actually points at for a given pattern, which is precisely what a
+  highlight needs and precisely what guideline documents omit.
+- **The numbers** — AHA/ACCF/HRS Parts I–V and UDMI-4, as already tabulated in
+  `docs/engineering-spec.md` §6.
+
+Where the two disagree, the guideline sets the threshold and LITFL sets the
+region. LITFL is an excellent teaching resource and a secondary one; it must not
+move a diagnostic cutoff, and a region drawn from it does not license a number
+that the guideline criteria did not support.
+
+### The table
+
 Drawn from the criteria in `docs/engineering-spec.md` §6. **Needs clinical
 review before shipping** — this is the part where being wrong is quiet.
 

@@ -1,0 +1,30 @@
+{
+  "name": "ecg-analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Client-side registration and comparison of serial ECG tracings recovered from PDFs, scans, and photos. Not a medical device.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "wasm": "wasm-pack build crates/ecg-core --release --target web --out-dir ../../web/wasm --out-name ecg_core",
+    "wasm:dev": "wasm-pack build crates/ecg-core --dev --target web --out-dir ../../web/wasm --out-name ecg_core",
+    "fixtures": "vite-node tools/make-fixtures.ts",
+    "dev": "npm run wasm:dev && vite",
+    "build": "npm run wasm && vite build",
+    "preview": "vite preview",
+    "test": "npm run test:rust && npm run test:web",
+    "test:rust": "cargo test --workspace",
+    "test:web": "vitest run",
+    "check": "tsc --noEmit && cargo clippy --workspace --all-targets",
+    "postinstall": "echo 'Reminder: install with --ignore-scripts. See docs/decisions/0006-node-toolchain.md'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.3",
+    "vite-node": "^2.1.8",
+    "vitest": "^2.1.8"
+  }
+}

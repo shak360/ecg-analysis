@@ -11,7 +11,6 @@
  * depends only on paper speed, which the grid pitch pins exactly.
  */
 import init, { analyze_strip } from "../wasm/ecg_core.js";
-import { getDocument } from "./pdfjs.js";
 import { extractPageGeometry, POINTS_PER_MM } from "./ingest/pdf-paths.ts";
 import { classifyPolylines } from "./ingest/classify.ts";
 import type { Polyline } from "./ingest/path-decode.ts";
@@ -24,7 +23,6 @@ const $ = <T extends HTMLElement>(id: string): T => {
 
 /** Sample flags mirrored from `dsp::resample::flags`. */
 const FLAG_INTERPOLATED = 1 << 0;
-const FLAG_EDGE = 1 << 1;
 
 interface Assumptions {
   mmPerSec: number;
@@ -90,7 +88,6 @@ interface Analysis {
 }
 
 const CLASS_COLOUR = ["#0b6ab8", "#c2410c", "#a16207", "#6b7280"];
-const CLASS_NAME = ["normal", "premature", "post-ectopic", "unclassified"];
 
 function drawStrip(canvas: HTMLCanvasElement, a: Analysis, mmPerSec: number, mmPerMv: number) {
   const dpr = globalThis.devicePixelRatio || 1;
