@@ -17,7 +17,12 @@ import {
   placeOnTimeline,
   type Study,
 } from "./app/study.ts";
-import { DEFAULT_OVERLAY, drawOverlay, type OverlayLead } from "./ui/overlay.ts";
+import {
+  DEFAULT_OVERLAY,
+  drawOverlay,
+  type OverlayDifference,
+  type OverlayLead,
+} from "./ui/overlay.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -199,74 +204,114 @@ function compare(): void {
   placeholder.hidden = true;
   panel.hidden = false;
 
-  const [ref, ...rest] = chosen;
-  const cmp = rest[0]!;
-  const comparisons = compare_studies(ref!.analysis, cmp.analysis);
+  // The earliest selected study is the reference; every later one is registered
+  // against it. Comparing each to the index rather than to its predecessor
+  // shows cumulative change, which is what a series is usually read for — an
+  // evolving infarct is a story about distance from baseline.
+  const [refMaybe, ...rest] = chosen;
+  const ref = refMaybe!;
+  const registrations = rest.map((s) => ({
+    study: s,
+    leads: compare_studies(ref.analysis, s.analysis),
+  }));
 
-  lastAnchor = ref!.analysis.qrs_onset >= 0
-    ? ref!.analysis.qrs_onset
-    : ref!.analysis.anchor_index;
+  lastAnchor = ref.analysis.qrs_onset >= 0
+    ? ref.analysis.qrs_onset
+    : ref.analysis.anchor_index;
 
-  lastLeads = comparisons.map((c) => {
-    const refBeat = ref!.analysis.beat(c.lead);
+  const leadNames: string[] = registrations[0]?.leads.map((c) => c.lead) ??
+    Array.from(ref.analysis.lead_names);
+
+  lastLeads = leadNames.map((lead) => {
+    const refBeat = ref.analysis.beat(lead);
+    if (!refBeat) {
+      return { lead, traces: [], unavailable: true } satisfies OverlayLead;
+    }
+
+    const traces = [{
+      label: ref.fileName,
+      samples: refBeat,
+      sigma: ref.analysis.sigma(lead),
+      beatsUsed: ref.analysis.beats_used(lead),
+    }];
+    const differences: OverlayDifference[] = [];
+    let worstRms = 0;
+    let morphologyChanged = false;
+
+    registrations.forEach((reg, k) => {
+      const c = reg.leads.find((x) => x.lead === lead);
+      if (!c) return;
+      traces.push({
+        label: reg.study.fileName,
+        samples: c.aligned_mv,
+        sigma: reg.study.analysis.sigma(lead),
+        beatsUsed: reg.study.analysis.beats_used(lead),
+      });
+      differences.push({
+        samples: c.difference_mv,
+        traceIndex: k + 1,
+        rmsMv: c.rms_difference_mv,
+      });
+      worstRms = Math.max(worstRms, c.rms_difference_mv);
+      if (c.morphology_changed) morphologyChanged = true;
+    });
+
     return {
-      lead: c.lead,
-      traces: refBeat
-        ? [
-          {
-            label: ref!.fileName,
-            samples: refBeat,
-            sigma: ref!.analysis.sigma(c.lead),
-            beatsUsed: ref!.analysis.beats_used(c.lead),
-          },
-          {
-            label: cmp.fileName,
-            samples: c.aligned_mv,
-            sigma: cmp.analysis.sigma(c.lead),
-            beatsUsed: cmp.analysis.beats_used(c.lead),
-          },
-        ]
-        : [],
-      difference: c.difference_mv,
-      rmsDifferenceMv: c.rms_difference_mv,
-      morphologyChanged: c.morphology_changed,
-      unavailable: !refBeat,
+      lead,
+      traces,
+      differences,
+      rmsDifferenceMv: worstRms,
+      morphologyChanged,
     } satisfies OverlayLead;
   });
   render();
 
-  const measA = JSON.parse(ref!.analysis.measurements_json()) as Measures;
-  const measB = JSON.parse(cmp.analysis.measurements_json()) as Measures;
-  const deltas =
-    (JSON.parse(st_deltas_json(ref!.analysis, cmp.analysis)) as { leads: StDelta[] }).leads;
-  renderMeasurements(ref!, cmp, measA, measB, deltas);
-
-  const gap = ref!.offsetSec != null && cmp.offsetSec != null
-    ? formatInterval(cmp.offsetSec - ref!.offsetSec)
-    : null;
-  const ranked = [...comparisons].sort((a, b) =>
-    b.rms_difference_mv - a.rms_difference_mv
+  const measures = chosen.map((s) =>
+    JSON.parse(s.analysis.measurements_json()) as Measures
   );
+  const deltaSets = registrations.map((reg) =>
+    (JSON.parse(st_deltas_json(ref.analysis, reg.study.analysis)) as { leads: StDelta[] }).leads
+  );
+  renderMeasurements(chosen, measures, deltaSets);
 
-  report.textContent = [
-    `earlier    ${ref!.fileName}   ${fmtHr(ref!.analysis.hr_bpm)}`,
-    `later      ${cmp.fileName}   ${fmtHr(cmp.analysis.hr_bpm)}`,
-    gap ? `interval   ${gap} between them` : `interval   unknown (no date in filenames)`,
-    `leads      ${comparisons.length} compared`,
-    ``,
-    `shape difference by lead, largest first:`,
-    ...ranked.map((c) =>
-      `  ${c.lead.padEnd(4)} Δrms ${c.rms_difference_mv.toFixed(3)} mV   ` +
-      `ρ ${c.rho_qrs.toFixed(3)}` +
-      (c.morphology_changed ? "   [QRS morphology differs — not aligned]" : "")
-    ),
-    ``,
-    chosen.length > 2
-      ? `note       ${chosen.length} selected; showing the first two. ` +
-        `Multi-study overlay is not built yet.`
-      : "",
-  ].filter(Boolean).join("\n");
+  const lines: string[] = [
+    `reference  ${ref.fileName}   ${fmtHr(ref.analysis.hr_bpm)}`,
+  ];
+  registrations.forEach((reg) => {
+    const gap = ref.offsetSec != null && reg.study.offsetSec != null
+      ? `+${formatInterval(reg.study.offsetSec - ref.offsetSec)}`
+      : "interval unknown";
+    lines.push(
+      `           ${reg.study.fileName}   ${fmtHr(reg.study.analysis.hr_bpm)}   ${gap}`,
+    );
+  });
+  lines.push("", `leads      ${leadNames.length} compared across ${chosen.length} studies`, "");
+
+  // Rank by the largest change any study in the series shows, so a lead that
+  // moved late is not buried by averaging.
+  const worst = leadNames
+    .map((lead) => ({
+      lead,
+      rms: Math.max(
+        0,
+        ...registrations.map((r) =>
+          r.leads.find((x) => x.lead === lead)?.rms_difference_mv ?? 0
+        ),
+      ),
+    }))
+    .sort((a, b) => b.rms - a.rms);
+
+  lines.push("largest shape difference by lead, across the series:");
+  for (const w of worst) {
+    lines.push(`  ${w.lead.padEnd(4)} Δrms ${w.rms.toFixed(3)} mV`);
+  }
+
+  report.textContent = lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Measurements
+// ---------------------------------------------------------------------------
 
 interface LeadMeasure {
   lead: string;
@@ -279,6 +324,7 @@ interface LeadMeasure {
   sigmaSt: number | null;
   note: string | null;
 }
+
 interface Measures {
   hr: number | null;
   qrs: number | null;
@@ -288,6 +334,7 @@ interface Measures {
   axis: number | null;
   leads: LeadMeasure[];
 }
+
 interface StDelta {
   lead: string;
   delta: number | null;
@@ -297,87 +344,113 @@ interface StDelta {
 }
 
 const num = (v: number | null, digits: number, unit: string) =>
-  v === null ? "—" : `${v.toFixed(digits)} ${unit}`;
+  v === null ? "\u2014" : `${v.toFixed(digits)}${unit ? " " + unit : ""}`;
 
 /**
- * Render the measurements table.
+ * Render the measurements table for a series.
  *
  * Every amplitude carries its uncertainty and every delta its detection limit.
  * A number without an interval is this product's main way of causing harm, so
  * the two are emitted together or not at all.
+ *
+ * Deltas are against the first study, not the preceding one: a series is read
+ * for distance from baseline, and chaining differences would let three small
+ * unflagged steps hide one large real change.
  */
 function renderMeasurements(
-  ref: Study,
-  cmp: Study,
-  a: Measures,
-  b: Measures,
-  deltas: StDelta[],
+  studies: Study[],
+  measures: Measures[],
+  deltaSets: StDelta[][],
 ): void {
   const el = $("measurements");
-  const calNote = (s: Study) =>
-    s.calibration?.source === "pulse"
-      ? `${s.calibration.mmPerMv} mm/mV measured from the calibration pulse`
-      : `${s.calibration?.mmPerMv ?? "?"} mm/mV assumed — no pulse found`;
 
-  const globals = [
-    ["Heart rate", num(a.hr, 0, "bpm"), num(b.hr, 0, "bpm")],
-    ["QRS duration", num(a.qrs, 0, "ms"), num(b.qrs, 0, "ms")],
-    ["QT", num(a.qt, 0, "ms"), num(b.qt, 0, "ms")],
-    ["QTc (Fridericia)", num(a.qtcF, 0, "ms"), num(b.qtcF, 0, "ms")],
-    ["QTc (Bazett)", num(a.qtcB, 0, "ms"), num(b.qtcB, 0, "ms")],
-    ["Frontal axis", num(a.axis, 0, "°"), num(b.axis, 0, "°")],
+  const calRows = studies.map((s) =>
+    `<div><strong>${s.fileName}</strong> \u2014 ${
+      s.calibration?.source === "pulse"
+        ? `${s.calibration.mmPerMv} mm/mV measured from the calibration pulse`
+        : `${s.calibration?.mmPerMv ?? "?"} mm/mV assumed \u2014 no pulse found`
+    }</div>`
+  ).join("");
+
+  const head = studies.map((s, i) =>
+    `<th scope="col">${i === 0 ? "ref \u00b7 " : ""}${s.fileName.replace(/\.pdf$/i, "")}</th>`
+  ).join("");
+
+  const globalRows: [string, (m: Measures) => string][] = [
+    ["Heart rate", (m) => num(m.hr, 0, "bpm")],
+    ["QRS duration", (m) => num(m.qrs, 0, "ms")],
+    ["QT", (m) => num(m.qt, 0, "ms")],
+    ["QTc (Fridericia)", (m) => num(m.qtcF, 0, "ms")],
+    ["QTc (Bazett)", (m) => num(m.qtcB, 0, "ms")],
+    ["Frontal axis", (m) => num(m.axis, 0, "\u00b0")],
   ];
+  const globals = globalRows.map(([name, fn]) =>
+    `<tr><th scope="row">${name}</th>${measures.map((m) => `<td>${fn(m)}</td>`).join("")}</tr>`
+  ).join("");
 
-  const dmap = new Map(deltas.map((d) => [d.lead, d]));
-  const rows = a.leads.map((la) => {
-    const lb = b.leads.find((x) => x.lead === la.lead);
-    const d = dmap.get(la.lead);
-    const cls = d?.notable ? "notable" : d?.belowLimit ? "unresolvable" : "";
-    const deltaCell = !d || d.delta === null
-      ? "—"
-      : d.belowLimit
-      ? `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)} <span class="lim">not resolvable (limit ±${
-        d.mdc === null ? "∞" : d.mdc.toFixed(2)
-      })</span>`
-      : `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)} <span class="lim">± ${
-        d.mdc?.toFixed(3) ?? "?"
-      }</span>`;
-    return `<tr class="${cls}">
-      <th scope="row">${la.lead}</th>
-      <td>${num(la.stJ, 3, "")}</td>
-      <td>${num(lb?.stJ ?? null, 3, "")}</td>
-      <td class="delta">${deltaCell}</td>
-      <td>${num(la.r, 2, "")}</td>
-      <td>${num(lb?.r ?? null, 2, "")}</td>
-    </tr>`;
+  const leads = measures[0]?.leads ?? [];
+
+  const stRows = leads.map((la) => {
+    const cells = [`<td>${num(la.stJ, 3, "")}</td>`];
+    let anyNotable = false;
+    let anyUnresolvable = false;
+
+    for (let k = 1; k < measures.length; k++) {
+      const lb = measures[k]?.leads.find((x) => x.lead === la.lead);
+      const d = deltaSets[k - 1]?.find((x) => x.lead === la.lead);
+      let cell = num(lb?.stJ ?? null, 3, "");
+      if (d && d.delta !== null) {
+        const sign = d.delta >= 0 ? "+" : "";
+        if (d.belowLimit) {
+          anyUnresolvable = true;
+          cell += ` <span class="lim">${sign}${d.delta.toFixed(3)} not resolvable</span>`;
+        } else {
+          if (d.notable) anyNotable = true;
+          cell += ` <span class="${d.notable ? "chg" : "lim"}">${sign}${
+            d.delta.toFixed(3)
+          } \u00b1 ${d.mdc?.toFixed(3) ?? "?"}</span>`;
+        }
+      }
+      cells.push(`<td>${cell}</td>`);
+    }
+
+    const cls = anyNotable ? "notable" : anyUnresolvable ? "unresolvable" : "";
+    return `<tr class="${cls}"><th scope="row">${la.lead}</th>${cells.join("")}</tr>`;
   }).join("");
 
+  const rRows = leads.map((la) =>
+    `<tr><th scope="row">${la.lead}</th>${
+      measures.map((m) =>
+        `<td>${num(m.leads.find((x) => x.lead === la.lead)?.r ?? null, 2, "")}</td>`
+      ).join("")
+    }</tr>`
+  ).join("");
+
   el.innerHTML = `
-    <div class="cal-note">
-      <div><strong>${ref.fileName}</strong> — ${calNote(ref)}</div>
-      <div><strong>${cmp.fileName}</strong> — ${calNote(cmp)}</div>
-    </div>
+    <div class="cal-note">${calRows}</div>
     <table class="mtable">
       <caption>Global measurements</caption>
-      <thead><tr><th scope="col">Measure</th><th scope="col">Earlier</th><th scope="col">Later</th></tr></thead>
-      <tbody>${
-    globals.map(([k, x, y]) => `<tr><th scope="row">${k}</th><td>${x}</td><td>${y}</td></tr>`).join("")
-  }</tbody>
+      <thead><tr><th scope="col">Measure</th>${head}</tr></thead>
+      <tbody>${globals}</tbody>
     </table>
     <table class="mtable">
-      <caption>Per lead — ST at the J point, and R amplitude (mV)</caption>
-      <thead><tr>
-        <th scope="col">Lead</th>
-        <th scope="col">ST earlier</th><th scope="col">ST later</th><th scope="col">Δ ST</th>
-        <th scope="col">R earlier</th><th scope="col">R later</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
+      <caption>ST at the J point (mV), each study with its change from the reference</caption>
+      <thead><tr><th scope="col">Lead</th>${head}</tr></thead>
+      <tbody>${stRows}</tbody>
+    </table>
+    <table class="mtable">
+      <caption>R amplitude (mV)</caption>
+      <thead><tr><th scope="col">Lead</th>${head}</tr></thead>
+      <tbody>${rRows}</tbody>
     </table>
     <p class="mnote">
-      Δ is flagged only when it exceeds both the pair's detection limit and the
+      Changes are measured against the <strong>reference</strong>, the earliest study
+      selected, not against the preceding one \u2014 three small steps would otherwise
+      each escape flagging while together amounting to a large real change.
+      A \u0394 is flagged only when it exceeds both the pair's detection limit and the
       0.10 mV clinical threshold. <span class="lim">not resolvable</span> means the
       limit is itself above 0.10 mV, so a clinically significant change can be
-      neither confirmed nor excluded — it does not mean no change.
+      neither confirmed nor excluded \u2014 it does not mean no change.
     </p>`;
 }
 

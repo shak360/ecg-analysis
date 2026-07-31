@@ -477,3 +477,5 @@ ol, ul { padding: 0; list-style: none; }
   font-size: 11.5px; line-height: 1.5; color: var(--text-faint);
   max-width: 78ch;
 }
+.mtable .chg { color: var(--text-muted); font-size: 10.5px; }
+.mtable tr.notable .chg { color: var(--warn); font-weight: 650; }

@@ -24,15 +24,25 @@ export interface OverlayTrace {
   beatsUsed: number;
 }
 
+/** One comparison's difference from the reference, in millivolts. */
+export interface OverlayDifference {
+  samples: Float32Array;
+  /** Index into `traces`, so the difference is drawn in its study's colour. */
+  traceIndex: number;
+  rmsMv: number;
+}
+
 export interface OverlayLead {
   lead: string;
+  /** Reference first, then each comparison in time order. */
   traces: OverlayTrace[];
-  /** Comparison minus reference, millivolts. */
-  difference?: Float32Array;
+  /** One entry per comparison; empty when only the reference is shown. */
+  differences?: OverlayDifference[];
+  /** Largest RMS difference across the series, for the panel label. */
   rmsDifferenceMv?: number;
-  /** Alignment could not be trusted; the shift was forced to zero. */
+  /** At least one comparison could not be aligned to the reference. */
   morphologyChanged?: boolean;
-  /** No usable ensemble for this lead in one of the studies. */
+  /** No usable ensemble for this lead. */
   unavailable?: boolean;
 }
 
@@ -308,7 +318,7 @@ function drawPanel(
   });
 
   // The difference lane, beneath and visually separated.
-  if (opts.showDifference && lead.difference) {
+  if (opts.showDifference && lead.differences?.length) {
     ctx.strokeStyle = th.gridCoarse;
     ctx.globalAlpha = 0.8;
     ctx.beginPath();
@@ -318,15 +328,22 @@ function drawPanel(
     ctx.globalAlpha = 1;
 
     const dY = (mv: number) => diffZeroY - mv * opts.mmPerMv * pxPerMm;
-    ctx.strokeStyle = th.diff;
     ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let i = 0; i < lead.difference.length; i++) {
-      const px = xOf(i), py = dY(lead.difference[i]!);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    for (const diff of lead.differences) {
+      // A single comparison gets the dedicated difference colour; a series is
+      // drawn in each study's own colour, so a trace above and its difference
+      // below are visibly the same study.
+      ctx.strokeStyle = lead.differences.length === 1
+        ? th.diff
+        : traceColour(diff.traceIndex, lead.traces.length);
+      ctx.beginPath();
+      for (let i = 0; i < diff.samples.length; i++) {
+        const px = xOf(i), py = dY(diff.samples[i]!);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
   }
 
   ctx.restore();

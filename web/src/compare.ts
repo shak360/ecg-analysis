@@ -163,7 +163,7 @@ async function run(): Promise<void> {
             },
           ]
           : [],
-        difference: c.difference_mv,
+        differences: [{ samples: c.difference_mv, traceIndex: 1, rmsMv: c.rms_difference_mv }],
         rmsDifferenceMv: c.rms_difference_mv,
         morphologyChanged: c.morphology_changed,
         unavailable: !refBeat,
