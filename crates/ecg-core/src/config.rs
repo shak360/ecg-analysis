@@ -295,6 +295,21 @@ pub const SV_THRESH_MAD_K: f32 = 4.0;
 /// terminate the boundary walk early.
 pub const SV_PERSIST_SAMPLES: usize = 3;
 
+/// ms after a candidate QRS offset within which returning activity means
+/// depolarisation had not actually finished.
+///
+/// A delayed terminal deflection splits spatial velocity into two lobes, and the
+/// trough between them outlasts `SV_PERSIST_SAMPLES` — so persistence alone
+/// ends the walk inside the complex. What distinguishes a trough from a genuine
+/// end is what follows: the ST segment is quiet for far longer than any
+/// intra-QRS dip.
+///
+/// 40 ms sits in a wide gap between the two. Intra-QRS troughs are a few
+/// milliseconds; the ST segment runs 80–120 ms at resting rates and stays above
+/// 60 ms even at 150 bpm, so this cannot reach the T upstroke and mistake it for
+/// continued depolarisation. Widening it towards 60 ms would begin to.
+pub const SV_REJOIN_MS: f64 = 40.0;
+
 /// Fewer surviving leads than this makes the fiducial unmeasurable.
 pub const SV_MIN_LEADS: usize = 4;
 

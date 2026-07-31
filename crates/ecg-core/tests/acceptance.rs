@@ -589,3 +589,63 @@ fn r_peak_anchoring_does_not_fabricate_st() {
         worst * 1000.0
     );
 }
+
+/// A complex that got longer must never be reported as shorter.
+///
+/// New bundle branch block delays the terminal QRS. The spatial-velocity walk
+/// descends from the R peak until activity falls below threshold and stays there
+/// for `SV_PERSIST_SAMPLES`; a delayed terminal deflection leaves a trough
+/// between two velocity lobes, and the walk stops in the trough. The offset then
+/// lands *inside* the complex, and QRS_OFF_CLAMP_MS cannot catch it because a
+/// value that is wrong is not necessarily implausible.
+///
+/// Everything downstream then measures ST at the wrong instant. Nothing is
+/// injected in this fixture, so the true serial delta is zero and every
+/// microvolt reported is fabricated.
+///
+/// Two properties, either of which is enough to keep a reader safe: the duration
+/// must not shrink when the complex lengthened, and the fabricated ST must stay
+/// under the clinical threshold. Refusing outright is always acceptable — an
+/// unmeasurable fiducial is visible, a wrong one is not.
+#[test]
+fn a_delayed_terminal_qrs_is_never_reported_as_shorter() {
+    let a = build_study(&generate_terminal(68.0, 0.0), None);
+    let ref_dur = (a.qrs_offset() - a.qrs_onset()) as f64 / FS * 1000.0;
+
+    for delay_ms in [8.0f64, 16.0, 24.0, 32.0] {
+        let b = build_study(&generate_terminal(68.0, delay_ms / 1000.0), None);
+
+        // Refusal is a valid outcome and needs no further checking.
+        if b.qrs_offset() < 0 || b.qrs_onset() < 0 {
+            continue;
+        }
+
+        let dur = (b.qrs_offset() - b.qrs_onset()) as f64 / FS * 1000.0;
+        assert!(
+            dur >= ref_dur - 2.0,
+            "a {delay_ms:.0} ms terminal delay lengthens the QRS, but it was \
+             reported as {dur:.0} ms against a {ref_dur:.0} ms reference"
+        );
+
+        // The second property is conditional, and deliberately so. Once the QRS
+        // has genuinely lengthened by tens of milliseconds, the signal at the
+        // correct J point really is different, so some ST difference is the
+        // waveform rather than an error — demanding zero would be demanding the
+        // wrong thing. What must never happen is a clinically-sized difference
+        // arriving *silently*.
+        let worst = LEADS
+            .iter()
+            .map(|l| delta_st(&a, &b, l).abs())
+            .fold(0.0f64, f64::max);
+        if worst >= 0.10 {
+            assert!(
+                !ecg_core::serial_findings(&a, &b).is_empty(),
+                "a {delay_ms:.0} ms terminal delay produced {:.0} uV of ST change \
+                 with nothing injected, and said nothing about conduction",
+                worst * 1000.0
+            );
+        }
+    }
+}
+
+
