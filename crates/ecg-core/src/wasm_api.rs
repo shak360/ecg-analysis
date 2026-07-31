@@ -10,9 +10,10 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::beats::detect::{detect_qrs, BeatClass};
+use crate::beats::detect::{detect_qrs, Beat, BeatClass};
 use crate::beats::ensemble::{ensemble, EnsembleBeat, Provenance};
-use crate::config::FS;
+use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
+use crate::config::{FRAME_T0_S, FS};
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
 use crate::dsp::median_filter::provisional_detrend;
 use crate::dsp::resample::{
@@ -32,6 +33,80 @@ struct RawLead {
     name: String,
     vertices: Vec<Vertex>,
     time_offset_s: f64,
+}
+
+/// A panel that passed verification, conditioned once and reused by both passes.
+struct PreparedPanel {
+    name: String,
+    time_offset_s: f64,
+    sig: Vec<f32>,
+    /// R-peak sample positions within this panel, edge-excluded beats already dropped.
+    anchors: Vec<usize>,
+}
+
+/// The per-lead products of one detrend-and-ensemble pass.
+struct Built {
+    names: Vec<String>,
+    signals: Vec<Vec<f32>>,
+    offsets: Vec<f64>,
+    beats: Vec<Vec<f32>>,
+    sigmas: Vec<Vec<f32>>,
+    n_used: Vec<u32>,
+}
+
+impl Built {
+    fn fiducials(&self) -> GlobalFiducials {
+        let weights = vec![1.0f32; self.beats.len()];
+        let vm = self.beats.first().cloned().unwrap_or_else(|| vec![0.0; FRAME_LEN]);
+        fiducials(&self.beats, &weights, &vm, FS, 0.0)
+    }
+}
+
+/// Detrend every panel against the onsets `onset_of` derives from each R peak,
+/// then build its ensemble beat.
+///
+/// Taking the onset rule as a closure is what makes the two passes the same code:
+/// pass 1 subtracts a nominal interval, pass 2 applies the measured offset.
+fn build_pass(
+    panels: &[PreparedPanel],
+    provenance: Provenance,
+    sigma_prov: f32,
+    onset_of: impl Fn(usize) -> usize,
+) -> Built {
+    let mut out = Built {
+        names: Vec::new(),
+        signals: Vec::new(),
+        offsets: Vec::new(),
+        beats: Vec::new(),
+        sigmas: Vec::new(),
+        n_used: Vec::new(),
+    };
+
+    for p in panels {
+        let onsets: Vec<usize> = p.anchors.iter().map(|&r| onset_of(r)).collect();
+
+        // The measurement baseline comes from PQ anchors on the original signal,
+        // never from the throwaway pass-1 median cascade.
+        let prov = ProvisionalSignal::new(p.sig.clone(), FS);
+        let measurement = match detrend(&prov, &onsets) {
+            Detrended::Measurable(m) => m.samples().to_vec(),
+            Detrended::MorphologyOnly { v_mv, .. } => v_mv,
+        };
+
+        let Ok(eb) = ensemble(&measurement, FS, &p.anchors, provenance, sigma_prov) else {
+            continue;
+        };
+        out.names.push(p.name.clone());
+        // The conditioned continuous panel, kept so the printout view can draw
+        // the recording as it ran rather than an ensemble beat.
+        out.signals.push(measurement);
+        out.offsets.push(p.time_offset_s);
+        out.beats.push(eb.v_mv.clone());
+        out.sigmas.push(eb.sigma_mv.clone());
+        out.n_used.push(eb.n_used as u32);
+        let _: &EnsembleBeat = &eb;
+    }
+    out
 }
 
 /// Condition irregular vertices onto the canonical grid.
@@ -96,7 +171,9 @@ impl StudyBuilder {
 
         // Rate and beat times come from the rhythm strip alone.
         let strip = self.rhythm.as_ref().and_then(|v| condition(v, 100.0));
-        let (strip_beats_s, hr_bpm) = match &strip {
+        // Beats are kept as structs, not times: the panel verification needs the
+        // full beat to reconcile a panel's timing against the strip's.
+        let (strip_beats, hr_bpm) = match &strip {
             Some(s) => {
                 let prov = provisional_detrend(s, FS, None, None);
                 let det = detect_qrs(&prov, FS);
@@ -106,70 +183,157 @@ impl StudyBuilder {
                         .filter(|b| {
                             matches!(b.class, BeatClass::Normal | BeatClass::Unclassified)
                         })
-                        .map(|b| b.r_time_s)
-                        .collect::<Vec<f64>>(),
+                        .copied()
+                        .collect::<Vec<Beat>>(),
                     det.hr_bpm.unwrap_or(f64::NAN),
                 )
             }
             None => (Vec::new(), f64::NAN),
         };
 
-        let mut names = Vec::new();
-        let mut signals: Vec<Vec<f32>> = Vec::new();
-        let mut offsets: Vec<f64> = Vec::new();
-        let mut beats: Vec<Vec<f32>> = Vec::new();
-        let mut sigmas: Vec<Vec<f32>> = Vec::new();
-        let mut n_used: Vec<u32> = Vec::new();
+        // Condition every panel once; both passes reuse the result.
+        let mut panels: Vec<PreparedPanel> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+        // Edge exclusions are collected and reported once. Nine identical lines
+        // is noise that buries the warnings that are specific to one lead.
+        let mut edge_excluded: Vec<(String, usize, usize)> = Vec::new();
 
-        for lead in &self.leads {
+        for (column, lead) in self.leads.iter().enumerate() {
             let Some(sig) = condition(&lead.vertices, 100.0) else { continue };
+            let duration_s = sig.len() as f64 / FS;
 
-            // Beats visible inside this panel, in panel-local time.
-            let local: Vec<usize> = strip_beats_s
-                .iter()
-                .filter_map(|&t| {
-                    let rel = t - lead.time_offset_s;
-                    let idx = (rel * FS).round();
-                    (rel >= 0.0 && idx >= 0.0 && (idx as usize) < sig.len())
-                        .then_some(idx as usize)
-                })
-                .collect();
-            if local.is_empty() {
+            // Beats the strip says fall inside this panel, in panel-local time.
+            let projected = project_strip_beats(&strip_beats, lead.time_offset_s, duration_s);
+            if projected.is_empty() {
+                warnings.push(format!("{}: no beats fall inside this panel", lead.name));
                 continue;
             }
+            let local_times: Vec<f64> = projected.iter().map(|&(_, t)| t).collect();
 
-            // The measurement baseline comes from PQ anchors on the original,
-            // never from the throwaway pass-1 signal. QRS onset is approximated
-            // here as R minus a nominal interval until per-study fiducials feed
-            // back in; the anchor search window absorbs the residual error.
-            let nominal_onset = (0.040 * FS) as usize;
-            let onsets: Vec<usize> =
-                local.iter().map(|&r| r.saturating_sub(nominal_onset)).collect();
-
-            let prov = ProvisionalSignal::new(sig.clone(), FS);
-            let measurement = match detrend(&prov, &onsets) {
-                Detrended::Measurable(m) => m.samples().to_vec(),
-                Detrended::MorphologyOnly { v_mv, .. } => v_mv,
-            };
-
-            let Ok(eb) = ensemble(&measurement, FS, &local, provenance, sigma_prov) else {
+            // Prove the panel is where the layout says it is. A swapped column is
+            // still perfectly rectangular and in the right place on the page, so
+            // geometry cannot catch it; only the beat timing can.
+            let mapping = verify_panel(
+                column / 3, // three rows per column on a 3x4 layout
+                &local_times,
+                &strip_beats,
+                duration_s,
+            );
+            if !mapping.usable() {
+                warnings.push(format!(
+                    "{}: panel excluded — its beat timing does not match the rhythm strip",
+                    lead.name
+                ));
                 continue;
-            };
-            names.push(lead.name.clone());
-            // The conditioned continuous panel, kept so the printout view can
-            // draw the recording as it was printed rather than an ensemble beat.
-            signals.push(measurement.clone());
-            offsets.push(lead.time_offset_s);
-            beats.push(eb.v_mv.clone());
-            sigmas.push(eb.sigma_mv.clone());
-            n_used.push(eb.n_used as u32);
-            let _: &EnsembleBeat = &eb;
+            }
+            if mapping.flag == PanelFlag::Corrected {
+                warnings.push(format!(
+                    "{}: panel offset corrected by {:.0} ms against the rhythm strip",
+                    lead.name,
+                    (mapping.tau_s - mapping.tau_nominal_s) * 1000.0,
+                ));
+            }
+
+            // Drop beats too close to a column boundary. A half-drawn upstroke is
+            // exactly the high-amplitude, high-slope feature a peak detector wants,
+            // and averaging a truncated complex into an ensemble fabricates T-wave
+            // flattening with no visible artefact.
+            let support = beat_support(
+                &local_times,
+                duration_s,
+                FRAME_T0_S,
+                FRAME_T0_S + FRAME_LEN as f64 / FS,
+                Some((&sig, FS)),
+            );
+            if support.is_empty() {
+                warnings.push(format!(
+                    "{}: every beat sits too close to a panel edge to measure",
+                    lead.name
+                ));
+                continue;
+            }
+            if support.n_rejected() > 0 {
+                edge_excluded.push((
+                    lead.name.clone(),
+                    support.n_rejected(),
+                    support.n_used() + support.n_rejected(),
+                ));
+            }
+
+            let anchors: Vec<usize> = support
+                .used
+                .iter()
+                .filter_map(|&i| local_times.get(i))
+                .map(|&t| (t * FS).round().max(0.0) as usize)
+                .collect();
+
+            panels.push(PreparedPanel {
+                name: lead.name.clone(),
+                time_offset_s: lead.time_offset_s,
+                sig,
+                anchors,
+            });
         }
 
-        // Global fiducials from the assembled lead matrix.
-        let weights = vec![1.0f32; beats.len()];
-        let vm = beats.first().cloned().unwrap_or_else(|| vec![0.0; FRAME_LEN]);
-        let f = fiducials(&beats, &weights, &vm, FS, 0.0);
+        if !edge_excluded.is_empty() {
+            let total: usize = edge_excluded.iter().map(|(_, n, _)| n).sum();
+            let of: usize = edge_excluded.iter().map(|(_, _, d)| d).sum();
+            let leads: Vec<&str> = edge_excluded.iter().map(|(l, _, _)| l.as_str()).collect();
+            warnings.push(format!(
+                "{total} of {of} beats excluded at panel edges across {} leads ({}). \
+                 A complex cut by a column boundary is truncated, and averaging it in \
+                 would flatten the ensemble's T wave.",
+                edge_excluded.len(),
+                leads.join(", "),
+            ));
+        }
+
+        // --- pass 1: locate the fiducial -----------------------------------
+        //
+        // PQ anchors need the QRS onset, and the global onset needs detrended
+        // beats — a circular dependency the spec resolves by iterating once. The
+        // seed onset (R minus a nominal interval) is good enough to *find* the
+        // fiducial; it is not good enough to set the baseline, which is why there
+        // is a second pass.
+        let seed_onset = (0.040 * FS) as usize;
+        let pass1 = build_pass(&panels, provenance, sigma_prov, |r| {
+            r.saturating_sub(seed_onset)
+        });
+        let f1 = pass1.fiducials();
+
+        // --- pass 2: re-detrend against the measured onset ------------------
+        let anchor = r_index(FS);
+        let (built, f, onset_shift_ms) = match f1.qrs_onset {
+            Ok(onset_frame) => {
+                // The frame is anchored so `anchor` is the R peak, so the onset's
+                // offset from R carries straight back into per-beat coordinates.
+                let delta = onset_frame as i64 - anchor as i64;
+                let pass2 = build_pass(&panels, provenance, sigma_prov, |r| {
+                    (r as i64 + delta).max(0) as usize
+                });
+                let f2 = pass2.fiducials();
+                let moved = f2
+                    .qrs_onset
+                    .ok()
+                    .map(|o| (o as f64 - onset_frame as f64) / FS * 1000.0)
+                    .unwrap_or(f64::NAN);
+                // Prefer pass 2, but fall back if the second pass lost the
+                // fiducial entirely rather than reporting nothing.
+                if f2.qrs_onset.is_ok() { (pass2, f2, moved) } else { (pass1, f1, 0.0) }
+            }
+            Err(_) => (pass1, f1, 0.0),
+        };
+
+        // A large second-pass move means pass 1 was wrong in a way worth saying
+        // out loud rather than silently correcting.
+        if onset_shift_ms.is_finite() && onset_shift_ms.abs() > 20.0 {
+            warnings.push(format!(
+                "QRS onset moved {onset_shift_ms:.0} ms between passes — the isoelectric \
+                 baseline was re-derived, but check the tracing"
+            ));
+        }
+
+        let Built { names, signals, offsets, beats, sigmas, n_used } = built;
 
         StudyAnalysis {
             names,
@@ -183,6 +347,8 @@ impl StudyBuilder {
             qrs_onset: f.qrs_onset.map(|v| v as i32).unwrap_or(-1),
             qrs_offset: f.qrs_offset.map(|v| v as i32).unwrap_or(-1),
             t_offset: f.t_offset.map(|v| v as i32).unwrap_or(-1),
+            warnings,
+            onset_shift_ms,
             // Overwritten by set_calibration_quality once the pulse is read.
             gain_sigma: 0.10,
             bias_mv: if from_vector_pdf { 0.002 } else { 0.012 },
@@ -213,6 +379,11 @@ pub struct StudyAnalysis {
     qrs_onset: i32,
     qrs_offset: i32,
     t_offset: i32,
+    /// Panels excluded or corrected, and beats dropped at edges — the things a
+    /// clinician must know before trusting a lead's numbers.
+    warnings: Vec<String>,
+    /// How far the second pass moved the QRS onset, milliseconds.
+    onset_shift_ms: f64,
     /// Relative 1-sigma on the gain, propagated into every amplitude.
     gain_sigma: f32,
     /// Systematic amplitude bias for this provenance, millivolts.
@@ -259,6 +430,22 @@ impl StudyAnalysis {
     #[wasm_bindgen(getter)]
     pub fn lead_names(&self) -> Vec<String> {
         self.names.clone()
+    }
+
+    /// Panels excluded or corrected, and beats dropped at panel edges.
+    ///
+    /// These are not diagnostics for a developer — a lead missing from the
+    /// comparison because its timing did not match the rhythm strip is something
+    /// the reader has to know, or its absence reads as "unchanged".
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> Vec<String> {
+        self.warnings.clone()
+    }
+
+    /// Milliseconds the QRS onset moved between the seeded and measured passes.
+    #[wasm_bindgen(getter)]
+    pub fn onset_shift_ms(&self) -> f64 {
+        self.onset_shift_ms
     }
 
     /// One lead's ensemble beat: `FRAME_LEN` samples in millivolts.

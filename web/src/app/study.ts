@@ -207,6 +207,10 @@ export function analyse(study: Study): Promise<Study> {
       }
 
       study.analysis = builder.analyze(true);
+      // Panel exclusions and edge-dropped beats come back from the engine. A
+      // lead missing from the comparison because its timing did not match the
+      // rhythm strip must be visible, or its absence reads as "unchanged".
+      study.warnings.push(...(study.analysis.warnings as string[]));
       // Hand the measured calibration quality to the engine so it can propagate
       // gain error into every amplitude's uncertainty.
       study.analysis.set_calibration_quality(cal.relativeUncertainty, 0.002);
