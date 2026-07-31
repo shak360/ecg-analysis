@@ -12,14 +12,10 @@
 
 use wasm_bindgen::prelude::*;
 
+pub mod config;
 pub mod dsp;
 
-/// The common sample grid every study is resampled onto before registration.
-///
-/// 500 Hz is the diagnostic-ECG standard: it resolves the QRS upstroke and narrow
-/// Q waves (a 20 ms notch spans 10 samples) without the memory cost of 1 kHz, and
-/// it is a clean integer ratio to the 250/500/1000 Hz rates carts actually emit.
-pub const SAMPLE_RATE_HZ: f64 = 500.0;
+pub use config::FS as SAMPLE_RATE_HZ;
 
 /// Build identifier, surfaced in the UI so a reported measurement can be traced
 /// back to the code that produced it.

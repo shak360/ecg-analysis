@@ -1,5 +1,7 @@
 //! Signal conditioning: statistics, baseline removal, resampling, beat detection.
 
+pub mod resample;
+
 /// Root-mean-square of a slice. Returns 0.0 for an empty slice rather than NaN,
 /// because callers treat this as an energy measure on possibly-absent leads.
 pub fn rms(x: &[f32]) -> f32 {
