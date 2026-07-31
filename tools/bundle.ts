@@ -22,6 +22,8 @@ const options: esbuild.BuildOptions = {
     // Development harness: renders a fixture PDF next to the geometry our
     // extractor recovers from it. Not linked from the app.
     `${WEB}src/dev.ts`,
+    // End-to-end trial: PDF through the WASM signal path to located beats.
+    `${WEB}src/try.ts`,
   ],
   outdir: `${WEB}dist`,
   entryNames: "[name]",

@@ -15,6 +15,9 @@ use wasm_bindgen::prelude::*;
 pub mod beats;
 pub mod config;
 pub mod dsp;
+mod wasm_api;
+
+pub use wasm_api::{analyze_strip, StripAnalysis};
 
 pub use config::FS as SAMPLE_RATE_HZ;
 

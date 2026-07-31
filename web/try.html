@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline trial — Serial ECG</title>
+  <link rel="stylesheet" href="./styles/app.css">
+  <style>
+    .trial { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+    .controls {
+      display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap;
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--text-muted); font-weight: 600;
+    }
+    select, input[type=file] {
+      font: inherit; font-size: 13px; padding: 6px 10px;
+      border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+      background: var(--bg-raised); color: var(--text);
+    }
+    .card {
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px;
+    }
+    .card h3 {
+      font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--text-muted); margin-bottom: 10px;
+    }
+    canvas { width: 100%; display: block; border: 1px solid var(--border); border-radius: 4px; }
+    pre {
+      font-family: var(--mono); font-size: 12px; line-height: 1.55;
+      white-space: pre-wrap; margin: 0; color: var(--text-muted);
+    }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
+    .legend span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__brand">
+      <div>
+        <h1>Pipeline trial</h1>
+        <p class="topbar__sub">PDF &rarr; geometry &rarr; millivolts &rarr; WASM &rarr; beats</p>
+      </div>
+    </div>
+    <div class="topbar__right">
+      <a class="btn btn--ghost" href="./dev.html">Extraction harness</a>
+      <a class="btn btn--ghost" href="./index.html">App</a>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <strong>Timing only &mdash; no amplitudes are reported.</strong>
+    The gain has not been confirmed, and there is no isoelectric-anchored baseline,
+    ensemble beat, or registration yet. Paper speed and gain below are
+    <em>assumptions you are setting</em>, not measurements. Nothing here is a clinical
+    measurement of any kind.
+  </div>
+
+  <main class="trial">
+    <div class="controls">
+      <div class="field">
+        <label for="fixture">Fixture</label>
+        <select id="fixture">
+          <option value="serial-a-baseline">serial-a-baseline (68 bpm)</option>
+          <option value="serial-b-followup">serial-b-followup (82 bpm, ST+ V2-V4)</option>
+          <option value="calib-50mms-5mmmv">calib-50mms-5mmmv (50 mm/s, 5 mm/mV)</option>
+          <option value="noisy-wander">noisy-wander (74 bpm, noise + wander)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="file">&hellip;or your own PDF</label>
+        <input type="file" id="file" accept="application/pdf,.pdf">
+      </div>
+      <div class="field">
+        <label for="speed">Paper speed (assumed)</label>
+        <select id="speed">
+          <option value="25" selected>25 mm/s</option>
+          <option value="50">50 mm/s</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="gain">Gain (assumed)</label>
+        <select id="gain">
+          <option value="5">5 mm/mV</option>
+          <option value="10" selected>10 mm/mV</option>
+          <option value="20">20 mm/mV</option>
+        </select>
+      </div>
+      <button type="button" class="btn" id="run">Run</button>
+    </div>
+
+    <div class="card">
+      <h3>Rhythm strip &mdash; conditioned, with located beats</h3>
+      <canvas id="strip"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#0b6ab8"></i> normal</span>
+        <span><i class="dot" style="background:#c2410c"></i> premature</span>
+        <span><i class="dot" style="background:#a16207"></i> post-ectopic</span>
+        <span>dashed trace = interpolated across a gap</span>
+        <span>shaded ends = resampler edge transient, excluded</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Report</h3>
+      <pre id="report">Loading&hellip;</pre>
+    </div>
+  </main>
+
+  <script type="module" src="./dist/try.js"></script>
+</body>
+</html>
