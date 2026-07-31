@@ -6,4 +6,5 @@
 //! their own.
 
 pub mod detect;
+pub mod ensemble;
 pub mod panels;

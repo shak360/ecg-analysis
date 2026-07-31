@@ -15,6 +15,7 @@ use wasm_bindgen::prelude::*;
 pub mod beats;
 pub mod config;
 pub mod dsp;
+pub mod fiducial;
 mod wasm_api;
 
 pub use wasm_api::{analyze_strip, StripAnalysis};
