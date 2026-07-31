@@ -18,7 +18,8 @@
     "test:rust": "cargo test --workspace",
     "test:web": "vitest run",
     "check": "tsc --noEmit && cargo clippy --workspace --all-targets",
-    "postinstall": "echo 'Reminder: install with --ignore-scripts. See docs/decisions/0006-node-toolchain.md'"
+    "postinstall": "echo 'Reminder: install with --ignore-scripts. See docs/decisions/0006-node-toolchain.md'",
+    "fetch:ptbxl": "vite-node tools/fetch-ptbxl.ts"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

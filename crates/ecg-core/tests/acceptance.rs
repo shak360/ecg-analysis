@@ -649,3 +649,46 @@ fn a_delayed_terminal_qrs_is_never_reported_as_shorter() {
 }
 
 
+
+/// A simultaneous 12-lead recording keeps all twelve leads.
+///
+/// A digital ECG — from a cart export, or any of the public corpora — records
+/// every lead at once for the full ten seconds. There are no columns and no
+/// offsets: every panel starts at zero.
+///
+/// `StudyBuilder::add_lead` takes `time_offset_s` for exactly this reason, and
+/// the strip-beat projection uses it. But panel verification derived the column
+/// from the lead's position in the insertion order instead — `index / 3`, on the
+/// assumption that leads always arrive in printout order. The two then disagree
+/// for any caller that does not happen to add leads that way, and the panel is
+/// excluded for "beat timing does not match the rhythm strip" when its timing
+/// was never in question.
+///
+/// Measured on PTB-XL before the fix: of 1,095 real records, 17 kept all twelve
+/// leads. The survivors were the ones whose heart rate made the bogus 2.5 s
+/// offset land near a whole number of RR intervals, which under a regular rhythm
+/// fits the beats just as well — so the failure was rate-dependent, which is
+/// worse than deterministic.
+#[test]
+fn simultaneous_leads_are_all_kept() {
+    let leads = generate(68.0, &[], 0.0, 1);
+    let mut b = StudyBuilder::new();
+    for name in LEADS {
+        let full = &leads.iter().find(|(l, _)| l == name).unwrap().1;
+        let t: Vec<f64> = (0..full.len()).map(|k| k as f64 / FS).collect();
+        // Every lead starts at zero: they were all recorded at the same time.
+        b.add_lead(name, &t, full, 0.0);
+    }
+    let ii = &leads.iter().find(|(l, _)| l == "II").unwrap().1;
+    let t: Vec<f64> = (0..ii.len()).map(|k| k as f64 / FS).collect();
+    b.set_rhythm(&t, ii);
+
+    let a = b.analyze(true);
+    let kept = a.lead_names();
+    assert_eq!(
+        kept.len(),
+        12,
+        "a simultaneous recording lost leads: kept {kept:?}, warnings {:?}",
+        a.warnings()
+    );
+}

@@ -13,7 +13,7 @@ use wasm_bindgen::prelude::*;
 use crate::beats::detect::{detect_qrs, Beat, BeatClass};
 use crate::beats::ensemble::{ensemble, EnsembleBeat, Provenance};
 use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
-use crate::config::{FRAME_T0_S, FS};
+use crate::config::{FRAME_T0_S, FS, PANEL_WINDOW_S};
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
 use crate::dsp::median_filter::provisional_detrend;
 use crate::dsp::resample::{
@@ -198,7 +198,7 @@ impl StudyBuilder {
         // is noise that buries the warnings that are specific to one lead.
         let mut edge_excluded: Vec<(String, usize, usize)> = Vec::new();
 
-        for (column, lead) in self.leads.iter().enumerate() {
+        for lead in self.leads.iter() {
             let Some(sig) = condition(&lead.vertices, 100.0) else { continue };
             let duration_s = sig.len() as f64 / FS;
 
@@ -213,12 +213,21 @@ impl StudyBuilder {
             // Prove the panel is where the layout says it is. A swapped column is
             // still perfectly rectangular and in the right place on the page, so
             // geometry cannot catch it; only the beat timing can.
-            let mapping = verify_panel(
-                column / 3, // three rows per column on a 3x4 layout
-                &local_times,
-                &strip_beats,
-                duration_s,
-            );
+            //
+            // The column comes from `time_offset_s`, which is the field that
+            // carries it and the one the projection above already uses. It was
+            // previously derived from the lead's position in the insertion order
+            // (`index / 3`), which assumed every caller adds leads in printout
+            // order. The app does, so the two agreed and the disagreement stayed
+            // invisible — until a simultaneous digital recording arrived, where
+            // every lead starts at zero and nine of twelve were then excluded for
+            // "timing does not match" when their timing was never in question.
+            //
+            // Rate-dependent, too: the survivors were the ones whose RR interval
+            // happened to divide the bogus offset, because under a regular rhythm
+            // an offset differing by a whole RR fits the beats identically.
+            let column = (lead.time_offset_s / PANEL_WINDOW_S).round().max(0.0) as usize;
+            let mapping = verify_panel(column, &local_times, &strip_beats, duration_s);
             if !mapping.usable() {
                 warnings.push(format!(
                     "{}: panel excluded — its beat timing does not match the rhythm strip",
