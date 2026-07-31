@@ -92,6 +92,7 @@ export default defineConfig({
         main: resolve(webRoot, "index.html"),
         dev: resolve(webRoot, "dev.html"),
         try: resolve(webRoot, "try.html"),
+        compare: resolve(webRoot, "compare.html"),
       },
     },
   },

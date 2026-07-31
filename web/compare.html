@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compare — Serial ECG</title>
+  <link rel="stylesheet" href="./styles/app.css">
+  <style>
+    .cmp { padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+    .bar {
+      display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 11px 13px;
+    }
+    .bar__group {
+      display: flex; gap: 10px; align-items: flex-end;
+      padding-right: 16px; border-right: 1px solid var(--border);
+    }
+    .bar__group:last-of-type { border-right: 0; }
+    .field { display: flex; flex-direction: column; gap: 3px; }
+    .field label {
+      font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--text-muted); font-weight: 600;
+    }
+    select, input[type=file] {
+      font: inherit; font-size: 12.5px; padding: 5px 8px;
+      border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+      background: var(--bg-raised); color: var(--text); max-width: 210px;
+    }
+    .check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted); }
+    .card {
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 11px;
+    }
+    .card h3 {
+      font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--text-muted); margin-bottom: 9px;
+    }
+    canvas { width: 100%; display: block; }
+    pre {
+      font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+      white-space: pre-wrap; margin: 0; color: var(--text-muted);
+    }
+    .key { display: flex; gap: 15px; flex-wrap: wrap; margin-top: 9px; font-size: 11.5px; }
+    .key span { display: flex; align-items: center; gap: 5px; color: var(--text-muted); }
+    .swatch { width: 15px; height: 3px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__brand">
+      <svg class="topbar__mark" viewBox="0 0 48 24" aria-hidden="true">
+        <path d="M0 12h10l3-9 5 18 4-12 3 6h5l3-4 3 4h9" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h1>Compare</h1>
+        <p class="topbar__sub">Two ECGs, registered and superimposed</p>
+      </div>
+    </div>
+    <div class="topbar__right">
+      <a class="btn btn--ghost" href="./try.html">Pipeline trial</a>
+      <a class="btn btn--ghost" href="./dev.html">Extraction</a>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <strong>Morphology only &mdash; no measurements are reported.</strong>
+    Traces are registered on global QRS onset and drawn to a true millimetre grid, but paper
+    speed and gain below are <em>assumptions you are setting</em>, not confirmed calibration.
+    The &Delta;rms figure is a shape-difference indicator, not a clinical measurement, and no
+    uncertainty gating is applied yet. Not a medical device.
+  </div>
+
+  <main class="cmp">
+    <div class="bar">
+      <div class="bar__group">
+        <div class="field">
+          <label for="fixture-a">Reference (earlier)</label>
+          <select id="fixture-a">
+            <option value="serial-a-baseline" selected>serial-a-baseline (68 bpm)</option>
+            <option value="serial-b-followup">serial-b-followup (82 bpm, ST+ V2-V4)</option>
+            <option value="noisy-wander">noisy-wander</option>
+            <option value="calib-50mms-5mmmv">calib-50mms-5mmmv</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="file-a">or file</label>
+          <input type="file" id="file-a" accept="application/pdf,.pdf">
+        </div>
+      </div>
+
+      <div class="bar__group">
+        <div class="field">
+          <label for="fixture-b">Comparison (later)</label>
+          <select id="fixture-b">
+            <option value="serial-a-baseline">serial-a-baseline (68 bpm)</option>
+            <option value="serial-b-followup" selected>serial-b-followup (82 bpm, ST+ V2-V4)</option>
+            <option value="noisy-wander">noisy-wander</option>
+            <option value="calib-50mms-5mmmv">calib-50mms-5mmmv</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="file-b">or file</label>
+          <input type="file" id="file-b" accept="application/pdf,.pdf">
+        </div>
+      </div>
+
+      <div class="bar__group">
+        <div class="field">
+          <label for="speed">Speed (assumed)</label>
+          <select id="speed">
+            <option value="25" selected>25 mm/s</option>
+            <option value="50">50 mm/s</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gain">Gain (assumed)</label>
+          <select id="gain">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="bar__group">
+        <div class="field">
+          <label for="scale">Display</label>
+          <select id="scale">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cols">Columns</label>
+          <select id="cols">
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+        <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+      </div>
+
+      <button type="button" class="btn" id="run">Compare</button>
+    </div>
+
+    <div class="card">
+      <h3>Registered ensemble beats, per lead</h3>
+      <canvas id="overlay"></canvas>
+      <div class="key">
+        <span><i class="swatch" style="background:#1b4a8f"></i> reference (earlier)</span>
+        <span><i class="swatch" style="background:#c2410c"></i> comparison (later)</span>
+        <span><i class="swatch" style="background:#7c3aed"></i> difference, lower lane</span>
+        <span>shaded band = beat-to-beat spread</span>
+        <span>dashed vertical = alignment anchor (QRS onset)</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Report</h3>
+      <pre id="report">Loading&hellip;</pre>
+    </div>
+  </main>
+
+  <script type="module" src="./src/compare.ts"></script>
+</body>
+</html>
