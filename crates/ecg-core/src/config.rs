@@ -369,3 +369,37 @@ pub const SQI_BAND_DISPLAY: f32 = 0.35;
 
 /// Below this, the rhythm strip cannot serve as timing authority.
 pub const BSQI_STRIP_MIN: f32 = 0.35;
+
+// ---- §14 PANEL ↔ STRIP TIME BASE -------------------------------------------
+//
+// A 3×4 printout gives each lead a 2.5 s window at its column's offset. The
+// geometry says which window that should be; these constants govern proving it
+// against the rhythm strip. Getting it wrong compares V2 in one study against V3
+// in another, which reads as "new ST elevation that resolved one lead over".
+
+/// Seconds covered by one column of a 3×4 layout.
+pub const PANEL_WINDOW_S: f64 = 2.5;
+
+/// ms; |τ_c − 2.5·c| beyond this means the layout is not the standard cadence.
+pub const PANEL_TAU_TOL_MS: f64 = 60.0;
+
+/// ms; a panel beat within this of a strip beat is a match.
+/// Between this and `PANEL_EXCLUDE_TOL_MS` the offset is corrected and flagged.
+pub const PANEL_MATCH_TOL_MS: f64 = 40.0;
+
+/// ms; beyond this the panel is excluded from serial comparison entirely.
+pub const PANEL_EXCLUDE_TOL_MS: f64 = 150.0;
+
+/// Matched beats a panel needs before its time base is trusted.
+pub const PANEL_MIN_MATCHED_BEATS: usize = 2;
+
+/// ms at each panel edge in which no local maximum may be promoted to a QRS.
+///
+/// A half-drawn upstroke at a column boundary is exactly the high-amplitude,
+/// high-slope feature a peak detector wants, and counting it as a beat imports
+/// a truncated complex into the ensemble.
+pub const EDGE_MARGIN_MS: f64 = 60.0;
+
+/// mV; an adjacent-sample jump this large near an edge means the trace is
+/// truncated rather than continuous.
+pub const EDGE_DISCONT_MV: f32 = 0.50;

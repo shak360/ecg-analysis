@@ -6,3 +6,4 @@
 //! their own.
 
 pub mod detect;
+pub mod panels;
