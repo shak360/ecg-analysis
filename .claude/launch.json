@@ -4,8 +4,10 @@
     {
       "name": "ecg-dev",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite"],
-      "port": 5173
+      "runtimeArgs": [
+        "vite"
+      ],
+      "port": 8080
     }
   ]
 }

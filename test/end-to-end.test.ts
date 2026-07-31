@@ -7,75 +7,46 @@
  * detection, gain calibration, layout assignment, resampling to a uniform grid —
  * had no test at all. That is most of the code and all of the fragile parts.
  *
- * This is also the guard for moving compute into a Web Worker. That change
- * reshapes how every one of these stages is called; the numbers below are what
- * must survive it.
+ * It runs through `InlineEngine`, which is the same `EngineCore` the worker
+ * hosts. So this also covers the engine boundary itself: if a value the UI needs
+ * stopped crossing it, or crossed it wrong, these fail.
  */
 import { beforeAll, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import init, { st_deltas_json } from "../web/wasm/ecg_core.js";
-import { analyse, type Study } from "../web/src/app/study.ts";
+import { InlineEngine } from "../web/src/engine/client.ts";
+import type { Assumptions } from "../web/src/engine/protocol.ts";
 
 const at = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 
 /** The injected change in `serial-b-followup`, per tools/make-fixtures.ts. */
 const INJECTED_ST_MV = 0.25;
 const INJECTED_LEADS = ["V2", "V3", "V4"];
+const DEFAULTS: Assumptions = { mmPerSec: 25, mmPerMv: 10 };
+
+let engine: InlineEngine;
 
 beforeAll(async () => {
-  await init({ module_or_path: readFileSync(at("../web/wasm/ecg_core_bg.wasm")) });
+  engine = new InlineEngine(readFileSync(at("../web/wasm/ecg_core_bg.wasm")));
+  await engine.ready();
 });
 
-/**
- * Build the record the app builds from a dropped file.
- *
- * `loadFile` takes a browser `File`; constructing the record directly keeps the
- * test to the part that matters and avoids asserting on Node's File shim.
- */
-function studyFrom(name: string): Study {
-  return {
-    id: name,
-    fileName: name,
-    bytes: new Uint8Array(readFileSync(at(`./fixtures/synthetic/${name}.pdf`))),
-    assumptions: { mmPerSec: 25, mmPerMv: 10 },
-    acquiredAt: null,
-    layout: null,
-    analysis: null,
-    identity: null,
-    calibration: null,
-    warnings: [],
-    error: null,
-    offsetSec: null,
-    colour: "#1b4a8f",
-  };
+function bytes(name: string): Uint8Array {
+  return new Uint8Array(readFileSync(at(`./fixtures/synthetic/${name}.pdf`)));
 }
 
-async function analysed(name: string): Promise<Study> {
-  const s = await analyse(studyFrom(name));
-  if (s.error) throw new Error(`${name} failed to analyse: ${s.error}`);
-  return s;
-}
-
-/** Mirrors the object `st_deltas_json` emits. `delta` is null when unmeasurable. */
-interface StDelta {
-  lead: string;
-  delta: number | null;
-  mdc: number | null;
-  notable: boolean;
-  belowLimit: boolean;
-}
-
-function deltas(ref: Study, cmp: Study): StDelta[] {
-  return (JSON.parse(st_deltas_json(ref.analysis, cmp.analysis)) as { leads: StDelta[] }).leads;
+/** Analyse a fixture under `id`, failing loudly rather than returning a null. */
+async function load(id: string, name = id, assumptions = DEFAULTS) {
+  const { summary, error } = await engine.analyse(id, bytes(name), assumptions);
+  if (error || !summary) throw new Error(`${name} failed to analyse: ${error}`);
+  return summary;
 }
 
 test("a vector PDF yields twelve leads on a calibrated millimetre grid", async () => {
-  const s = await analysed("serial-a-baseline");
+  const s = await load("baseline", "serial-a-baseline");
 
-  expect(s.layout).not.toBeNull();
-  expect(s.analysis.lead_names.length).toBe(12);
+  expect(s.leadNames.length).toBe(12);
 
   // The grid is what every physical unit hangs off. A pitch that is not 1 mm
   // means the millivolt axis is wrong by exactly that factor, silently.
@@ -84,20 +55,19 @@ test("a vector PDF yields twelve leads on a calibrated millimetre grid", async (
 
   // Rate is the one number a reader checks by eye, so it is the cheapest
   // end-to-end sanity check available.
-  expect(s.analysis.hr_bpm).toBeGreaterThan(66);
-  expect(s.analysis.hr_bpm).toBeLessThan(70);
+  expect(s.hrBpm).toBeGreaterThan(66);
+  expect(s.hrBpm).toBeLessThan(70);
 });
 
 test("the injected ST elevation survives the round trip through a PDF", async () => {
-  const [a, b] = await Promise.all([
-    analysed("serial-a-baseline"),
-    analysed("serial-b-followup"),
-  ]);
+  await load("a", "serial-a-baseline");
+  const b = await load("b", "serial-b-followup");
 
-  expect(b.analysis.hr_bpm).toBeGreaterThan(80);
-  expect(b.analysis.hr_bpm).toBeLessThan(84);
+  expect(b.hrBpm).toBeGreaterThan(80);
+  expect(b.hrBpm).toBeLessThan(84);
 
-  const d = deltas(a, b);
+  const snap = await engine.compare(["a", "b"]);
+  const d = snap.deltaSets[0]!;
   expect(d.length).toBe(12);
 
   for (const lead of INJECTED_LEADS) {
@@ -114,15 +84,14 @@ test("the injected ST elevation survives the round trip through a PDF", async ()
 });
 
 test("the leads that were not touched stay untouched", async () => {
-  const [a, b] = await Promise.all([
-    analysed("serial-a-baseline"),
-    analysed("serial-b-followup"),
-  ]);
+  await load("a", "serial-a-baseline");
+  await load("b", "serial-b-followup");
+  const snap = await engine.compare(["a", "b"]);
 
   // The off-target leads are the real test. Recovering the injected change is
   // easy; recovering it *only where it was injected* is the claim the product
   // actually makes.
-  const off = deltas(a, b).filter((x) => !INJECTED_LEADS.includes(x.lead));
+  const off = snap.deltaSets[0]!.filter((x) => !INJECTED_LEADS.includes(x.lead));
   expect(off.length).toBe(9);
   for (const x of off) {
     expect(x.delta, `${x.lead} delta is unmeasurable`).not.toBeNull();
@@ -131,37 +100,67 @@ test("the leads that were not touched stay untouched", async () => {
 });
 
 test("exactly the injected leads are flagged notable", async () => {
-  const [a, b] = await Promise.all([
-    analysed("serial-a-baseline"),
-    analysed("serial-b-followup"),
-  ]);
+  await load("a", "serial-a-baseline");
+  await load("b", "serial-b-followup");
+  const snap = await engine.compare(["a", "b"]);
 
-  const flagged = deltas(a, b).filter((x) => x.notable).map((x) => x.lead).sort();
+  const flagged = snap.deltaSets[0]!.filter((x) => x.notable).map((x) => x.lead).sort();
   expect(flagged).toEqual([...INJECTED_LEADS].sort());
 });
 
 test("baseline wander alone is never reported as a change", async () => {
-  const [a, noisy] = await Promise.all([
-    analysed("serial-a-baseline"),
-    analysed("noisy-wander"),
-  ]);
+  await load("a", "serial-a-baseline");
+  await load("noisy", "noisy-wander");
+  const snap = await engine.compare(["a", "noisy"]);
 
   // Same underlying beat, wander laid over it. The apparent ST shifts are large
   // enough to look real; the uncertainty gate has to refuse every one of them.
   // A single flag here is a false positive in the only direction that matters.
-  const flagged = deltas(a, noisy).filter((x) => x.notable);
-  expect(flagged.map((x) => x.lead)).toEqual([]);
+  expect(snap.deltaSets[0]!.filter((x) => x.notable).map((x) => x.lead)).toEqual([]);
 });
 
 test("a non-standard paper speed and gain are read off the page, not assumed", async () => {
-  // Printed at 50 mm/s and 5 mm/mV. The assumptions passed in are the *defaults*
-  // (25 and 10), so anything that reads correctly here did so by measuring the
-  // grid and the calibration pulse rather than trusting what it was told.
-  const s = studyFrom("calib-50mms-5mmmv");
-  s.assumptions = { mmPerSec: 50, mmPerMv: 10 };
-  const done = await analyse(s);
+  // Printed at 50 mm/s and 5 mm/mV. The gain passed in is the default 10, so
+  // reading 5 here means the pulse was measured rather than trusted.
+  const s = await load("calib", "calib-50mms-5mmmv", { mmPerSec: 50, mmPerMv: 10 });
+  expect(s.calibration!.mmPerMv).toBeCloseTo(5, 6);
+  expect(s.calibration!.source).toBe("pulse");
+});
 
-  expect(done.error).toBeNull();
-  expect(done.calibration!.mmPerMv).toBeCloseTo(5, 6);
-  expect(done.calibration!.source).toBe("pulse");
+test("the snapshot carries everything the canvases draw", async () => {
+  await load("a", "serial-a-baseline");
+  await load("b", "serial-b-followup");
+  const snap = await engine.compare(["a", "b"]);
+
+  // The UI cannot reach back into the engine any more, so anything missing here
+  // is a blank panel rather than a wrong number — a failure mode worth a test
+  // of its own.
+  expect(snap.studyIds).toEqual(["a", "b"]);
+  expect(snap.leads.length).toBe(12);
+  expect(snap.printouts.length).toBe(2);
+  expect(snap.columnSeconds).toBeGreaterThan(0);
+
+  for (const lead of snap.leads) {
+    expect(lead.traces.length, `${lead.lead} traces`).toBe(2);
+    for (const tr of lead.traces) {
+      expect(tr.samples.length, `${lead.lead} frame length`).toBe(401);
+      expect(tr.beatsUsed).toBeGreaterThan(0);
+    }
+    expect(lead.differences.length, `${lead.lead} differences`).toBe(1);
+  }
+
+  for (const p of snap.printouts) {
+    expect(p.leads.size).toBe(12);
+    expect(p.rhythm, "a rhythm strip should reach the printout").not.toBeNull();
+  }
+});
+
+test("releasing a study makes it unavailable to compare", async () => {
+  await load("a", "serial-a-baseline");
+  await load("b", "serial-b-followup");
+  await engine.release(["b"]);
+
+  // Removing a study must actually free it, not merely hide it. Otherwise a
+  // long session reloading the same files grows the WASM heap without bound.
+  await expect(engine.compare(["a", "b"])).rejects.toThrow(/not loaded/);
 });
