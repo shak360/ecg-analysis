@@ -436,6 +436,33 @@ ol, ul { padding: 0; list-style: none; }
 
 /* --- measurements --------------------------------------------------------- */
 
+/*
+ * Study-level findings.
+ *
+ * Weighted heavier than the measurements table below it on purpose. A change in
+ * ventricular conduction is not one finding among twelve — it is the condition
+ * under which the twelve are to be read, so it gets the warning colour and the
+ * left rule that the eye lands on first.
+ */
+.findings { margin-top: 14px; }
+.findings__item {
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--text);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.findings__label {
+  display: block;
+  font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warn);
+  margin-bottom: 3px;
+}
+
 .measurements { margin-top: 14px; }
 
 .cal-note {

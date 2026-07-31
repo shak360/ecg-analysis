@@ -568,6 +568,25 @@ fn optd(v: Option<f64>) -> String {
     v.filter(|x| x.is_finite()).map(|x| format!("{x:.2}")).unwrap_or_else(|| "null".into())
 }
 
+/// Study-level findings about a pair, above and beyond the per-lead deltas.
+///
+/// Currently one: a change in QRS duration. It is reported separately from the
+/// lead measurements, and should be shown more prominently than any of them,
+/// because it changes how all of them are to be read — when ventricular
+/// conduction changes, ST and T differences carry the new activation sequence as
+/// well as any change in repolarisation, and the two cannot be separated.
+#[wasm_bindgen]
+pub fn serial_findings(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> Vec<String> {
+    use crate::serial::findings::{qrs_duration_ms, serial_findings as findings};
+    findings(
+        qrs_duration_ms(reference.qrs_onset, reference.qrs_offset, FS),
+        qrs_duration_ms(comparison.qrs_onset, comparison.qrs_offset, FS),
+    )
+    .iter()
+    .map(|f| f.message())
+    .collect()
+}
+
 /// Leads whose ST change cleared both the detection limit and the clinical
 /// threshold.
 ///
@@ -671,6 +690,20 @@ pub fn compare_studies(
 ) -> Vec<LeadComparison> {
     use crate::serial::register::AlignFlag;
 
+    // The window comes from the reference alone, deliberately.
+    //
+    // Widening it to the union of both studies' QRS extents was tried, on the
+    // theory that a widened complex puts its new terminal deflection outside the
+    // reference's window where correlation never scores it. Measured, it bought
+    // nothing — a 30% dilated QRS still correlates at 0.96, because it is the
+    // same shape drawn wider — and it cost something real: the comparison's
+    // measured QRS offset sits slightly later when ST is elevated, so the union
+    // window reached into the ST segment and pulled a genuine ST difference into
+    // the QRS correlation. That is the contamination `qrs_window` exists to
+    // prevent.
+    //
+    // Duration change is detected on the fiducials instead, by
+    // `serial::findings`, where the signal actually is.
     let onset = if reference.qrs_onset >= 0 {
         reference.qrs_onset as usize
     } else {

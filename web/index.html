@@ -134,6 +134,13 @@
           <span>lower lane = difference from the reference</span>
           <span>trace colours are set per study, on the left</span>
         </div>
+        <!--
+          Study-level findings sit above the measurements, not among them. A
+          change in ventricular conduction is the condition under which every
+          number below it should be read with suspicion, so it must not be
+          something the reader scrolls past.
+        -->
+        <div id="serial-findings" class="findings" hidden></div>
         <div id="measurements" class="measurements"></div>
         <pre id="report" class="report"></pre>
       </div>

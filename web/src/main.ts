@@ -323,6 +323,7 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
 
   render();
 
+  renderFindings(chosen, snapshot.findingSets);
   const measures = chosen.map((s) => s.summary!.measurements);
   renderMeasurements(chosen, measures, snapshot.deltaSets);
 
@@ -361,6 +362,42 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
 
 const num = (v: number | null, digits: number, unit: string) =>
   v === null ? "\u2014" : `${v.toFixed(digits)}${unit ? " " + unit : ""}`;
+
+/**
+ * Render study-level findings above the measurements.
+ *
+ * These are deliberately not folded into the table. A conduction change means
+ * every ST and T delta below carries the new activation sequence as well as any
+ * change in repolarisation, and the two cannot be separated — so it has to be
+ * read first, not discovered afterwards in a column.
+ */
+function renderFindings(studies: Study[], findingSets: string[][]): void {
+  const el = $("serial-findings");
+  el.innerHTML = "";
+
+  const any = findingSets.some((f) => f.length > 0);
+  el.hidden = !any;
+  if (!any) return;
+
+  findingSets.forEach((findings, k) => {
+    // findingSets[k] compares studies[k + 1] against the reference.
+    const subject = studies[k + 1];
+    for (const text of findings) {
+      const item = document.createElement("div");
+      item.className = "findings__item";
+
+      const label = document.createElement("strong");
+      label.className = "findings__label";
+      label.textContent = studies.length > 2 && subject
+        ? `Conduction change \u00b7 ${subject.fileName}`
+        : "Conduction change";
+      item.appendChild(label);
+
+      item.appendChild(document.createTextNode(text));
+      el.appendChild(item);
+    }
+  });
+}
 
 /**
  * Render the measurements table for a series.

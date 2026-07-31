@@ -132,6 +132,15 @@ export interface ComparisonSnapshot {
   leads: SnapshotLead[];
   printouts: SnapshotPrintout[];
   deltaSets: StDelta[][];
+  /**
+   * Study-level findings, one list per comparison study against the reference.
+   *
+   * These outrank the per-lead deltas and must be shown above them. A change in
+   * QRS duration means ST and T differences carry the new activation sequence as
+   * well as any change in repolarisation, so every number below is conditional
+   * on it.
+   */
+  findingSets: string[][];
   anchorIndex: number;
   columnSeconds: number;
   clinicalThresholdMv: number;

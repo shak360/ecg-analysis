@@ -439,3 +439,55 @@ fn the_cancellation_fails_when_qrs_morphology_differs() {
     );
 }
 
+
+/// A QRS that has changed duration must be reported as changed.
+///
+/// This is the interlock every other guarantee leans on. Three separate
+/// mechanisms in this pipeline — the baseline treatment, the extra
+/// interpolation the comparison passes through, and the frame anchor — produce
+/// errors that cancel in the serial delta *only while the complexes match*.
+/// Something has to notice when they stop matching.
+///
+/// Correlation cannot be that something. Measured on this very pair, a QRS
+/// dilated by 30% still correlates at 0.94–0.98 across all twelve leads,
+/// against a 0.90 interlock. The complex is the same shape drawn wider, and
+/// that is exactly what correlation is blind to. The measured duration moved
+/// 86 → 106 ms over the same pair, which is why the detector reads fiducials.
+#[test]
+fn a_widened_qrs_is_reported_as_a_conduction_change() {
+    let base = generate(68.0, &[], 0.0, 1);
+    let follow = generate_wide(82.0, &TARGET.map(|l| (l, ST_SHIFT)), 1.3);
+    let a = build_study(&base, None);
+    let b = build_study(&follow, None);
+
+    let found = ecg_core::serial_findings(&a, &b);
+    assert!(
+        !found.is_empty(),
+        "a 30% wider QRS must be reported. reference {} ms, comparison {} ms",
+        (a.qrs_offset() - a.qrs_onset()) as f64 / FS * 1000.0,
+        (b.qrs_offset() - b.qrs_onset()) as f64 / FS * 1000.0
+    );
+    assert!(
+        found[0].contains("widened"),
+        "the finding should say which way it went: {}",
+        found[0]
+    );
+}
+
+/// The same pair unchanged must produce no finding.
+///
+/// A detector that fires on the unchanged case would be worse than none: it
+/// would train the reader to ignore it.
+#[test]
+fn an_unchanged_qrs_produces_no_conduction_finding() {
+    let base = generate(68.0, &[], 0.0, 1);
+    // Different rate and a real ST shift, but the same conduction.
+    let follow = generate(82.0, &TARGET.map(|l| (l, ST_SHIFT)), 0.0, 2);
+    let a = build_study(&base, None);
+    let b = build_study(&follow, None);
+
+    assert!(
+        ecg_core::serial_findings(&a, &b).is_empty(),
+        "unchanged conduction must not be reported as changed"
+    );
+}

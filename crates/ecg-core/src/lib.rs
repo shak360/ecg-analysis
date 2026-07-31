@@ -19,8 +19,8 @@ pub mod serial;
 mod wasm_api;
 
 pub use wasm_api::{
-    analyze_strip, compare_studies, notable_st_leads, st_deltas_json, LeadComparison,
-    StripAnalysis, StudyAnalysis, StudyBuilder,
+    analyze_strip, compare_studies, notable_st_leads, serial_findings, st_deltas_json,
+    LeadComparison, StripAnalysis, StudyAnalysis, StudyBuilder,
 };
 
 pub use config::FS as SAMPLE_RATE_HZ;

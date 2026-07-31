@@ -11,6 +11,7 @@
  */
 import init, {
   compare_studies,
+  serial_findings,
   st_deltas_json,
   StudyBuilder,
 } from "../../wasm/ecg_core.js";
@@ -234,6 +235,11 @@ export class EngineCore {
       return { leads: map, rhythm: rhythm && rhythm.length ? rhythm : null };
     });
 
+    // Study-level findings, one list per comparison. Computed here rather than
+    // in the UI because they read the global fiducials, which never leave the
+    // engine.
+    const findingSets: string[][] = rest.map((h) => Array.from(serial_findings(ref, h)));
+
     let clinicalThresholdMv = 0.1;
     const deltaSets: StDelta[][] = rest.map((h) => {
       const parsed = JSON.parse(st_deltas_json(ref, h)) as {
@@ -249,6 +255,7 @@ export class EngineCore {
       leads,
       printouts,
       deltaSets,
+      findingSets,
       anchorIndex: ref.qrs_onset >= 0 ? ref.qrs_onset : ref.anchor_index,
       columnSeconds: held[0]!.columnSeconds || 2.5,
       clinicalThresholdMv,

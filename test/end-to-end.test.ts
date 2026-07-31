@@ -164,3 +164,27 @@ test("releasing a study makes it unavailable to compare", async () => {
   // long session reloading the same files grows the WASM heap without bound.
   await expect(engine.compare(["a", "b"])).rejects.toThrow(/not loaded/);
 });
+
+test("a widened QRS raises a conduction-change finding", async () => {
+  await load("a", "serial-a-baseline");
+  await load("wide", "serial-c-wide-qrs");
+  const snap = await engine.compare(["a", "wide"]);
+
+  // Correlation cannot see this: a dilated complex is the same shape drawn
+  // wider, and still correlates around 0.96 against a 0.90 interlock. The
+  // measured QRS duration is where the change actually shows.
+  const findings = snap.findingSets[0]!;
+  expect(findings.length, "a 30% wider QRS must be reported").toBeGreaterThan(0);
+  expect(findings[0]).toMatch(/widened/);
+  expect(findings[0]).toMatch(/conduction has changed/i);
+});
+
+test("an ordinary follow-up raises no conduction finding", async () => {
+  await load("a", "serial-a-baseline");
+  await load("b", "serial-b-followup");
+  const snap = await engine.compare(["a", "b"]);
+
+  // Different rate, real ST elevation, same conduction. A detector that fired
+  // here would train the reader to ignore it.
+  expect(snap.findingSets[0]).toEqual([]);
+});

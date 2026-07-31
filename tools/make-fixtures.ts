@@ -30,6 +30,7 @@ interface Fixture {
   mmPerMv?: number;
   noiseMv?: number;
   wanderMv?: number;
+  qrsScale?: number;
   seed: number;
 }
 
@@ -58,6 +59,18 @@ const FIXTURES: Fixture[] = [
     mmPerMv: 5,
     seed: 1001,
   },
+  // Same patient, same ST elevation as the follow-up, but the QRS is 30% wider:
+  // a new bundle branch block on top of the ischaemic change. This is the pair
+  // that must raise a conduction-change finding, and the case where the errors
+  // that normally cancel in the serial delta stop cancelling.
+  {
+    name: "serial-c-wide-qrs",
+    headerText: "SYNTHETIC — FOLLOW-UP, WIDE QRS — 2026-02-13 16:02",
+    heartRateBpm: 82,
+    stShiftMv: { V2: 0.25, V3: 0.25, V4: 0.25 },
+    qrsScale: 1.3,
+    seed: 1004,
+  },
   // Noisy variant, for the quality gate and beat-rejection logic.
   {
     name: "noisy-wander",
@@ -79,6 +92,7 @@ for (const fx of FIXTURES) {
     stShiftMv: fx.stShiftMv,
     noiseMv: fx.noiseMv,
     wanderMv: fx.wanderMv,
+    qrsScale: fx.qrsScale,
     seed: fx.seed,
   });
 

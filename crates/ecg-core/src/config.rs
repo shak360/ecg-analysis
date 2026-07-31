@@ -210,7 +210,26 @@ pub const RHO_SUSPECT: f32 = 0.80;
 
 /// Cross-study NCC interlock. Below this, the alignment shift is forced to zero
 /// rather than sliding to whatever lag flatters a changed QRS.
+///
+/// Note what this does *not* catch. Correlation is insensitive to a change of
+/// QRS *duration*: a complex dilated by 30% still correlates at about 0.96 with
+/// the original, because it is the same shape drawn wider. Duration change is
+/// caught by `QRS_DURATION_CHANGE_MS` instead, on the measured fiducials.
 pub const RHO_XSTUDY_MIN: f32 = 0.90;
+
+/// ms of serial QRS-duration change that counts as a conduction change.
+///
+/// Two independent arguments land in the same place. Clinically, the index of
+/// individuality for QRS duration is 0.29 — 92% of the population variance is
+/// stable constitution — so within-subject SD is roughly 3 ms and 10 ms is about
+/// 3.4 of them. Instrumentally, fiducials sit on a 500 Hz grid and duration is a
+/// difference of two of them, so its resolution is ±4 ms in the worst case; 10 ms
+/// is 2.5× that, which keeps grid quantisation from producing findings.
+///
+/// This is the detector for new bundle branch block, hyperkalaemia and class Ic
+/// effect — the changes that widen the complex without altering its shape, and
+/// which the correlation interlock therefore cannot see.
+pub const QRS_DURATION_CHANGE_MS: f64 = 10.0;
 
 /// ms, ± search range for template alignment.
 pub const ALIGN_MAX_LAG_MS: f64 = 20.0;
