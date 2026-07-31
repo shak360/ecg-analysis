@@ -12,6 +12,7 @@
 
 use wasm_bindgen::prelude::*;
 
+pub mod beats;
 pub mod config;
 pub mod dsp;
 
