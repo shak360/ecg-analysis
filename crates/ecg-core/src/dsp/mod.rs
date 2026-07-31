@@ -1,5 +1,6 @@
 //! Signal conditioning: statistics, baseline removal, resampling, beat detection.
 
+pub mod detrend;
 pub mod median_filter;
 pub mod resample;
 
