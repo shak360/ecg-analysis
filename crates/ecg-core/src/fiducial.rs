@@ -84,14 +84,14 @@ fn sg_derivative(x: &[f32], half: usize) -> Vec<f32> {
     }
     // For a linear fit the coefficients are proportional to the offset itself.
     let denom: f32 = (1..=half).map(|k| 2.0 * (k * k) as f32).sum();
-    for i in 0..n {
+    for (i, o) in out.iter_mut().enumerate() {
         let mut acc = 0.0f32;
         for k in 1..=half {
             let lo = i.saturating_sub(k);
             let hi = (i + k).min(n - 1);
             acc += k as f32 * (x[hi] - x[lo]);
         }
-        out[i] = acc / denom;
+        *o = acc / denom;
     }
     out
 }
@@ -540,10 +540,11 @@ mod tests {
         let (mut leads, w) = twelve(100.0, 0.40);
         let r = r_index(FS);
         for l in leads.iter_mut() {
-            for i in (r + (0.10 * FS) as usize)..FRAME_N {
+            let from = r + (0.10 * FS) as usize;
+            for (i, v) in l.iter_mut().enumerate().skip(from) {
                 let d = i as f32 - (r as f32 + 0.21 * FS as f32);
                 let g = 0.40 * (-0.5 * (d / (0.048 * FS as f32)).powi(2)).exp();
-                l[i] -= 2.0 * g; // flip the T
+                *v -= 2.0 * g; // flip the T
             }
         }
         let f = fiducials(&leads, &w, &leads[0], FS, 0.0);

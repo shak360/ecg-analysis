@@ -373,10 +373,10 @@ mod tests {
         for k in 0..n {
             let centre = ((k as f64 + 1.0) * fs) as usize;
             anchors.push(centre);
-            for i in 0..total {
+            for (i, v) in sig.iter_mut().enumerate() {
                 let dt = (i as f64 - centre as f64) / fs;
                 if dt.abs() < 0.5 {
-                    sig[i] += beat_wave(dt, r_amp, 0.30);
+                    *v += beat_wave(dt, r_amp, 0.30);
                 }
             }
         }
@@ -478,12 +478,12 @@ mod tests {
         // Stand-in for a PVC: same anchor cadence, wrong shape.
         let (mut sig, anchors) = make_signal(5, 1.2, 0.0);
         let bad = anchors[2];
-        for i in 0..sig.len() {
+        for (i, v) in sig.iter_mut().enumerate() {
             let dt = (i as f64 - bad as f64) / FS;
             if dt.abs() < 0.5 {
-                sig[i] -= beat_wave(dt, 1.2, 0.30);
+                *v -= beat_wave(dt, 1.2, 0.30);
                 // Wide, inverted, slurred.
-                sig[i] += -1.0 * (-0.5 * (dt / 0.055).powi(2)).exp() as f32;
+                *v -= (-0.5 * (dt / 0.055).powi(2)).exp() as f32;
             }
         }
         let e = ensemble(&sig, FS, &anchors, Provenance::VectorPdf, 0.01).unwrap();
@@ -495,10 +495,10 @@ mod tests {
     fn an_amplitude_outlier_is_excluded() {
         let (mut sig, anchors) = make_signal(5, 1.2, 0.0);
         let bad = anchors[3];
-        for i in 0..sig.len() {
+        for (i, v) in sig.iter_mut().enumerate() {
             let dt = (i as f64 - bad as f64) / FS;
             if dt.abs() < 0.5 {
-                sig[i] += beat_wave(dt, 1.2, 0.30); // doubles this beat only
+                *v += beat_wave(dt, 1.2, 0.30); // doubles this beat only
             }
         }
         let e = ensemble(&sig, FS, &anchors, Provenance::VectorPdf, 0.01).unwrap();
@@ -548,11 +548,11 @@ mod tests {
         // disagrees must not silently average into a plausible-looking beat.
         let (mut sig, anchors) = make_signal(2, 1.2, 0.0);
         let bad = anchors[1];
-        for i in 0..sig.len() {
+        for (i, v) in sig.iter_mut().enumerate() {
             let dt = (i as f64 - bad as f64) / FS;
             if dt.abs() < 0.5 {
-                sig[i] -= beat_wave(dt, 1.2, 0.30);
-                sig[i] += -0.9 * (-0.5 * (dt / 0.06).powi(2)).exp() as f32;
+                *v -= beat_wave(dt, 1.2, 0.30);
+                *v -= 0.9 * (-0.5 * (dt / 0.06).powi(2)).exp() as f32;
             }
         }
         let e = ensemble(&sig, FS, &anchors, Provenance::Raster, 0.04);
