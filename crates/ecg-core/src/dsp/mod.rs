@@ -1,5 +1,6 @@
 //! Signal conditioning: statistics, baseline removal, resampling, beat detection.
 
+pub mod median_filter;
 pub mod resample;
 
 /// Root-mean-square of a slice. Returns 0.0 for an empty slice rather than NaN,
