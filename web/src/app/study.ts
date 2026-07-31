@@ -7,6 +7,7 @@
 import { StudyBuilder } from "../../wasm/ecg_core.js";
 import { extractPageGeometry } from "../ingest/pdf-paths.ts";
 import { classifyPolylines } from "../ingest/classify.ts";
+import { type Calibration, calibrateGain } from "../ingest/calibrate.ts";
 import {
   checkIdentities,
   detectLayout,
@@ -31,6 +32,8 @@ export interface Study {
   // deno-lint-ignore no-explicit-any
   analysis: any | null;
   identity: ReturnType<typeof checkIdentities> | null;
+  /** Gain as measured from the calibration pulse, or the assumed fallback. */
+  calibration: Calibration | null;
   warnings: string[];
   error: string | null;
   /** Position on the shared timeline, seconds from the index study. */
@@ -112,6 +115,7 @@ export async function loadFile(file: File, assumptions: Assumptions): Promise<St
     layout: null,
     analysis: null,
     identity: null,
+    calibration: null,
     warnings: [],
     error: null,
     offsetSec: null,
@@ -146,13 +150,21 @@ export function analyse(study: Study): Promise<Study> {
       }
 
       const a = study.assumptions;
+
+      // Read the gain from the calibration pulse where one exists. The pulse is
+      // 1 mV whatever the cart's gain setting was, so its height measures
+      // mm/mV directly -- strictly better than trusting the user's assumption.
+      const cal = calibrateGain(cls.other, cls.gridPitch, a.mmPerMv);
+      study.calibration = cal;
+      const mmPerMv = cal.mmPerMv;
+
       const layout = detectLayout(cls.traces, cls.gridPitch, a.mmPerSec);
       study.layout = layout;
-      study.warnings = [...layout.warnings];
+      study.warnings = [...layout.warnings, ...cal.notes];
 
       const sampled = new Map<string, Float32Array>();
       for (const p of layout.panels) {
-        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, a.mmPerMv);
+        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, mmPerMv);
         sampled.set(p.lead, sampleUniform(t, v));
       }
       study.identity = checkIdentities(sampled);
@@ -160,17 +172,20 @@ export function analyse(study: Study): Promise<Study> {
 
       const builder = new StudyBuilder();
       for (const p of layout.panels) {
-        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, a.mmPerMv);
+        const { t, v } = toPhysical(p.trace, cls.gridPitch, a.mmPerSec, mmPerMv);
         builder.add_lead(p.lead, t, v, p.timeOffsetSec);
       }
       if (layout.rhythm) {
-        const { t, v } = toPhysical(layout.rhythm, cls.gridPitch, a.mmPerSec, a.mmPerMv);
+        const { t, v } = toPhysical(layout.rhythm, cls.gridPitch, a.mmPerSec, mmPerMv);
         builder.set_rhythm(t, v);
       } else {
         study.warnings.push("No rhythm strip found — rate and beat timing unavailable.");
       }
 
       study.analysis = builder.analyze(true);
+      // Hand the measured calibration quality to the engine so it can propagate
+      // gain error into every amplitude's uncertainty.
+      study.analysis.set_calibration_quality(cal.relativeUncertainty, 0.002);
       if (study.analysis.lead_names.length === 0) {
         study.error = "No lead produced a usable beat. The tracing may be too short " +
           "or too noisy to digitize.";

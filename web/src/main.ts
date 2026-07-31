@@ -8,7 +8,7 @@
  * parsed in-process; there is no upload path in this code, and none should ever
  * be added — these are patient tracings.
  */
-import init, { compare_studies } from "../wasm/ecg_core.js";
+import init, { compare_studies, st_deltas_json } from "../wasm/ecg_core.js";
 import {
   analyse,
   type Assumptions,
@@ -235,6 +235,12 @@ function compare(): void {
   });
   render();
 
+  const measA = JSON.parse(ref!.analysis.measurements_json()) as Measures;
+  const measB = JSON.parse(cmp.analysis.measurements_json()) as Measures;
+  const deltas =
+    (JSON.parse(st_deltas_json(ref!.analysis, cmp.analysis)) as { leads: StDelta[] }).leads;
+  renderMeasurements(ref!, cmp, measA, measB, deltas);
+
   const gap = ref!.offsetSec != null && cmp.offsetSec != null
     ? formatInterval(cmp.offsetSec - ref!.offsetSec)
     : null;
@@ -260,6 +266,119 @@ function compare(): void {
         `Multi-study overlay is not built yet.`
       : "",
   ].filter(Boolean).join("\n");
+}
+
+interface LeadMeasure {
+  lead: string;
+  stJ: number | null;
+  stJ60: number | null;
+  r: number | null;
+  s: number | null;
+  q: number | null;
+  t: number | null;
+  sigmaSt: number | null;
+  note: string | null;
+}
+interface Measures {
+  hr: number | null;
+  qrs: number | null;
+  qt: number | null;
+  qtcF: number | null;
+  qtcB: number | null;
+  axis: number | null;
+  leads: LeadMeasure[];
+}
+interface StDelta {
+  lead: string;
+  delta: number | null;
+  mdc: number | null;
+  notable: boolean;
+  belowLimit: boolean;
+}
+
+const num = (v: number | null, digits: number, unit: string) =>
+  v === null ? "—" : `${v.toFixed(digits)} ${unit}`;
+
+/**
+ * Render the measurements table.
+ *
+ * Every amplitude carries its uncertainty and every delta its detection limit.
+ * A number without an interval is this product's main way of causing harm, so
+ * the two are emitted together or not at all.
+ */
+function renderMeasurements(
+  ref: Study,
+  cmp: Study,
+  a: Measures,
+  b: Measures,
+  deltas: StDelta[],
+): void {
+  const el = $("measurements");
+  const calNote = (s: Study) =>
+    s.calibration?.source === "pulse"
+      ? `${s.calibration.mmPerMv} mm/mV measured from the calibration pulse`
+      : `${s.calibration?.mmPerMv ?? "?"} mm/mV assumed — no pulse found`;
+
+  const globals = [
+    ["Heart rate", num(a.hr, 0, "bpm"), num(b.hr, 0, "bpm")],
+    ["QRS duration", num(a.qrs, 0, "ms"), num(b.qrs, 0, "ms")],
+    ["QT", num(a.qt, 0, "ms"), num(b.qt, 0, "ms")],
+    ["QTc (Fridericia)", num(a.qtcF, 0, "ms"), num(b.qtcF, 0, "ms")],
+    ["QTc (Bazett)", num(a.qtcB, 0, "ms"), num(b.qtcB, 0, "ms")],
+    ["Frontal axis", num(a.axis, 0, "°"), num(b.axis, 0, "°")],
+  ];
+
+  const dmap = new Map(deltas.map((d) => [d.lead, d]));
+  const rows = a.leads.map((la) => {
+    const lb = b.leads.find((x) => x.lead === la.lead);
+    const d = dmap.get(la.lead);
+    const cls = d?.notable ? "notable" : d?.belowLimit ? "unresolvable" : "";
+    const deltaCell = !d || d.delta === null
+      ? "—"
+      : d.belowLimit
+      ? `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)} <span class="lim">not resolvable (limit ±${
+        d.mdc === null ? "∞" : d.mdc.toFixed(2)
+      })</span>`
+      : `${d.delta >= 0 ? "+" : ""}${d.delta.toFixed(3)} <span class="lim">± ${
+        d.mdc?.toFixed(3) ?? "?"
+      }</span>`;
+    return `<tr class="${cls}">
+      <th scope="row">${la.lead}</th>
+      <td>${num(la.stJ, 3, "")}</td>
+      <td>${num(lb?.stJ ?? null, 3, "")}</td>
+      <td class="delta">${deltaCell}</td>
+      <td>${num(la.r, 2, "")}</td>
+      <td>${num(lb?.r ?? null, 2, "")}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="cal-note">
+      <div><strong>${ref.fileName}</strong> — ${calNote(ref)}</div>
+      <div><strong>${cmp.fileName}</strong> — ${calNote(cmp)}</div>
+    </div>
+    <table class="mtable">
+      <caption>Global measurements</caption>
+      <thead><tr><th scope="col">Measure</th><th scope="col">Earlier</th><th scope="col">Later</th></tr></thead>
+      <tbody>${
+    globals.map(([k, x, y]) => `<tr><th scope="row">${k}</th><td>${x}</td><td>${y}</td></tr>`).join("")
+  }</tbody>
+    </table>
+    <table class="mtable">
+      <caption>Per lead — ST at the J point, and R amplitude (mV)</caption>
+      <thead><tr>
+        <th scope="col">Lead</th>
+        <th scope="col">ST earlier</th><th scope="col">ST later</th><th scope="col">Δ ST</th>
+        <th scope="col">R earlier</th><th scope="col">R later</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="mnote">
+      Δ is flagged only when it exceeds both the pair's detection limit and the
+      0.10 mV clinical threshold. <span class="lim">not resolvable</span> means the
+      limit is itself above 0.10 mV, so a clinically significant change can be
+      neither confirmed nor excluded — it does not mean no change.
+    </p>`;
 }
 
 const fmtHr = (v: number) => Number.isFinite(v) ? `${v.toFixed(0)} bpm` : "rate n/a";

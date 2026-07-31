@@ -18,7 +18,8 @@ use crate::dsp::median_filter::provisional_detrend;
 use crate::dsp::resample::{
     column_envelope, intermediate_rate, pchip_uniform, resample, Vertex,
 };
-use crate::fiducial::{fiducials, r_index, FRAME_LEN};
+use crate::fiducial::{fiducials, r_index, GlobalFiducials, Unmeasurable, FRAME_LEN};
+use crate::measure::{measure_study, st_delta, LeadMeasurements, CLINICAL_ST_MV};
 use crate::serial::register::register_lead;
 
 /// Canonical 12-lead order.
@@ -173,6 +174,9 @@ impl StudyBuilder {
             qrs_onset: f.qrs_onset.map(|v| v as i32).unwrap_or(-1),
             qrs_offset: f.qrs_offset.map(|v| v as i32).unwrap_or(-1),
             t_offset: f.t_offset.map(|v| v as i32).unwrap_or(-1),
+            // Overwritten by set_calibration_quality once the pulse is read.
+            gain_sigma: 0.10,
+            bias_mv: if from_vector_pdf { 0.002 } else { 0.012 },
         }
     }
 }
@@ -194,10 +198,48 @@ pub struct StudyAnalysis {
     qrs_onset: i32,
     qrs_offset: i32,
     t_offset: i32,
+    /// Relative 1-sigma on the gain, propagated into every amplitude.
+    gain_sigma: f32,
+    /// Systematic amplitude bias for this provenance, millivolts.
+    bias_mv: f32,
 }
 
 #[wasm_bindgen]
 impl StudyAnalysis {
+    /// Record the calibration quality the JS side measured from the pulse.
+    pub fn set_calibration_quality(&mut self, gain_relative_sigma: f32, bias_mv: f32) {
+        self.gain_sigma = gain_relative_sigma;
+        self.bias_mv = bias_mv;
+    }
+
+    /// Measurements for this study, as a JSON string.
+    ///
+    /// Serialised rather than exposed field by field because the shape is wide
+    /// and read whole; the boundary cost is one string per study.
+    pub fn measurements_json(&self) -> String {
+        let m = self.measure();
+        let leads: Vec<String> = m
+            .leads
+            .iter()
+            .map(|l| {
+                format!(
+                    r#"{{"lead":"{}","stJ":{},"stJ60":{},"stSlope":{},"r":{},"s":{},"q":{},"qDur":{},"t":{},"sigmaSt":{},"note":{}}}"#,
+                    l.lead,
+                    opt(l.st_j_mv), opt(l.st_j60_mv), opt(l.st_slope_mv_s),
+                    opt(l.r_amplitude_mv), opt(l.s_amplitude_mv), opt(l.q_amplitude_mv),
+                    opt(l.q_duration_ms), opt(l.t_amplitude_mv),
+                    if l.sigma_st_mv.is_finite() { format!("{:.5}", l.sigma_st_mv) } else { "null".into() },
+                    l.st_note.map(|n| format!(r#""{n}""#)).unwrap_or_else(|| "null".into()),
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"hr":{},"qrs":{},"qt":{},"qtcF":{},"qtcB":{},"axis":{},"leads":[{}]}}"#,
+            optd(m.hr_bpm), optd(m.qrs_ms), optd(m.qt_ms),
+            optd(m.qtc_fridericia_ms), optd(m.qtc_bazett_ms), opt(m.axis_deg),
+            leads.join(","),
+        )
+    }
     /// Lead names, in the order the beats are stored.
     #[wasm_bindgen(getter)]
     pub fn lead_names(&self) -> Vec<String> {
@@ -253,6 +295,66 @@ impl StudyAnalysis {
     fn index_of(&self, lead: &str) -> Option<usize> {
         self.names.iter().position(|n| n == lead)
     }
+}
+
+impl StudyAnalysis {
+    fn fiducials(&self) -> GlobalFiducials {
+        let cvt = |v: i32| {
+            if v >= 0 { Ok(v as usize) } else { Err(Unmeasurable::NoActivation) }
+        };
+        GlobalFiducials {
+            qrs_onset: cvt(self.qrs_onset),
+            qrs_offset: cvt(self.qrs_offset),
+            t_offset: cvt(self.t_offset),
+            sv_peak: 1.0,
+        }
+    }
+
+    fn measure(&self) -> crate::measure::StudyMeasurements {
+        let leads: Vec<(String, Vec<f32>, Vec<f32>)> = self
+            .names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.beats[i].clone(), self.sigmas[i].clone()))
+            .collect();
+        let hr = if self.hr_bpm.is_finite() { Some(self.hr_bpm) } else { None };
+        measure_study(&leads, &self.fiducials(), hr, self.gain_sigma)
+    }
+
+    fn lead_measurements(&self) -> Vec<LeadMeasurements> {
+        self.measure().leads
+    }
+}
+
+fn opt(v: Option<f32>) -> String {
+    v.filter(|x| x.is_finite()).map(|x| format!("{x:.4}")).unwrap_or_else(|| "null".into())
+}
+
+fn optd(v: Option<f64>) -> String {
+    v.filter(|x| x.is_finite()).map(|x| format!("{x:.2}")).unwrap_or_else(|| "null".into())
+}
+
+/// Serial ST deltas between two studies, gated by their combined uncertainty.
+#[wasm_bindgen]
+pub fn st_deltas_json(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> String {
+    let (a, b) = (reference.lead_measurements(), comparison.lead_measurements());
+    let rows: Vec<String> = LEAD_ORDER
+        .iter()
+        .filter_map(|name| {
+            let ra = a.iter().find(|l| l.lead == *name)?;
+            let rb = b.iter().find(|l| l.lead == *name)?;
+            let d = st_delta(ra, rb, reference.bias_mv, comparison.bias_mv);
+            Some(format!(
+                r#"{{"lead":"{}","delta":{},"mdc":{},"notable":{},"belowLimit":{}}}"#,
+                d.lead,
+                opt(d.delta_mv),
+                if d.mdc95_mv.is_finite() { format!("{:.4}", d.mdc95_mv) } else { "null".into() },
+                d.notable,
+                d.below_detection_limit,
+            ))
+        })
+        .collect();
+    format!(r#"{{"clinicalThresholdMv":{CLINICAL_ST_MV},"leads":[{}]}}"#, rows.join(","))
 }
 
 /// One lead's registration between two studies.

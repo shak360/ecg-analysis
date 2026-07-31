@@ -433,3 +433,47 @@ ol, ul { padding: 0; list-style: none; }
   white-space: pre-wrap; margin: 12px 0 0; color: var(--text-muted);
   border-top: 1px solid var(--border); padding-top: 10px;
 }
+
+/* --- measurements --------------------------------------------------------- */
+
+.measurements { margin-top: 14px; }
+
+.cal-note {
+  font-size: 11.5px; line-height: 1.5; color: var(--text-muted);
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; margin-bottom: 12px;
+}
+.cal-note strong { color: var(--text); font-weight: 550; }
+
+.mtable {
+  width: 100%; border-collapse: collapse; margin-bottom: 14px;
+  font-family: var(--mono); font-size: 11.5px;
+}
+.mtable caption {
+  text-align: left; font-family: var(--font); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .05em; font-weight: 650;
+  color: var(--text-muted); padding-bottom: 6px;
+}
+.mtable th, .mtable td {
+  text-align: right; padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mtable thead th {
+  color: var(--text-muted); font-weight: 600; font-family: var(--font);
+  font-size: 11px; border-bottom-width: 2px;
+}
+.mtable tbody th[scope="row"] { text-align: left; font-weight: 600; color: var(--text); }
+.mtable td { color: var(--text-muted); }
+.mtable .delta { color: var(--text); }
+
+/* A flagged change gets colour; nothing else does, so colour means something. */
+.mtable tr.notable { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.mtable tr.notable .delta { color: var(--warn); font-weight: 650; }
+.mtable tr.unresolvable .delta { color: var(--text-faint); }
+
+.lim { color: var(--text-faint); font-size: 10.5px; }
+
+.mnote {
+  font-size: 11.5px; line-height: 1.5; color: var(--text-faint);
+  max-width: 78ch;
+}

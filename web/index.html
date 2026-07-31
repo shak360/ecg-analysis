@@ -40,10 +40,11 @@
   <div class="disclaimer" role="note">
     <strong>Not a medical device.</strong>
     This tool assists visual comparison of ECG tracings for research and educational use. It currently
-    shows <strong>morphology only</strong> &mdash; no millivolt or interval is reported as a measurement,
-    because that requires confirmed calibration and uncertainty gating that are not yet built. Paper
-    speed and gain below are <em>assumptions you set</em>. All findings must be verified against the
-    original tracings by a qualified clinician.
+    reports measurements with their
+    uncertainty. Gain is read from the calibration pulse where one is printed, and assumed otherwise
+    &mdash; the table says which. A change is flagged only when it exceeds both the detection limit of
+    that pair and the clinical threshold. All findings must be verified against the original tracings
+    by a qualified clinician.
   </div>
 
   <main id="main" class="layout">
@@ -136,6 +137,7 @@
           <span>shaded band = beat-to-beat spread</span>
           <span>dashed line = alignment anchor (QRS onset)</span>
         </div>
+        <div id="measurements" class="measurements"></div>
         <pre id="report" class="report"></pre>
       </div>
     </section>
