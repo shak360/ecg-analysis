@@ -11,5 +11,10 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
+    // The end-to-end test imports the vendored pdf.js, which is the browser
+    // build — correct, since it is what ships — and constructs a DOMMatrix at
+    // module scope. The stubs let it load under Node without dragging in a
+    // canvas implementation we would never draw to.
+    setupFiles: ["test/setup-pdfjs.ts"],
   },
 });
