@@ -47,6 +47,14 @@ export interface OverlayOptions {
   /** Draw the per-sample spread as a band around each trace. */
   showSigma: boolean;
   columns: number;
+  /**
+   * `"standard"` lays the leads out as a printout does — I/II/III down the
+   * first column, aVR/aVL/aVF down the second, then V1–V3 and V4–V6 — which is
+   * how a clinician expects to read them and how the source page is arranged.
+   * `"grid"` fills row-major across `columns`, for anything that is not a
+   * canonical 12-lead set.
+   */
+  arrangement: "standard" | "grid";
   /** Ceiling on panel height in CSS pixels; see the note in `drawOverlay`. */
   maxPanelHeightPx?: number;
 }
@@ -61,7 +69,8 @@ export const DEFAULT_OVERLAY: OverlayOptions = {
   mmPerMv: 10,
   showDifference: true,
   showSigma: true,
-  columns: 3,
+  columns: 4,
+  arrangement: "standard",
 };
 
 /**
@@ -141,8 +150,11 @@ export function drawOverlay(
   const dpr = globalThis.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || 900;
 
-  const cols = Math.max(1, opts.columns);
-  const rows = Math.ceil(leads.length / cols);
+  // A standard printout is four columns of three. Anything that is not a
+  // twelve-lead set falls back to a plain grid.
+  const standard = opts.arrangement === "standard" && leads.length === 12;
+  const cols = standard ? 4 : Math.max(1, opts.columns);
+  const rows = standard ? 3 : Math.ceil(leads.length / cols);
 
   const frameLen = leads[0]?.traces[0]?.samples.length ?? 401;
   const seconds = frameLen / opts.fsHz;
@@ -176,8 +188,9 @@ export function drawOverlay(
   const boxes = new Map<string, PanelBox>();
 
   leads.forEach((lead, i) => {
-    const c = i % cols;
-    const r = Math.floor(i / cols);
+    // Column-major for the standard layout, row-major otherwise.
+    const c = standard ? Math.floor(i / 3) : i % cols;
+    const r = standard ? i % 3 : Math.floor(i / cols);
     // Centre the panel in its cell when the height cap made it narrower.
     const x = gutter + c * (cellW + gutter) + (cellW - panelW) / 2;
     const y = gutter + r * (panelH + gutter);

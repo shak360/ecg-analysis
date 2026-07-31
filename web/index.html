@@ -23,58 +23,120 @@
       </div>
     </div>
 
+    <nav class="nav" aria-label="Main">
+      <a class="nav__link nav__link--current" href="./index.html" aria-current="page">Compare</a>
+      <a class="nav__link" href="./try.html">Single strip</a>
+      <a class="nav__link" href="./dev.html">Extraction</a>
+    </nav>
+
     <div class="topbar__right">
-      <p class="badge badge--privacy" title="All processing happens in this browser. No network requests carry your files.">
+      <p class="badge badge--privacy" title="Files are read in this browser and parsed in-page. There is no upload path in this application.">
         Runs entirely on this device
       </p>
-      <button type="button" class="btn btn--ghost" id="theme-toggle" aria-label="Toggle colour theme">
-        Theme
-      </button>
+      <button type="button" class="btn btn--ghost" id="theme-toggle">Theme</button>
     </div>
   </header>
 
   <div class="disclaimer" role="note">
     <strong>Not a medical device.</strong>
-    This tool assists visual comparison of ECG tracings for research and educational use. Measurements
-    are derived from digitized images and carry uncertainty that depends on source quality. Suggested
-    labels are automated pattern-matching against published criteria &mdash; a starting point for your
-    own reading, never a diagnosis. They are applied only when you accept them, they omit conditions
-    this tool cannot assess, and <strong>an absent suggestion means nothing</strong>. All findings must
-    be verified against the original tracings by a qualified clinician.
+    This tool assists visual comparison of ECG tracings for research and educational use. It currently
+    shows <strong>morphology only</strong> &mdash; no millivolt or interval is reported as a measurement,
+    because that requires confirmed calibration and uncertainty gating that are not yet built. Paper
+    speed and gain below are <em>assumptions you set</em>. All findings must be verified against the
+    original tracings by a qualified clinician.
   </div>
 
   <main id="main" class="layout">
     <section class="panel panel--studies" aria-labelledby="studies-heading">
-      <h2 id="studies-heading" class="panel__title">Studies</h2>
+      <div class="panel__head">
+        <h2 id="studies-heading" class="panel__title">Studies</h2>
+        <button type="button" class="btn btn--ghost btn--sm" id="clear-all" hidden>Clear all</button>
+      </div>
 
-      <div class="dropzone" id="dropzone" tabindex="0" role="button"
-           aria-describedby="dropzone-help">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-describedby="dropzone-help">
         <svg viewBox="0 0 24 24" class="dropzone__icon" aria-hidden="true" focusable="false">
           <path d="M12 16V4m0 0L7 9m5-5 5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
                 fill="none" stroke="currentColor" stroke-width="1.6"
                 stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <p class="dropzone__title">Drop ECGs here</p>
-        <p class="dropzone__hint" id="dropzone-help">
-          PDF, PNG, JPEG &middot; or click to browse
-        </p>
+        <p class="dropzone__hint" id="dropzone-help">Vector PDF &middot; or click to browse</p>
         <input type="file" id="file-input" multiple hidden
-               accept="application/pdf,image/png,image/jpeg,image/tiff,.pdf,.png,.jpg,.jpeg,.heic">
+               accept="application/pdf,.pdf">
       </div>
 
-      <ol class="study-list" id="study-list" aria-live="polite">
-        <li class="study-list__empty">No studies loaded yet.</li>
-      </ol>
+      <ol class="study-list" id="study-list" aria-live="polite"></ol>
+
+      <div class="assume">
+        <h3 class="assume__title">Assumed calibration</h3>
+        <p class="assume__note">
+          Not yet read from the tracing. Changing either re-analyses every study.
+        </p>
+        <div class="assume__row">
+          <label class="field">
+            <span>Paper speed</span>
+            <select id="speed">
+              <option value="25" selected>25 mm/s</option>
+              <option value="50">50 mm/s</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Gain</span>
+            <select id="gain">
+              <option value="5">5 mm/mV</option>
+              <option value="10" selected>10 mm/mV</option>
+              <option value="20">20 mm/mV</option>
+            </select>
+          </label>
+        </div>
+      </div>
     </section>
 
     <section class="panel panel--view" aria-labelledby="view-heading">
-      <h2 id="view-heading" class="panel__title">Comparison</h2>
+      <div class="panel__head">
+        <h2 id="view-heading" class="panel__title">Comparison</h2>
+        <div class="view-controls">
+          <label class="field field--inline">
+            <span>Display</span>
+            <select id="scale">
+              <option value="5">5 mm/mV</option>
+              <option value="10" selected>10 mm/mV</option>
+              <option value="20">20 mm/mV</option>
+            </select>
+          </label>
+          <label class="field field--inline">
+            <span>Layout</span>
+            <select id="cols">
+              <option value="standard" selected>Standard 3&times;4</option>
+              <option value="2">2 columns</option>
+              <option value="3">3 columns</option>
+              <option value="4">4 columns</option>
+              <option value="6">6 columns</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+        </div>
+      </div>
+
       <div class="placeholder" id="view-placeholder">
         <p>Load two or more ECGs to compare them.</p>
         <p class="placeholder__sub">
           Each study is registered onto a common voltage and time base before overlay, so
           differences in paper speed, gain, and baseline do not masquerade as clinical change.
         </p>
+      </div>
+
+      <div id="view-panel" hidden>
+        <canvas id="overlay"></canvas>
+        <div class="key">
+          <span><i class="swatch" style="background:#1b4a8f"></i> earlier</span>
+          <span><i class="swatch" style="background:#c2410c"></i> later</span>
+          <span><i class="swatch" style="background:#7c3aed"></i> difference</span>
+          <span>shaded band = beat-to-beat spread</span>
+          <span>dashed line = alignment anchor (QRS onset)</span>
+        </div>
+        <pre id="report" class="report"></pre>
       </div>
     </section>
   </main>

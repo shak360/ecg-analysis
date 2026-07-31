@@ -114,7 +114,8 @@ function render(): void {
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     showDifference: $<HTMLInputElement>("show-diff").checked,
     showSigma: $<HTMLInputElement>("show-sigma").checked,
-    columns: Number($<HTMLSelectElement>("cols").value),
+    arrangement: "standard",
+    columns: 4,
   });
 }
 
