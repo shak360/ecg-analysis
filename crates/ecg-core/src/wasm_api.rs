@@ -123,8 +123,11 @@ pub fn analyze_strip(t_s: &[f64], v_mv: &[f32], max_slope_mv_per_s: f32) -> Stri
 
     // Source density drives the intermediate grid: never interpolate onto a
     // grid coarser than the source, which would alias.
+    // Explicitly NaN-safe: a non-finite span means the caller handed us garbage
+    // timestamps, and inferring a sample rate from them would silently set the
+    // whole time base wrong.
     let span = t_s[n - 1] - t_s[0];
-    if !(span > 0.0) {
+    if !span.is_finite() || span <= 0.0 {
         return empty;
     }
     let f_src = (n - 1) as f64 / span;
