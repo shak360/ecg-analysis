@@ -16,6 +16,7 @@ pub mod beats;
 pub mod config;
 pub mod dsp;
 pub mod fiducial;
+pub mod serial;
 mod wasm_api;
 
 pub use wasm_api::{analyze_strip, StripAnalysis};
