@@ -29,7 +29,12 @@
 //! while QRS morphology is unchanged, which is precisely the case where the
 //! registration interlock already refuses to align.
 
-use ecg_core::{compare_studies, notable_st_leads, StudyBuilder};
+use ecg_core::serial::gate::{
+    gate_all, Confounder, ConfounderScreens, CoverageEvidence, FilterEvidence, IdentityEvidence,
+    PairEvidence, Refusal, RhoGain, Screen, SourceTier, StudyEvidence, SwapEvidence, TierEvidence,
+    Verdict,
+};
+use ecg_core::{compare_studies, significant_st_leads, StudyBuilder};
 
 const FS: f64 = 500.0;
 const DURATION_S: f64 = 10.0;
@@ -283,9 +288,71 @@ fn build_study(
     b.set_rhythm(&t, &strip);
 
     let mut a = b.analyze(true);
-    // Vector-PDF calibration quality: gain read from the pulse.
-    a.set_calibration_quality(0.015, 0.002);
+    // Vector-PDF calibration quality: gain read from the pulse, which is the
+    // discriminant the gate's gain precondition actually tests.
+    a.set_gain(true, 0.015);
     a
+}
+
+/// Build a study the way a cart export or a public corpus supplies one: all
+/// twelve leads recorded simultaneously for the full ten seconds.
+///
+/// The 3×4 printout above cannot reach `Significant` under this gate whatever
+/// else is true of it, and not because of any hole: a 2.5 s column at a resting
+/// rate holds two beats, and spec §5.5 makes fewer than three a hard confounder.
+/// That is asserted directly by
+/// `a_three_by_four_printout_at_a_resting_rate_is_confounded_by_its_own_beat_count`.
+/// A simultaneous recording gives eleven beats a lead, so the tests that need
+/// `Significant` to be reachable at all use this.
+fn build_simultaneous_study(leads: &[(String, Vec<f32>)]) -> ecg_core::StudyAnalysis {
+    let mut b = StudyBuilder::new();
+    for name in LEADS {
+        let full = &leads.iter().find(|(l, _)| l == name).unwrap().1;
+        let t: Vec<f64> = (0..full.len()).map(|k| k as f64 / FS).collect();
+        b.add_lead(name, &t, full, 0.0);
+    }
+    let ii = &leads.iter().find(|(l, _)| l == "II").unwrap().1;
+    let t: Vec<f64> = (0..ii.len()).map(|k| k as f64 / FS).collect();
+    b.set_rhythm(&t, ii);
+
+    let mut a = b.analyze(true);
+    a.set_gain(true, 0.015);
+    a
+}
+
+/// The pair-level screens with every one of them clear.
+///
+/// Nothing in the pipeline produces this: six of the seven are `NotScreened`
+/// there, and `NotScreened` counts as present. Supplying `Clear` here is a claim
+/// about the fixture — synthesised beats with no paper, no electrodes and one
+/// rhythm — not a claim about any real study.
+fn clear_screens() -> ConfounderScreens {
+    ConfounderScreens {
+        paper_speed: Screen::Clear,
+        zero_sum_residual: Screen::Clear,
+        pq_baseline: Screen::Clear,
+        precordial_shift: Screen::Clear,
+        ventricular_conduction_class: Screen::Clear,
+        rhythm_class: Screen::Clear,
+        conduction: Screen::Clear,
+    }
+}
+
+/// A study's evidence with the five open holes filled in by hand.
+///
+/// The struct's fields are `pub` precisely so a test can do this without a
+/// test-only constructor on the boundary. Every line here is a capability the
+/// pipeline does not have; when one lands, its line disappears from this helper
+/// and from `the_boundary_declares_every_hole_it_still_has` at the same time.
+fn with_holes_filled(mut e: StudyEvidence) -> StudyEvidence {
+    e.tier = TierEvidence::Measured(SourceTier::Vector);
+    e.filter = FilterEvidence::Recorded(0.05);
+    e.swap = SwapEvidence::Determined("standard");
+    e.identity = IdentityEvidence::Passed;
+    for l in e.leads.iter_mut() {
+        l.coverage_st = CoverageEvidence::Measured(1.0);
+    }
+    e
 }
 
 const ST_SHIFT: f32 = 0.25;
@@ -333,18 +400,147 @@ fn leaves_the_untouched_leads_alone() {
     }
 }
 
+/// The gate declines every lead, and says which evidence it is missing.
+///
+/// This test used to be `flags_exactly_the_injected_leads`, and it asserted that
+/// a 0.25 mV injection came back flagged in exactly V2, V3 and V4. It passed
+/// against a two-state gate that checked none of the spec's seven preconditions:
+/// what it really established was that the *measurement* path recovers the
+/// change, which is the same thing its two siblings above already assert on the
+/// levels themselves.
+///
+/// The gate now refuses instead, because ST-window coverage is not measured and
+/// a refusal is the correct output of a gate whose evidence does not exist. The
+/// assertion is the refusal *and its reason*: "refuses everything" would also
+/// pass if the gate were simply broken, and the reason is what distinguishes
+/// those two.
+///
+/// Its power as a regression test on the measurement path moves to
+/// `the_injected_leads_are_significant_once_the_missing_evidence_is_supplied`.
 #[test]
-fn flags_exactly_the_injected_leads() {
+fn the_gate_refuses_every_lead_while_the_evidence_it_needs_is_unmeasured() {
     let base = generate(68.0, &[], 0.0, 1);
     let follow = generate(82.0, &TARGET.map(|l| (l, ST_SHIFT)), 0.0, 2);
     let a = build_study(&base, None);
     let b = build_study(&follow, None);
 
-    let mut flagged = notable_st_leads(&a, &b);
-    flagged.sort();
-    let mut want = TARGET.to_vec();
+    let (ea, eb) = (a.evidence(), b.evidence());
+    let screens = clear_screens();
+    let pair = PairEvidence {
+        reference: &ea,
+        comparison: &eb,
+        screens: &screens,
+        rho_gain: RhoGain::Default,
+    };
+
+    let verdicts = gate_all(&pair);
+    assert_eq!(verdicts.len(), 12, "all twelve leads must be reported");
+    for v in &verdicts {
+        match (&v.digitization, &v.with_bio) {
+            (
+                Verdict::Unmeasurable { reason: Refusal::CoverageUnmeasured },
+                Verdict::Unmeasurable { reason: Refusal::CoverageUnmeasured },
+            ) => {}
+            other => panic!(
+                "{}: expected both bands to refuse for unmeasured ST-window coverage, got {other:?}",
+                v.lead
+            ),
+        }
+        // The difference itself is still reported. A refusal means "this
+        // difference is not established as a change", not "there is no
+        // difference", and dropping the number turns the first into the second.
+        assert!(v.delta_mv.is_some(), "{}: the measured difference was withheld", v.lead);
+    }
+
+    assert!(
+        significant_st_leads(&a, &b).is_empty(),
+        "nothing may be claimed significant while the gate's evidence is unmeasured"
+    );
+}
+
+/// The measurement path still recovers the injected change — once the gate is
+/// given the evidence the pipeline cannot yet supply.
+///
+/// This is the surviving half of `flags_exactly_the_injected_leads`. It fills
+/// the five holes by hand, which no production path may do, and then asserts
+/// what the old test asserted: exactly V2, V3 and V4, and none of the other
+/// nine.
+#[test]
+fn the_injected_leads_are_significant_once_the_missing_evidence_is_supplied() {
+    let base = generate(68.0, &[], 0.0, 1);
+    let follow = generate(82.0, &TARGET.map(|l| (l, ST_SHIFT)), 0.0, 2);
+    let a = build_simultaneous_study(&base);
+    let b = build_simultaneous_study(&follow);
+
+    let (ea, eb) = (with_holes_filled(a.evidence()), with_holes_filled(b.evidence()));
+    let screens = clear_screens();
+    let pair = PairEvidence {
+        reference: &ea,
+        comparison: &eb,
+        screens: &screens,
+        rho_gain: RhoGain::Default,
+    };
+
+    let mut significant: Vec<String> = gate_all(&pair)
+        .into_iter()
+        .filter(|v| matches!(v.digitization, Verdict::Significant { .. }))
+        .map(|v| v.lead)
+        .collect();
+    significant.sort();
+    let mut want: Vec<String> = TARGET.iter().map(|l| l.to_string()).collect();
     want.sort();
-    assert_eq!(flagged, want, "flagged set should be exactly the injected leads");
+    assert_eq!(
+        significant, want,
+        "the significant set should be exactly the injected leads"
+    );
+}
+
+/// A standard 3×4 printout is confounded by its own geometry, holes or no holes.
+///
+/// Worth stating out loud because it is a property of the product rather than of
+/// this pipeline: 2.5 s of paper at a resting rate holds two beats, spec §5.5
+/// makes fewer than three a hard confounder, and a hard confounder downgrades
+/// `Significant` to `Indeterminate`. So the best possible verdict on a 0.25 mV
+/// ST elevation read off a standard printout — with every one of the gate's
+/// holes closed and every screen clear — is "indeterminate, too few beats".
+///
+/// The remedy is not in the gate. It is more beats: a rhythm strip long enough
+/// to ensemble against, or a simultaneous recording.
+#[test]
+fn a_three_by_four_printout_at_a_resting_rate_is_confounded_by_its_own_beat_count() {
+    let base = generate(68.0, &[], 0.0, 1);
+    let follow = generate(82.0, &TARGET.map(|l| (l, ST_SHIFT)), 0.0, 2);
+    let a = build_study(&base, None);
+    let b = build_study(&follow, None);
+
+    let (ea, eb) = (with_holes_filled(a.evidence()), with_holes_filled(b.evidence()));
+    assert!(
+        ea.leads.iter().any(|l| l.n_beats < 3),
+        "the printout fixture was expected to yield fewer than three beats a panel"
+    );
+
+    let screens = clear_screens();
+    let pair = PairEvidence {
+        reference: &ea,
+        comparison: &eb,
+        screens: &screens,
+        rho_gain: RhoGain::Default,
+    };
+    for lead in TARGET {
+        let v = gate_all(&pair).into_iter().find(|v| v.lead == lead).unwrap();
+        assert!(
+            v.digitization
+                .confounders()
+                .iter()
+                .any(|c| matches!(c, Confounder::BeatsLessThanThree { .. })),
+            "{lead}: expected a beat-count confounder, got {:?}",
+            v.digitization
+        );
+        assert!(
+            !matches!(v.digitization, Verdict::Significant { .. }),
+            "{lead}: a two-beat panel must not produce a significant change"
+        );
+    }
 }
 
 #[test]
@@ -376,20 +572,92 @@ fn refuses_to_flag_anything_on_a_noisy_unchanged_pair() {
     // Same patient, no injected change, only noise. The apparent ST shifts this
     // produces are real numbers; the gate must decline every one of them rather
     // than announce new ST elevation in a patient whose tracing merely got noisy.
+    //
+    // Say plainly what this proves today: nothing. It passes trivially, because
+    // the gate refuses every lead of every pair while ST-window coverage is
+    // unmeasured. It is retained as the guard that must still hold when the
+    // holes close — at which point it starts testing the thing it names, and a
+    // regression that makes noise look like ischaemia fails here first. The
+    // version below the line does the work in the meantime.
     let a = build_study(&generate(68.0, &[], 0.0, 1), None);
     let b = build_study(&generate(74.0, &[], 0.05, 7), None);
 
-    let flagged = notable_st_leads(&a, &b);
+    let flagged = significant_st_leads(&a, &b);
     assert!(
         flagged.is_empty(),
         "flagged {flagged:?} on a pair that differs only by noise"
     );
+
+    // ---- and with the missing evidence supplied, which is the real test ----
+    //
+    // Rebuilt on the simultaneous fixture rather than reusing the printout pair
+    // above, and that rebuild is the whole of what makes this half a test. A
+    // 2.5 s column at a resting rate holds two beats, so `BeatsLessThanThree`
+    // confounds every lead of a printout pair and `Significant` is unreachable
+    // whatever the measurement path returns — measured on that fixture, injecting
+    // half a millivolt of ST into all twelve leads still yields twelve
+    // non-significant verdicts. The assertion below would have survived exactly
+    // the regression it is named for. Eleven beats a lead removes the confounder,
+    // so the refusal now has to come from the numbers, and
+    // `the_same_noisy_pair_still_flags_an_injected_change` proves the branch is
+    // reachable at all.
+    let sa = build_simultaneous_study(&generate(68.0, &[], 0.0, 1));
+    let sb = build_simultaneous_study(&generate(74.0, &[], 0.05, 7));
+    let (ea, eb) = (with_holes_filled(sa.evidence()), with_holes_filled(sb.evidence()));
+    let screens = clear_screens();
+    let pair = PairEvidence {
+        reference: &ea,
+        comparison: &eb,
+        screens: &screens,
+        rho_gain: RhoGain::Default,
+    };
+    for v in gate_all(&pair) {
+        assert!(
+            !matches!(v.digitization, Verdict::Significant { .. }),
+            "{}: noise alone was claimed as a significant ST change ({:?})",
+            v.lead,
+            v.digitization
+        );
+    }
 }
 
-// ---------------------------------------------------------------------------
-// The negative control
-// ---------------------------------------------------------------------------
+/// The positive control for the noise test above.
+///
+/// A negative control nobody has shown can fail is not a control, and this suite
+/// has already been bitten once by an assertion written over a branch no fixture
+/// could reach. Same noisy comparison study, same gate, same hand-filled
+/// evidence, with 0.25 mV injected into V2, V3 and V4: those three must come back
+/// significant and nothing else may. That is what establishes that "no lead was
+/// significant" next door is the gate declining real measurements rather than an
+/// assertion over an unreachable branch.
+#[test]
+fn the_same_noisy_pair_still_flags_an_injected_change() {
+    let a = build_simultaneous_study(&generate(68.0, &[], 0.0, 1));
+    let b = build_simultaneous_study(&generate(74.0, &TARGET.map(|l| (l, ST_SHIFT)), 0.05, 7));
 
+    let (ea, eb) = (with_holes_filled(a.evidence()), with_holes_filled(b.evidence()));
+    let screens = clear_screens();
+    let pair = PairEvidence {
+        reference: &ea,
+        comparison: &eb,
+        screens: &screens,
+        rho_gain: RhoGain::Default,
+    };
+
+    let mut significant: Vec<String> = gate_all(&pair)
+        .into_iter()
+        .filter(|v| matches!(v.digitization, Verdict::Significant { .. }))
+        .map(|v| v.lead)
+        .collect();
+    significant.sort();
+    let mut want: Vec<String> = TARGET.iter().map(|l| l.to_string()).collect();
+    want.sort();
+    assert_eq!(
+        significant, want,
+        "with noise on top of a real 0.25 mV injection the gate must still find \
+         exactly the injected leads, or the refusal next door proves nothing"
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Negative controls

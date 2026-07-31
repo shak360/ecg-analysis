@@ -25,8 +25,9 @@
 //! which a genuine QT change reads as an ST change.
 
 use crate::config::{
-    ALIGN_MAX_LAG_MS, ENSEMBLE_MEDIAN_MIN_N, FRAME_N, FRAME_T0_S, RHO_OK_RASTER,
-    RHO_OK_VECTOR, RHO_SUSPECT, SCALE_OUTLIER_FRAC, SIGMA_ENS_FLOOR_FRAC, TEMPLATE_WIN_MS,
+    ALIGN_MAX_LAG_MS, ENSEMBLE_MEDIAN_MIN_N, FRAME_N, FRAME_T0_S, MIN_BEATS_FOR_DELTA,
+    RHO_OK_RASTER, RHO_OK_VECTOR, RHO_SUSPECT, SCALE_OUTLIER_FRAC, SIGMA_ENS_FLOOR_FRAC,
+    TEMPLATE_WIN_MS,
 };
 
 /// Where the samples came from, which sets the correlation threshold a beat must
@@ -95,8 +96,14 @@ impl EnsembleBeat {
     /// alignment blunting a multi-beat combination has. Comparing a 1-beat lead
     /// against a 4-beat lead manufactures "new Q wave" findings, so n=1 is
     /// display-only by construction.
+    ///
+    /// The threshold is `MIN_BEATS_FOR_DELTA` and not a literal 2. It was a
+    /// literal, which put a second copy of a §16 constant here where nobody
+    /// would think to look for one; `measure::measure_lead` applies the same
+    /// threshold to the beat *count*, because the measurement path carries the
+    /// count and not the beat it came from.
     pub fn measurable(&self) -> bool {
-        self.n_used >= 2
+        self.n_used as u32 >= MIN_BEATS_FOR_DELTA
     }
 }
 

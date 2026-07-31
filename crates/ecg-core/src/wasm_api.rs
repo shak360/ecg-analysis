@@ -4,29 +4,34 @@
 //! ensemble beats, fiducials, and — for a pair of studies — a per-lead
 //! registration. No per-sample calls cross the boundary.
 //!
-//! **Nothing here reports a clinical amplitude or interval as a measurement.**
-//! Those require a confirmed gain and the uncertainty gate, neither of which is
-//! built. Morphology and differences render; numbers do not.
+//! **No serial difference crossing this boundary is claimed as a change.**
+//! `serial::gate` decides that, and it refuses whenever a precondition it cannot
+//! evaluate stands in the way. `StudyAnalysis::evidence` is the one place those
+//! holes are declared, and today it declares five of them, so every lead of
+//! every real pair comes back `Unmeasurable`. The levels and the differences
+//! still render, with their bands; the word "change" does not.
 
 use wasm_bindgen::prelude::*;
 
 use crate::beats::detect::{detect_qrs, Beat, BeatClass};
-use crate::beats::ensemble::{ensemble, EnsembleBeat, Provenance};
+use crate::beats::ensemble::{ensemble, Provenance};
 use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
-use crate::config::{FRAME_T0_S, FS, PANEL_WINDOW_S};
+use crate::config::{
+    CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV,
+};
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
 use crate::dsp::median_filter::provisional_detrend;
 use crate::dsp::resample::{
     column_envelope, intermediate_rate, pchip_uniform, resample, Vertex,
 };
 use crate::fiducial::{fiducials, r_index, GlobalFiducials, Unmeasurable, FRAME_LEN};
-use crate::measure::{measure_study, st_delta, LeadMeasurements, CLINICAL_ST_MV};
+use crate::measure::{measure_study, LeadMeasurements};
+use crate::serial::gate::{
+    gate_all, pair_blockers, ConfounderScreens, CoverageEvidence, FilterEvidence, GainEvidence,
+    IdentityEvidence, LeadEvidence, LeadVerdict, PairEvidence, RhoGain, Screen, StudyEvidence,
+    SwapEvidence, TierEvidence, Verdict,
+};
 use crate::serial::register::register_lead;
-
-/// Canonical 12-lead order.
-pub const LEAD_ORDER: [&str; 12] = [
-    "I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6",
-];
 
 /// One lead's irregular vertices plus where its panel sits in the record.
 struct RawLead {
@@ -52,6 +57,8 @@ struct Built {
     beats: Vec<Vec<f32>>,
     sigmas: Vec<Vec<f32>>,
     n_used: Vec<u32>,
+    /// Leads whose ensemble is display-only, per `EnsembleBeat::measurable`.
+    display_only: Vec<String>,
 }
 
 impl Built {
@@ -80,6 +87,7 @@ fn build_pass(
         beats: Vec::new(),
         sigmas: Vec::new(),
         n_used: Vec::new(),
+        display_only: Vec::new(),
     };
 
     for p in panels {
@@ -104,7 +112,14 @@ fn build_pass(
         out.beats.push(eb.v_mv.clone());
         out.sigmas.push(eb.sigma_mv.clone());
         out.n_used.push(eb.n_used as u32);
-        let _: &EnsembleBeat = &eb;
+        // `measurable()` was written and then never called, so the only thing
+        // stopping a single-beat lead from being gated was an INFINITY in the
+        // sigma array — which anyone who later floors that array for display
+        // would have removed, silently, with no test failing. The count now
+        // drives the gate, and this says out loud which leads it excluded.
+        if !eb.measurable() {
+            out.display_only.push(p.name.clone());
+        }
     }
     out
 }
@@ -342,7 +357,22 @@ impl StudyBuilder {
             ));
         }
 
-        let Built { names, signals, offsets, beats, sigmas, n_used } = built;
+        let Built { names, signals, offsets, beats, sigmas, n_used, display_only } = built;
+
+        // A single-beat lead is not a slightly noisier lead. Its beat-to-beat
+        // spread is unestimable, so the gate excludes it from every serial
+        // difference — and a lead that silently produces no verdict reads as a
+        // lead with nothing to report.
+        if !display_only.is_empty() {
+            warnings.push(format!(
+                "{}: combined from a single beat, so the tracing is drawn but no serial \
+                 difference in {} can be gated. A one-beat ensemble carries full \
+                 single-beat noise and none of the averaging that makes a difference \
+                 measurable.",
+                display_only.join(", "),
+                if display_only.len() == 1 { "it" } else { "them" },
+            ));
+        }
 
         StudyAnalysis {
             names,
@@ -358,9 +388,14 @@ impl StudyBuilder {
             t_offset: f.t_offset.map(|v| v as i32).unwrap_or(-1),
             warnings,
             onset_shift_ms,
-            // Overwritten by set_calibration_quality once the pulse is read.
-            gain_sigma: 0.10,
-            bias_mv: if from_vector_pdf { 0.002 } else { 0.012 },
+            // Overwritten by `set_gain` once the calibration pulse is read.
+            //
+            // The default is `NotRecorded` and not an assumed relative sigma,
+            // because those two are the same float and different claims. There
+            // is deliberately no bias field here any more: bias follows from the
+            // source tier, which nothing measures yet, so the gate prices it at
+            // the worst tier rather than at whatever the file extension implied.
+            gain: GainEvidence::NotRecorded,
         }
     }
 }
@@ -393,18 +428,28 @@ pub struct StudyAnalysis {
     warnings: Vec<String>,
     /// How far the second pass moved the QRS onset, milliseconds.
     onset_shift_ms: f64,
-    /// Relative 1-sigma on the gain, propagated into every amplitude.
-    gain_sigma: f32,
-    /// Systematic amplitude bias for this provenance, millivolts.
-    bias_mv: f32,
+    /// How this study's millivolt scale was established, if it was.
+    gain: GainEvidence,
 }
 
 #[wasm_bindgen]
 impl StudyAnalysis {
-    /// Record the calibration quality the JS side measured from the pulse.
-    pub fn set_calibration_quality(&mut self, gain_relative_sigma: f32, bias_mv: f32) {
-        self.gain_sigma = gain_relative_sigma;
-        self.bias_mv = bias_mv;
+    /// Record how this study's millivolt scale was established.
+    ///
+    /// `from_calibration_pulse` is the whole point of the call. A relative sigma
+    /// of 0.015 read off a pulse and a relative sigma of 0.015 assumed from a
+    /// header string are the same float and different claims, and only the first
+    /// satisfies the gate's gain precondition.
+    ///
+    /// The caller no longer supplies a bias. Bias is a property of the source
+    /// tier, not of the calibration, and passing it across the boundary put a
+    /// clinical number in TypeScript — a live violation of decision 0004.
+    pub fn set_gain(&mut self, from_calibration_pulse: bool, relative_sigma: f32) {
+        self.gain = if from_calibration_pulse {
+            GainEvidence::FromPulse { relative_sigma }
+        } else {
+            GainEvidence::Assumed { relative_sigma }
+        };
     }
 
     /// Measurements for this study, as a JSON string.
@@ -423,7 +468,16 @@ impl StudyAnalysis {
                     opt(l.st_j_mv), opt(l.st_j60_mv), opt(l.st_slope_mv_s),
                     opt(l.r_amplitude_mv), opt(l.s_amplitude_mv), opt(l.q_amplitude_mv),
                     opt(l.q_duration_ms), opt(l.t_amplitude_mv),
-                    if l.sigma_st_mv.is_finite() { format!("{:.5}", l.sigma_st_mv) } else { "null".into() },
+                    // The RSS of the two terms, or null when either is
+                    // unestimable. Null is the honest answer: an ST level whose
+                    // uncertainty nobody could estimate has no band, and a zero
+                    // here would render as a perfectly certain measurement.
+                    match (l.sigma_ens_mv, l.sigma_gain_mv) {
+                        (Some(e), Some(g)) if (e * e + g * g).is_finite() => {
+                            format!("{:.5}", (e * e + g * g).sqrt())
+                        }
+                        _ => "null".into(),
+                    },
                     l.st_note.map(|n| format!(r#""{n}""#)).unwrap_or_else(|| "null".into()),
                 )
             })
@@ -561,11 +615,79 @@ impl StudyAnalysis {
             .map(|(i, n)| (n.clone(), self.beats[i].clone(), self.sigmas[i].clone()))
             .collect();
         let hr = if self.hr_bpm.is_finite() { Some(self.hr_bpm) } else { None };
-        measure_study(&leads, &self.fiducials(), hr, self.gain_sigma)
+        // `n_used` was computed by the ensemble stage and never plumbed anywhere.
+        // It is the reason a single-beat lead was only fail-closed by accident:
+        // nothing stopped it being gated except an INFINITY in a sigma array.
+        measure_study(
+            &leads,
+            &self.fiducials(),
+            hr,
+            self.gain.relative_sigma(),
+            &self.n_used,
+        )
     }
 
     fn lead_measurements(&self) -> Vec<LeadMeasurements> {
         self.measure().leads
+    }
+
+    /// This study's side of the gate's evidence, as the pipeline can supply it
+    /// today.
+    ///
+    /// This is the single site where a hole is declared. Every `NotMeasured` /
+    /// `NotChecked` / `NotDetermined` / `Unreadable` below is a pipeline
+    /// capability that does not exist, named so that closing it is one visible
+    /// edit here and a changed assertion in
+    /// `the_boundary_declares_every_hole_it_still_has`.
+    ///
+    /// The fields are `pub`, so a test can supply a hole and exercise the gate
+    /// beyond it without a test-only constructor. Production code must not: an
+    /// overwrite here is a claim that something was measured.
+    pub fn evidence(&self) -> StudyEvidence {
+        let m = self.measure();
+        StudyEvidence {
+            // No runtime tier estimator exists (spec §5.1 measures tier from
+            // grid pitch, edge rise, tile pitch spread and illumination range).
+            // Claiming tier A because the bytes arrived in a PDF is exactly the
+            // substitution decision 44 names by hand.
+            tier: TierEvidence::NotMeasured,
+            gain: self.gain,
+            // The cart's header text is not parsed, so the high-pass corner is
+            // unknown rather than absent. §8 risk 3 prices that; it does not
+            // refuse it.
+            filter: FilterEvidence::Unreadable,
+            // No permutation search (§17), so the cable arrangement is
+            // undetermined. Einthoven's law holds under an LA/RA reversal, so
+            // the identity checks could not stand in for this even if they ran.
+            swap: SwapEvidence::NotDetermined,
+            // The identity residuals live in TypeScript at a different
+            // normalisation (`layout.ts`'s EINTHOVEN_MAX 0.20 against §17's
+            // ID_LIMB_PASS 0.03), and reconciling the two is not a rename.
+            identity: IdentityEvidence::NotChecked,
+            hr_bpm: if self.hr_bpm.is_finite() { Some(self.hr_bpm) } else { None },
+            leads: m
+                .leads
+                .iter()
+                .enumerate()
+                .map(|(i, l)| LeadEvidence {
+                    lead: l.lead.clone(),
+                    st_j_mv: l.st_j_mv,
+                    // Conservative by roughly √10 in the safe direction: the
+                    // ensemble sigma is read at the single J-point sample while
+                    // st_j_mv is a 20 ms mean of ten. Fixing the estimator and
+                    // retuning the MDC floor are one decision, and not this one.
+                    var_indep_mv2: l.sigma_ens_mv.map(|s| s * s),
+                    sigma_gain_mv: l.sigma_gain_mv,
+                    n_beats: self.n_used.get(i).copied().unwrap_or(0),
+                    // The resample validity mask is dropped in `condition`
+                    // before it can be carried through the ensemble, so the
+                    // fraction of the ST window backed by real samples is not
+                    // measured. Assuming 1.0 would let an ST level computed
+                    // entirely from interpolated pixels read as a measured one.
+                    coverage_st: CoverageEvidence::NotMeasured,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -596,46 +718,184 @@ pub fn serial_findings(reference: &StudyAnalysis, comparison: &StudyAnalysis) ->
     .collect()
 }
 
-/// Leads whose ST change cleared both the detection limit and the clinical
-/// threshold.
+/// The screens that apply to a pair rather than to one study.
 ///
-/// The same gate `st_deltas_json` applies, as a plain list — this is the
-/// question the acceptance test asks, and the one a caller usually wants.
+/// One of the seven can be run today. `serial::findings` compares the two
+/// studies' global QRS durations, which is the change no correlation interlock
+/// can see — a complex dilated by 30% still correlates at 0.96, because it is
+/// the same shape drawn wider. The other six are `NotScreened`, which counts as
+/// present: a screen that has not run can neither confirm nor exclude what it
+/// looks for.
+fn pair_screens(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> ConfounderScreens {
+    use crate::serial::findings::{qrs_duration_ms, serial_findings as findings};
+    let a = qrs_duration_ms(reference.qrs_onset, reference.qrs_offset, FS);
+    let b = qrs_duration_ms(comparison.qrs_onset, comparison.qrs_offset, FS);
+    let conduction = match (a, b) {
+        // Silence from `serial_findings` means "no change past the threshold"
+        // only when both durations were measurable. When either is not, nothing
+        // was established and the screen has not run.
+        (Some(_), Some(_)) if findings(a, b).is_empty() => Screen::Clear,
+        (Some(_), Some(_)) => Screen::Present,
+        _ => Screen::NotScreened,
+    };
+    ConfounderScreens {
+        paper_speed: Screen::NotScreened,
+        zero_sum_residual: Screen::NotScreened,
+        pq_baseline: Screen::NotScreened,
+        precordial_shift: Screen::NotScreened,
+        ventricular_conduction_class: Screen::NotScreened,
+        rhythm_class: Screen::NotScreened,
+        conduction,
+    }
+}
+
+/// The gate's verdicts for one pair, computed once and shared by both exports.
+fn verdicts_of(
+    reference: &StudyAnalysis,
+    comparison: &StudyAnalysis,
+) -> (Vec<LeadVerdict>, Vec<crate::serial::gate::Refusal>) {
+    let (a, b) = (reference.evidence(), comparison.evidence());
+    let screens = pair_screens(reference, comparison);
+    let pair = PairEvidence {
+        reference: &a,
+        comparison: &b,
+        screens: &screens,
+        // Nothing in the pipeline evidences that two studies came off the same
+        // cart at the same printed gain, and rho > 0 narrows the interval.
+        rho_gain: RhoGain::Default,
+    };
+    (gate_all(&pair), pair_blockers(&pair))
+}
+
+/// Leads whose serial ST change is significant in **both** uncertainty bands.
+///
+/// §5.3's point is that showing one band alone misleads, and a list of names can
+/// only show one — so it shows the conservative one. A lead appears here only
+/// when the change survives the repeat-recording variation nobody controls as
+/// well as the digitisation error this pipeline does. `st_verdicts_json` carries
+/// both bands and is the authority for anything a reader sees.
+///
+/// Expect this to be empty on every real pair until the gate's evidence exists.
+/// That is the honest state of the pipeline, not a bug in this function.
 #[wasm_bindgen]
-pub fn notable_st_leads(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> Vec<String> {
-    let (a, b) = (reference.lead_measurements(), comparison.lead_measurements());
-    LEAD_ORDER
-        .iter()
-        .filter_map(|name| {
-            let ra = a.iter().find(|l| l.lead == *name)?;
-            let rb = b.iter().find(|l| l.lead == *name)?;
-            let d = st_delta(ra, rb, reference.bias_mv, comparison.bias_mv);
-            d.notable.then_some(d.lead)
+pub fn significant_st_leads(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> Vec<String> {
+    verdicts_of(reference, comparison)
+        .0
+        .into_iter()
+        .filter(|v| {
+            matches!(v.digitization, Verdict::Significant { .. })
+                && matches!(v.with_bio, Verdict::Significant { .. })
         })
+        .map(|v| v.lead)
         .collect()
 }
 
-/// Serial ST deltas between two studies, gated by their combined uncertainty.
+/// The five-state serial ST verdict for all twelve leads, as a JSON string.
+///
+/// Twelve rows unconditionally, in canonical order. A lead absent from either
+/// study gets a row saying so, because dropping it makes "absent"
+/// indistinguishable from "not notable".
 #[wasm_bindgen]
-pub fn st_deltas_json(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> String {
-    let (a, b) = (reference.lead_measurements(), comparison.lead_measurements());
-    let rows: Vec<String> = LEAD_ORDER
+pub fn st_verdicts_json(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> String {
+    let (verdicts, blockers) = verdicts_of(reference, comparison);
+
+    let blocker_rows: Vec<String> = blockers
         .iter()
-        .filter_map(|name| {
-            let ra = a.iter().find(|l| l.lead == *name)?;
-            let rb = b.iter().find(|l| l.lead == *name)?;
-            let d = st_delta(ra, rb, reference.bias_mv, comparison.bias_mv);
-            Some(format!(
-                r#"{{"lead":"{}","delta":{},"mdc":{},"notable":{},"belowLimit":{}}}"#,
-                d.lead,
-                opt(d.delta_mv),
-                if d.mdc95_mv.is_finite() { format!("{:.4}", d.mdc95_mv) } else { "null".into() },
-                d.notable,
-                d.below_detection_limit,
-            ))
+        .map(|r| {
+            format!(
+                r#"{{"code":"{}","sentence":"{}"}}"#,
+                r.code(),
+                escape(&r.sentence())
+            )
         })
         .collect();
-    format!(r#"{{"clinicalThresholdMv":{CLINICAL_ST_MV},"leads":[{}]}}"#, rows.join(","))
+
+    let lead_rows: Vec<String> = verdicts
+        .iter()
+        .map(|v| {
+            format!(
+                r#"{{"lead":"{}","deltaMv":{},"digitization":{},"withBio":{}}}"#,
+                v.lead,
+                opt(v.delta_mv),
+                verdict_json(&v.digitization),
+                verdict_json(&v.with_bio),
+            )
+        })
+        .collect();
+
+    format!(
+        r#"{{"clinicalThresholdMv":{CLINICAL_DELTA_ST_MV},"stDisplayQuantumMv":{ST_DISPLAY_QUANTUM_MV},"pairBlockers":[{}],"leads":[{}]}}"#,
+        blocker_rows.join(","),
+        lead_rows.join(","),
+    )
+}
+
+/// One verdict as a plain-data object.
+///
+/// `state` is the discriminant; `reason` carries the refusal or the
+/// indeterminacy and is null on the other three states. Every numeric field is
+/// null where the state does not define it, rather than zero — a zero MDC on a
+/// refusal is the same lie this whole change exists to remove.
+fn verdict_json(v: &Verdict) -> String {
+    let reason = match v {
+        Verdict::Unmeasurable { reason } => format!(r#""{}""#, reason.code()),
+        Verdict::Indeterminate { reason, .. } => format!(r#""{}""#, reason.code()),
+        _ => "null".into(),
+    };
+    let ci = match v {
+        Verdict::Significant { ci_mv, .. } => {
+            format!("[{:.4},{:.4}]", ci_mv.0, ci_mv.1)
+        }
+        _ => "null".into(),
+    };
+    let bound = match v {
+        Verdict::NoChange { bound_mv, .. } => format!("{bound_mv:.4}"),
+        _ => "null".into(),
+    };
+    let confounders: Vec<String> =
+        v.confounders().iter().map(|c| format!(r#""{}""#, c.code())).collect();
+    let limiter = match v.limiter() {
+        Some(l) => format!(
+            r#"{{"study":"{}","sigmaMv":{:.4},"ratio":{:.4},"dominant":{}}}"#,
+            l.study.code(),
+            l.sigma_mv,
+            l.ratio,
+            l.dominant
+        ),
+        None => "null".into(),
+    };
+    format!(
+        r#"{{"state":"{}","reason":{},"mdcMv":{},"ciMv":{},"boundMv":{},"confounders":[{}],"limiter":{}}}"#,
+        v.state(),
+        reason,
+        opt(v.mdc_mv()),
+        ci,
+        bound,
+        confounders.join(","),
+        limiter,
+    )
+}
+
+/// Escape a sentence for embedding in a JSON string literal.
+///
+/// The refusal sentences are prose written in this crate, not user input, but
+/// they contain quotation-worthy punctuation and one of them will eventually
+/// contain a quote. A JSON payload that fails to parse takes the whole
+/// comparison down, so this is not optional.
+fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// One lead's registration between two studies.
@@ -831,5 +1091,133 @@ pub fn analyze_strip(t_s: &[f64], v_mv: &[f32], max_slope_mv_per_s: f32) -> Stri
         }).collect(),
         hr_bpm: det.hr_bpm.unwrap_or(f64::NAN),
         edge_samples: out.edge_samples as u32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A study built from a plausible synthetic beat, so that `evidence()` has
+    /// something to describe.
+    ///
+    /// Sums of Gaussians rather than ramps: the QRS detector wants a slope it
+    /// recognises, and a triangular spike gives it one that no rate estimator
+    /// then agrees with.
+    fn a_study() -> StudyAnalysis {
+        let n = (10.0 * FS) as usize;
+        let rr = 60.0 / 68.0;
+        let g = |dt: f64, centre: f64, width: f64, amp: f32| -> f32 {
+            let z = (dt - centre) / width;
+            amp * (-0.5 * z * z).exp() as f32
+        };
+        let sig: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / FS;
+                let mut v = 0.0f32;
+                let mut peak = 0.4;
+                while peak < 10.0 {
+                    let dt = t - peak;
+                    if (-0.45..0.55).contains(&dt) {
+                        v += g(dt, -0.17, 0.022, 0.15)
+                            + g(dt, -0.026, 0.007, -0.05)
+                            + g(dt, 0.0, 0.011, 1.05)
+                            + g(dt, 0.028, 0.011, -0.08)
+                            + g(dt, 0.21, 0.048, 0.32);
+                    }
+                    peak += rr;
+                }
+                v
+            })
+            .collect();
+        let t: Vec<f64> = (0..n).map(|k| k as f64 / FS).collect();
+
+        let mut b = StudyBuilder::new();
+        for name in LEAD_ORDER {
+            b.add_lead(name, &t, &sig, 0.0);
+        }
+        b.set_rhythm(&t, &sig);
+        b.analyze(true)
+    }
+
+    /// Every hole the boundary still has, named.
+    ///
+    /// This test fails when a hole closes, which is the point: closing one is a
+    /// deliberate act with a visible diff, not something that happens because a
+    /// field acquired a plausible-looking default. Closing a hole is four edits
+    /// — measure it, construct the `Measured` variant in `evidence`, update this
+    /// assertion, and delete the row from the table in decision 0007 §6.
+    #[test]
+    fn the_boundary_declares_every_hole_it_still_has() {
+        let e = a_study().evidence();
+
+        // 1. No runtime source-tier estimator (spec §5.1).
+        assert_eq!(e.tier, TierEvidence::NotMeasured);
+        // 2. The cart's header text is not parsed for a high-pass corner.
+        assert_eq!(e.filter, FilterEvidence::Unreadable);
+        // 3. No permutation search for the cable arrangement (spec §17).
+        assert_eq!(e.swap, SwapEvidence::NotDetermined);
+        // 4. The identity residuals live in TypeScript at another normalisation.
+        assert_eq!(e.identity, IdentityEvidence::NotChecked);
+        // 5. The resample validity mask is dropped before the ensemble, so
+        //    ST-window coverage is unmeasured in every lead.
+        assert!(
+            e.leads.iter().all(|l| l.coverage_st == CoverageEvidence::NotMeasured),
+            "a lead reported measured ST-window coverage"
+        );
+
+        // And the two things that are *not* holes, so that a regression in
+        // either shows up here rather than as a silently narrower band.
+        assert_eq!(
+            e.gain,
+            GainEvidence::NotRecorded,
+            "a study nobody calibrated must not carry a gain claim"
+        );
+        assert!(e.hr_bpm.is_some(), "heart rate is available and should be supplied");
+        assert!(
+            e.leads.iter().any(|l| l.n_beats >= 2),
+            "beat counts are available and should be supplied"
+        );
+    }
+
+    /// The gate's own refusal, reached through the real boundary.
+    #[test]
+    fn the_boundary_gates_twelve_leads_and_refuses_all_of_them() {
+        let (a, b) = (a_study(), a_study());
+        let json = st_verdicts_json(&a, &b);
+        assert_eq!(json.matches(r#""lead":"#).count(), 12, "{json}");
+        assert!(!json.contains(r#""state":"Significant""#), "{json}");
+        assert!(json.contains(r#""state":"Unmeasurable""#), "{json}");
+        assert!(significant_st_leads(&a, &b).is_empty());
+    }
+
+    /// The payload says which evidence is missing, once, above the table.
+    ///
+    /// Twelve identical refusal reasons in twelve rows is noise a reader learns
+    /// to scroll past; the same fact stated once above them is the thing they
+    /// can act on. Both are emitted, and this pins the shape of the first.
+    #[test]
+    fn the_payload_names_the_evidence_the_gate_is_missing() {
+        let (mut a, b) = (a_study(), a_study());
+        a.set_gain(true, 0.015);
+        let json = st_verdicts_json(&a, &b);
+
+        for key in [
+            r#""clinicalThresholdMv":"#,
+            r#""stDisplayQuantumMv":"#,
+            r#""pairBlockers":"#,
+            r#""deltaMv":"#,
+            r#""digitization":"#,
+            r#""withBio":"#,
+        ] {
+            assert!(json.contains(key), "missing {key} in {json}");
+        }
+        // The comparison never had `set_gain` called on it, so the pair is
+        // blocked on a gain nobody recorded as well as on the standing holes.
+        for code in ["GainNotRecorded", "CoverageUnmeasured", "IdentityUnchecked"] {
+            assert!(json.contains(code), "missing blocker {code} in {json}");
+        }
+        // And the sentences are prose for a reader, not variant names.
+        assert!(json.contains("can be confirmed or excluded"), "{json}");
     }
 }
