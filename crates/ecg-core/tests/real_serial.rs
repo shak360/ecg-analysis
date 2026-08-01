@@ -225,3 +225,104 @@ fn diagnose_lead_loss() {
         for w in s.warnings().iter().take(8) { println!("  warn: {w}"); }
     }
 }
+
+/// How often, and how badly, is QT wrong?
+///
+/// Found while validating the corpus browser: one record reported QT = 656 ms
+/// at 102 bpm, where the whole RR interval is 588 ms. A QT longer than its own
+/// cardiac cycle is impossible, not merely unusual, and QTc computed from it
+/// would read as life-threatening on a patient who is not.
+///
+/// The question this answers is which fix is right. If it is rare and confined
+/// to tachycardia, a plausibility refusal is the fix. If it is common, the
+/// tangent-method T offset needs rebuilding, and a clamp would only hide it.
+#[test]
+#[ignore = "needs `npm run fetch:ptbxl`"]
+fn survey_qt_plausibility() {
+    if !corpus_available() {
+        eprintln!("corpus not fetched; skipping");
+        return;
+    }
+
+    let mut ratios: Vec<(f64, f64, f64)> = Vec::new(); // (qt_ms, rr_ms, hr)
+    let (mut n, mut no_qt) = (0, 0);
+
+    for id in common::all_record_ids() {
+        let Ok(rec) = read_by_id(id) else { continue };
+        let Some(s) = build_study(&rec) else { continue };
+        n += 1;
+
+        let hr = s.hr_bpm();
+        if !hr.is_finite() || hr <= 0.0 {
+            continue;
+        }
+        let rr_ms = 60_000.0 / hr;
+
+        let m: serde_json_lite::Value = serde_json_lite::parse(&s.measurements_json());
+        let Some(qt) = m.number("qt") else {
+            no_qt += 1;
+            continue;
+        };
+        ratios.push((qt, rr_ms, hr));
+    }
+
+    ratios.sort_by(|a, b| (a.0 / a.1).partial_cmp(&(b.0 / b.1)).unwrap());
+    let frac = |f: f64| ratios[((ratios.len() - 1) as f64 * f) as usize];
+
+    let impossible: Vec<_> = ratios.iter().filter(|(qt, rr, _)| qt > rr).collect();
+    let very_long: Vec<_> = ratios.iter().filter(|(qt, _, _)| *qt > 600.0).collect();
+
+    println!("records analysed        {n}");
+    println!("QT unmeasurable         {no_qt}");
+    println!("QT measured             {}", ratios.len());
+    println!(
+        "QT/RR ratio             p5 {:.2}  p50 {:.2}  p95 {:.2}  max {:.2}",
+        { let r = frac(0.05); r.0 / r.1 },
+        { let r = frac(0.50); r.0 / r.1 },
+        { let r = frac(0.95); r.0 / r.1 },
+        { let r = ratios[ratios.len() - 1]; r.0 / r.1 },
+    );
+    println!(
+        "QT longer than its RR   {} ({:.1}%)",
+        impossible.len(),
+        100.0 * impossible.len() as f64 / ratios.len().max(1) as f64
+    );
+    println!(
+        "QT over 600 ms          {} ({:.1}%)",
+        very_long.len(),
+        100.0 * very_long.len() as f64 / ratios.len().max(1) as f64
+    );
+
+    // Is it a tachycardia problem, as the single observed case suggested?
+    let by_rate = |lo: f64, hi: f64| {
+        let sub: Vec<_> = ratios.iter().filter(|(_, _, hr)| *hr >= lo && *hr < hi).collect();
+        let bad = sub.iter().filter(|(qt, rr, _)| qt > rr).count();
+        (sub.len(), bad)
+    };
+    println!("\nby rate:");
+    for (lo, hi) in [(0.0, 60.0), (60.0, 80.0), (80.0, 100.0), (100.0, 300.0)] {
+        let (tot, bad) = by_rate(lo, hi);
+        if tot == 0 { continue }
+        println!(
+            "  {lo:>3.0}-{hi:<3.0} bpm  n={tot:<5} impossible {bad:<4} ({:.1}%)",
+            100.0 * bad as f64 / tot as f64
+        );
+    }
+}
+
+/// The smallest JSON reader that serves this survey, rather than a dependency.
+mod serde_json_lite {
+    pub struct Value(String);
+    pub fn parse(s: &str) -> Value {
+        Value(s.to_string())
+    }
+    impl Value {
+        /// Read a top-level numeric field. Returns None for `null`.
+        pub fn number(&self, key: &str) -> Option<f64> {
+            let at = self.0.find(&format!("\"{key}\":"))?;
+            let rest = &self.0[at + key.len() + 3..];
+            let end = rest.find([',', '}'])?;
+            rest[..end].trim().parse().ok()
+        }
+    }
+}

@@ -67,6 +67,8 @@ pub struct StudyMeasurements {
     pub qtc_bazett_ms: Option<f64>,
     /// Frontal-plane QRS axis in degrees, from net areas in I and aVF.
     pub axis_deg: Option<f32>,
+    /// Why QT is absent, when it is.
+    pub qt_note: Option<&'static str>,
     pub leads: Vec<LeadMeasurements>,
 }
 
@@ -258,6 +260,27 @@ pub fn measure_study(
         ..Default::default()
     };
 
+    // Refuse a QT that will not fit inside its own cardiac cycle.
+    //
+    // Repolarisation finishes before the next depolarisation begins, so QT < RR
+    // is not a convention but arithmetic. A value above it means the T-offset
+    // walk left the T wave — at short RR the T and the following P crowd, and
+    // the walk terminates on the next beat instead.
+    //
+    // This is a REFUSAL, not a correction, and it is deliberately not silent:
+    // surveyed over 1,184 real PTB-XL records, 11.0% of QT values exceed their
+    // own RR, and above 100 bpm it is 70.7%. That is a systematic failure of the
+    // T-offset estimator, tracked separately. Refusing keeps a fabricated QTc
+    // off the screen; it does not fix the estimator, and pretending otherwise by
+    // clamping to a plausible-looking number would hide the problem behind
+    // numbers that no longer look wrong.
+    if let (Some(qt), Some(hr)) = (s.qt_ms, hr_bpm) {
+        if hr > 0.0 && qt >= 60_000.0 / hr {
+            s.qt_ms = None;
+            s.qt_note = Some("QT exceeded the RR interval — T offset not established");
+        }
+    }
+
     // QTc. Fridericia is the default because Bazett over-corrects at tachycardia
     // and under-corrects at bradycardia, which manufactures a QTc change between
     // two studies that differ only in rate — exactly this product's use case.
@@ -316,6 +339,25 @@ pub fn measure_study(
 
 #[cfg(test)]
 mod tests {
+
+    /// A QT that will not fit in its own cardiac cycle is refused, not printed.
+    ///
+    /// Surveyed on 1,184 real PTB-XL records this fires on 11% overall and 71%
+    /// above 100 bpm, so it is guarding a systematic estimator failure rather
+    /// than a rare glitch.
+    #[test]
+    fn a_qt_longer_than_its_rr_is_refused() {
+        // 150 bpm: RR is 400 ms, so a 420 ms QT is impossible.
+        let fast = measure_study(&[], &fid(88, 125, 300), Some(150.0), Some(0.02), &[], &[]);
+        assert_eq!(fast.qt_ms, None, "an impossible QT must not be reported");
+        assert!(fast.qt_note.is_some(), "and it must say why");
+        assert_eq!(fast.qtc_fridericia_ms, None, "no QTc may be derived from it");
+
+        // 60 bpm: RR is 1000 ms, and the same 420 ms QT is entirely ordinary.
+        let slow = measure_study(&[], &fid(88, 125, 300), Some(60.0), Some(0.02), &[], &[]);
+        assert!(slow.qt_ms.is_some(), "a plausible QT must survive: {:?}", slow.qt_note);
+        assert!(slow.qtc_fridericia_ms.is_some());
+    }
     use super::*;
     use crate::config::FRAME_N;
     use crate::fiducial::r_index;
