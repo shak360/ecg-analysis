@@ -384,6 +384,19 @@ ol, ul { padding: 0; list-style: none; }
   background: var(--bg-sunken);
 }
 .study--selected { border-color: var(--accent); background: var(--accent-weak); }
+
+/*
+ * An atlas entry is a heading plus however many example cases exist, and some
+ * findings have dozens. As a flex ROW that squeezed the title into a column one
+ * letter wide, so these stack and let the case buttons wrap into a grid.
+ */
+.study--stacked { flex-direction: column; align-items: stretch; gap: 7px; }
+.study--stacked .study__cases {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.study--stacked .study__cases .btn {
+  min-width: 30px; padding: 2px 7px; font-size: 11.5px;
+}
 .study--error { border-color: color-mix(in srgb, var(--error) 40%, transparent); }
 
 .study__check { margin-top: 2px; flex: none; }
@@ -582,4 +595,4 @@ ol, ul { padding: 0; list-style: none; }
 .study__colour::-webkit-color-swatch-wrapper { padding: 2px; }
 .study__colour::-webkit-color-swatch { border: none; border-radius: 3px; }
 
-.panel--view #printout { width: 100%; display: block; }
+.panel--view #printout, .panel--main #printout { width: 100%; display: block; }

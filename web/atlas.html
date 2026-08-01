@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECG atlas — browse by finding</title>
+  <meta name="description" content="A teaching atlas of labelled 12-lead ECGs, browsable by diagnostic, morphological and rhythm findings.">
+  <link rel="stylesheet" href="./styles/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <div class="topbar__brand">
+      <svg class="topbar__mark" viewBox="0 0 48 24" aria-hidden="true" focusable="false">
+        <path d="M0 12h10l3-9 5 18 4-12 3 6h5l3-4 3 4h9"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h1>Serial ECG</h1>
+        <p class="topbar__sub">Atlas — browse by finding</p>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Main">
+      <a class="nav__link" href="./index.html">Compare</a>
+      <a class="nav__link nav__link--current" href="./atlas.html" aria-current="page">Atlas</a>
+      <a class="nav__link" href="./ptbxl.html">Serial pairs</a>
+      <a class="nav__link" href="./try.html">Single strip</a>
+      <a class="nav__link" href="./dev.html">Extraction</a>
+    </nav>
+
+    <div class="topbar__right">
+      <p class="badge badge--privacy" title="Served from your own machine. PTB-XL is open, de-identified data under CC BY 4.0.">
+        Local corpus
+      </p>
+      <button type="button" class="btn btn--ghost" id="theme-toggle">Theme</button>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <strong>For learning.</strong> Every tracing here is a real, de-identified ECG from
+    <strong>PTB-XL</strong> (Wagner et al. 2020, PhysioNet, CC BY 4.0), and every label is
+    the original cardiologist's, not this tool's. Only records PTB-XL marks
+    <em>human-validated</em> are included — an unreviewed label is tolerable in a training
+    set and not in a teaching one. Findings are shown as recorded; this page does not
+    interpret.
+  </div>
+
+  <main id="main" class="layout">
+    <section class="panel panel--side" aria-labelledby="browse-h">
+      <div class="panel__head">
+        <h2 id="browse-h">Findings</h2>
+        <span class="panel__count" id="record-count"></span>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="filter-kind">Kind</label>
+        <select id="filter-kind" class="select">
+          <option value="all">Any</option>
+          <option value="diagnostic">Diagnostic</option>
+          <option value="form">Morphology</option>
+          <option value="rhythm">Rhythm</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="filter-class">Diagnostic class</label>
+        <select id="filter-class" class="select">
+          <option value="all">Any</option>
+          <option value="NORM">NORM — normal</option>
+          <option value="MI">MI — myocardial infarction</option>
+          <option value="STTC">STTC — ST/T change</option>
+          <option value="CD">CD — conduction disturbance</option>
+          <option value="HYP">HYP — hypertrophy</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="search">Search</label>
+        <input id="search" class="select" type="search" placeholder="e.g. anterior, block, fibrillation">
+      </div>
+
+      <ul class="study-list" id="finding-list"></ul>
+    </section>
+
+    <section class="panel panel--main" aria-labelledby="case-h">
+      <div class="panel__head">
+        <h2 id="case-h">Case</h2>
+        <div class="controls">
+          <label class="field field--inline">
+            <span class="field__label">Gain</span>
+            <select id="scale" class="select">
+              <option value="5">5 mm/mV</option>
+              <option value="10" selected>10 mm/mV</option>
+              <option value="20">20 mm/mV</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="case-placeholder" class="placeholder">
+        <p>Pick a finding, then a case.</p>
+        <p class="placeholder__sub" id="atlas-status"></p>
+      </div>
+
+      <div id="case-panel" hidden>
+        <div id="case-labels" class="findings"></div>
+        <canvas id="printout"></canvas>
+        <div class="key">
+          <span>25 mm/s · standard 3×4 with rhythm strips</span>
+          <span>drawn from the recorded samples, not a photograph</span>
+        </div>
+        <pre id="case-report" class="report"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="engine-status" class="statusbar__item">Starting engine…</span>
+    <span class="statusbar__item statusbar__item--muted">
+      Not a medical device · labels are PTB-XL's, measurements are this tool's
+    </span>
+  </footer>
+
+  <script type="module" src="./src/atlas.ts"></script>
+</body>
+</html>
