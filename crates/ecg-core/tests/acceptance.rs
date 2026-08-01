@@ -960,3 +960,43 @@ fn simultaneous_leads_are_all_kept() {
         a.warnings()
     );
 }
+
+/// A panel whose baseline was never established reports no ST level.
+///
+/// `detrend` returns `Detrended::MorphologyOnly` when no beat yields a flat
+/// enough PQ segment, and the enum says why in its own doc comment:
+/// "Displayable, never measurable. Deliberately not a `MeasurementSignal` with
+/// a flag set — a flag can be ignored, a type cannot."
+///
+/// `build_pass` then unwrapped both variants into a bare `Vec<f32>`, which
+/// discarded exactly the distinction the type existed to enforce. Every ST
+/// amplitude downstream is a height above the isoelectric line; with no anchor
+/// there is no isoelectric line, so the number was a height above zero, and
+/// zero was wherever the trace happened to sit.
+///
+/// Measured before the fix: at 0.10 mV of noise every panel came back
+/// MorphologyOnly and all twelve leads still reported a finite ST level.
+#[test]
+fn a_panel_without_an_established_baseline_reports_no_st() {
+    // Enough noise that no PQ window passes the 40 uV flatness test.
+    let s = build_study(&generate(68.0, &[], 0.20, 7), None);
+
+    // Morphology survives — that is the whole point of the MorphologyOnly
+    // variant, and losing the trace would be its own kind of wrong.
+    assert!(
+        !s.lead_names().is_empty(),
+        "an unbaselined study should still render its morphology"
+    );
+
+    let with_st: Vec<String> = LEADS
+        .iter()
+        .filter(|l| s.st_j_mv(l).is_finite())
+        .map(|l| l.to_string())
+        .collect();
+    assert!(
+        with_st.is_empty(),
+        "ST reported on {} lead(s) whose baseline was never established: {:?}",
+        with_st.len(),
+        with_st
+    );
+}

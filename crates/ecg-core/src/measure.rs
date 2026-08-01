@@ -236,12 +236,20 @@ pub fn measure_lead(
 /// entry is measured as though it had no beats, which costs it its uncertainty
 /// and therefore its verdict — the safe direction for a mismatch that should
 /// not happen.
+///
+/// `baselined[i]` says whether that lead's detrend established an isoelectric
+/// level. Where it did not, no ST value is emitted: every ST amplitude is a
+/// height above the isoelectric line, and without one the number would be a
+/// height above zero — with zero wherever the trace happened to sit. A missing
+/// entry is treated as *not* baselined, so a caller that forgets loses ST rather
+/// than gaining an unfounded one.
 pub fn measure_study(
     leads: &[(String, Vec<f32>, Vec<f32>)],
     fid: &GlobalFiducials,
     hr_bpm: Option<f64>,
     gain_relative_sigma: Option<f32>,
     n_used: &[u32],
+    baselined: &[bool],
 ) -> StudyMeasurements {
     let mut s = StudyMeasurements {
         hr_bpm,
@@ -263,7 +271,20 @@ pub fn measure_study(
 
     for (i, (name, beat, sigma)) in leads.iter().enumerate() {
         let n = n_used.get(i).copied().unwrap_or(0);
-        s.leads.push(measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma, n));
+        let mut m = measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma, n);
+        if !baselined.get(i).copied().unwrap_or(false) {
+            // Morphology survives; the amplitudes do not. Cleared here rather
+            // than never computed because `measure_lead` has one exit for every
+            // other refusal and threading an eighth argument through it to reach
+            // the same result would buy nothing.
+            m.st_j_mv = None;
+            m.st_j60_mv = None;
+            m.st_slope_mv_s = None;
+            m.sigma_ens_mv = None;
+            m.sigma_gain_mv = None;
+            m.st_note = Some("baseline not established — no isoelectric anchor");
+        }
+        s.leads.push(m);
     }
 
     // Frontal axis from net QRS *area* in I and aVF. Area is far steadier than
@@ -377,7 +398,7 @@ mod tests {
     #[test]
     fn fridericia_and_bazett_diverge_with_rate_as_expected() {
         let mk = |hr: f64| {
-            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[])
+            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[], &[])
         };
         let slow = mk(60.0);
         let fast = mk(100.0);
@@ -402,12 +423,12 @@ mod tests {
             ]
         };
         // Equal positive areas in I and aVF put the axis at +45 degrees.
-        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
+        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
         let ax = s.axis_deg.expect("no axis");
         assert!((ax - 45.0).abs() < 5.0, "axis {ax} should be near +45");
 
         // Positive I, negative aVF is left axis deviation.
-        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
+        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
         assert!(s2.axis_deg.unwrap() < -30.0, "expected left axis deviation");
     }
 
