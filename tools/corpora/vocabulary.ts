@@ -55,7 +55,7 @@ export const SCP_TO_SNOMED: Record<string, string[]> = {
   LPFB: ["445211001"],
   IVCD: ["698252002", "6374002"], // non-specific IVCD / bundle branch block nos
   "1AVB": ["270492004"], // first degree AV block
-  "2AVB": ["195042002", "54016002", "28189009"], // second degree, Mobitz I and II
+  "2AVB": ["195042002", "54016002"], // second degree, Mobitz I and II
   "3AVB": ["27885002"], // complete heart block
   WPW: ["74390002"],
 
@@ -72,13 +72,31 @@ export const SCP_TO_SNOMED: Record<string, string[]> = {
   LVOLT: ["251146004"], // low QRS voltages
   QWAVE: ["164917005"], // abnormal Q wave
   INVT: ["59931005"], // T wave inversion
-  NDT: ["164934002"], // non-diagnostic / abnormal T
   NST_: ["428750005", "55930002"], // non-specific ST(-T) change
   STD_: ["429622005"], // ST depression
   STE_: ["164931005"], // ST elevation
   PRC_S: ["365413008"], // poor R wave progression
-  ANEUR: ["164865005"], // (old) myocardial infarction, coarse
+  AMI: ["54329005"], // anterior myocardial infarction
 };
+
+/*
+ * Deliberately NOT aliased, after auditing each against both corpora's own
+ * descriptions:
+ *
+ *   ANEUR -> 164865005. PTB-XL's ANEUR is "ST-T changes compatible with
+ *     ventricular aneurysm"; the SNOMED term is plain "myocardial infarction".
+ *     Those are not the same claim, and merging them would put aneurysm-pattern
+ *     tracings under an infarct heading.
+ *
+ *   NDT -> 164934002. "Non-diagnostic T abnormalities" is a subcategory of
+ *     "t wave abnormal", not a synonym. Merging into the broader term loses the
+ *     distinction the narrower one exists to make.
+ *
+ *   164865005 (myocardial infarction), 266249003 (ventricular hypertrophy) and
+ *     the other coarse SNOMED terms stay on their own. PTB-XL has no
+ *     territory-free MI code and no territory-free hypertrophy code, so there is
+ *     nothing to merge them with that would not overstate them.
+ */
 
 /** SNOMED-CT to the canonical SCP id, inverted from the table above. */
 export const SNOMED_TO_SCP: Record<string, string> = Object.fromEntries(

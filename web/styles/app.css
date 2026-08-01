@@ -449,7 +449,9 @@ ol, ul { padding: 0; list-style: none; }
 
 /* --- comparison view ------------------------------------------------------ */
 
-.panel--view canvas { width: 100%; display: block; }
+/* Any canvas in a panel fills it. Scoping this to .panel--view meant a
+   canvas on any other page silently fell back to the 300px default. */
+.panel canvas, .panel--view canvas { width: 100%; display: block; }
 
 .key { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11.5px; }
 .key span { display: flex; align-items: center; gap: 5px; color: var(--text-muted); }
@@ -610,3 +612,116 @@ ol, ul { padding: 0; list-style: none; }
 .study__colour::-webkit-color-swatch { border: none; border-radius: 3px; }
 
 .panel--view #printout, .panel--main #printout { width: 100%; display: block; }
+
+
+/* ---------------------------------------------------------------------------
+ * Test-yourself layout
+ *
+ * Controls across the top, then tracing and questions side by side. The pairing
+ * is the point: a learner reads a lead, looks at the options, looks back. A
+ * layout that stacks them turns that into remembering the ECG instead of
+ * reading it.
+ * ------------------------------------------------------------------------- */
+.quiz-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.quiz-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 12px 16px;
+}
+.quiz-bar__group { display: flex; align-items: baseline; gap: 10px; }
+.quiz-bar__title { margin: 0; font-size: 15px; }
+/* Pushed right so the destructive one is not adjacent to "New case". */
+.quiz-bar__actions { display: flex; gap: 8px; margin-left: auto; }
+
+.quiz-panes {
+  display: grid;
+  /* The tracing takes the larger share: twelve leads need the width, and the
+     options are short strings. */
+  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.quiz-panes__ecg,
+.quiz-panes__ask { padding: 14px; }
+.quiz-panes__ecg #printout { width: 100%; display: block; }
+
+/* The questions column scrolls independently, so a case with four questions
+   plus the reveal does not push the tracing off screen. */
+.quiz-panes__ask {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+/* Below roughly a laptop, side-by-side stops helping and the tracing gets too
+   narrow to read, so it stacks. */
+@media (max-width: 1100px) {
+  .quiz-panes { grid-template-columns: 1fr; }
+  .quiz-panes__ask { position: static; max-height: none; }
+}
+
+.quiz-placeholder { padding: 40px 16px; }
+
+
+/* ---------------------------------------------------------------------------
+ * Full-width reading layout
+ *
+ * Controls across the top, tracing below at the full width of the window. A
+ * 320px sidebar costs a fifth of the horizontal space on every page, and
+ * horizontal space is exactly what twelve leads need — at 25 mm/s a ten-second
+ * record is 250 mm of paper, and squeezing that into 600px makes the ST segment
+ * a few pixels wide.
+ * ------------------------------------------------------------------------- */
+.page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  max-width: 1800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.page-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.page-bar__title { margin: 0; font-size: 15px; white-space: nowrap; }
+.page-bar__actions { display: flex; gap: 8px; margin-left: auto; }
+
+/*
+ * The chooser as a horizontal strip. It scrolls sideways rather than wrapping,
+ * so its height stays fixed however many items there are and the tracing below
+ * never moves as you filter.
+ */
+.picker-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  scrollbar-width: thin;
+}
+.picker-strip .study {
+  flex: 0 0 auto;
+  min-width: 190px;
+  max-width: 260px;
+}
+.picker-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 8px 2px; }
+
+.page-main { display: flex; flex-direction: column; gap: 12px; }
+.page-main canvas { width: 100%; display: block; }

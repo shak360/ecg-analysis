@@ -47,25 +47,25 @@
     interpret.
   </div>
 
-  <main id="main" class="layout">
-    <section class="panel panel--side" aria-labelledby="browse-h">
-      <div class="panel__head">
-        <h2 id="browse-h">Findings</h2>
+  <main id="main" class="page">
+    <section class="panel page-bar" aria-labelledby="browse-h">
+      <div class="page-bar__group">
+        <h2 id="browse-h" class="page-bar__title">Findings</h2>
         <span class="panel__count" id="record-count"></span>
       </div>
 
-      <div class="field">
-        <label class="field__label" for="filter-kind">Kind</label>
+      <label class="field field--inline">
+        <span class="field__label">Kind</span>
         <select id="filter-kind" class="select">
           <option value="all">Any</option>
           <option value="diagnostic">Diagnostic</option>
           <option value="form">Morphology</option>
           <option value="rhythm">Rhythm</option>
         </select>
-      </div>
+      </label>
 
-      <div class="field">
-        <label class="field__label" for="filter-class">Diagnostic class</label>
+      <label class="field field--inline">
+        <span class="field__label">Class</span>
         <select id="filter-class" class="select">
           <option value="all">Any</option>
           <option value="NORM">NORM — normal</option>
@@ -74,46 +74,45 @@
           <option value="CD">CD — conduction disturbance</option>
           <option value="HYP">HYP — hypertrophy</option>
         </select>
-      </div>
+      </label>
 
-      <div class="field">
-        <label class="field__label" for="search">Search</label>
-        <input id="search" class="select" type="search" placeholder="e.g. anterior, block, fibrillation">
-      </div>
+      <label class="field field--inline">
+        <span class="field__label">Search</span>
+        <input id="search" class="select" type="search" placeholder="anterior, block, fibrillation">
+      </label>
 
-      <ul class="study-list" id="finding-list"></ul>
+      <div class="page-bar__actions">
+        <label class="field field--inline">
+          <span class="field__label">Gain</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+      </div>
     </section>
 
-    <section class="panel panel--main" aria-labelledby="case-h">
-      <div class="panel__head">
-        <h2 id="case-h">Case</h2>
-        <div class="controls">
-          <label class="field field--inline">
-            <span class="field__label">Gain</span>
-            <select id="scale" class="select">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-        </div>
-      </div>
+    <section class="panel" aria-label="Choose a finding">
+      <ul class="picker-strip" id="finding-list"></ul>
+    </section>
 
-      <div id="case-placeholder" class="placeholder">
-        <p>Pick a finding, then a case.</p>
-        <p class="placeholder__sub" id="atlas-status"></p>
-      </div>
+    <div id="case-placeholder" class="placeholder">
+      <p>Pick a finding, then a case.</p>
+      <p class="placeholder__sub" id="atlas-status"></p>
+    </div>
 
-      <div id="case-panel" hidden>
-        <div id="case-labels" class="findings"></div>
+    <div id="case-panel" class="page-main" hidden>
+      <div id="case-labels" class="findings"></div>
+      <section class="panel">
         <canvas id="printout"></canvas>
         <div class="key">
           <span>25 mm/s · standard 3×4 with rhythm strips</span>
           <span>drawn from the recorded samples, not a photograph</span>
         </div>
-        <pre id="case-report" class="report"></pre>
-      </div>
-    </section>
+      </section>
+      <pre id="case-report" class="report"></pre>
+    </div>
   </main>
 
   <footer class="statusbar">

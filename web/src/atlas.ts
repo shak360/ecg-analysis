@@ -84,6 +84,14 @@ function renderFindings(): void {
   list.innerHTML = "";
   $("record-count").textContent = `${shown.length} findings · ${entries.length} cases`;
 
+  if (!shown.length) {
+    const li = document.createElement("li");
+    li.className = "picker-strip__empty";
+    li.textContent = "No findings match that filter.";
+    list.appendChild(li);
+    return;
+  }
+
   for (const s of shown) {
     const cases = byCode.get(s.code) ?? [];
     const li = document.createElement("li");

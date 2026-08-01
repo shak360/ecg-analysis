@@ -95,9 +95,17 @@ function renderList(): void {
 
   // Long lists are slower to build than to scroll, and nobody reads past a
   // couple of hundred; the count above says what was left out.
+  if (!shown.length) {
+    const li = document.createElement("li");
+    li.className = "picker-strip__empty";
+    li.textContent = "No pairs match that filter.";
+    list.appendChild(li);
+    return;
+  }
+
   for (const p of shown.slice(0, 300)) {
     const li = document.createElement("li");
-    li.className = "study";
+    li.className = "study study--stacked";
     if (selected && selected.before === p.before && selected.after === p.after) {
       li.classList.add("study--selected");
     }

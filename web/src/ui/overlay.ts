@@ -180,9 +180,20 @@ export function drawOverlay(
   const diffMm = opts.showDifference ? 12 : 0;
   const totalMm = beatMm + diffMm;
 
+  // Width should decide the size; the height cap is only a backstop.
+  //
+  // A beat panel is about 40 mm wide (0.8 s at 50 mm/s) and 42 mm tall, so it is
+  // nearly square — filling the available width genuinely requires the matching
+  // height, and on a wide window three rows will not fit the viewport. The old
+  // 200 px cap resolved that by shrinking the tracing: at a 1538 px canvas the
+  // cells are 374 px wide and it drew 190 px of them, so widening the window
+  // bought empty gutter rather than a bigger ECG.
+  //
+  // A readable tracing that needs one scroll beats a small one that fits, so the
+  // ceiling is set high enough that width binds at any ordinary desktop size.
   const pxPerMm = Math.min(
     cellW / (seconds * opts.mmPerSec),
-    (opts.maxPanelHeightPx ?? 200) / totalMm,
+    (opts.maxPanelHeightPx ?? 420) / totalMm,
   );
   const panelW = Math.min(cellW, seconds * opts.mmPerSec * pxPerMm);
   const panelH = totalMm * pxPerMm;
@@ -369,9 +380,15 @@ function drawPanel(
   if (bits.length) ctx.fillText(bits.join("   "), x + 6, y + h - 5);
 
   if (lead.morphologyChanged) {
+    // Right-aligned on the footer line, beside the other per-panel numbers.
+    // It used to be drawn at y + 28, which is the middle of the trace — the one
+    // place a warning must not go, since it obscures the signal it is warning
+    // about.
     ctx.fillStyle = "#c2410c";
     ctx.font = "600 10px system-ui, sans-serif";
-    ctx.fillText("QRS morphology differs — not aligned", x + 6, y + 28);
+    ctx.textAlign = "right";
+    ctx.fillText("morphology differs", x + w - 6, y + h - 5);
+    ctx.textAlign = "left";
   }
 
   ctx.strokeStyle = th.gridCoarse;

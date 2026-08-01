@@ -46,67 +46,66 @@
     de-identified by the corpus curators; nothing here is uploaded anywhere.
   </div>
 
-  <main id="main" class="layout">
-    <section class="panel panel--side" aria-labelledby="pairs-h">
-      <div class="panel__head">
-        <h2 id="pairs-h">Serial pairs</h2>
+  <main id="main" class="page">
+    <section class="panel page-bar" aria-labelledby="pairs-h">
+      <div class="page-bar__group">
+        <h2 id="pairs-h" class="page-bar__title">Serial pairs</h2>
         <span class="panel__count" id="pair-count"></span>
       </div>
 
-      <div class="field">
-        <label class="field__label" for="filter-kind">Conduction between recordings</label>
+      <label class="field field--inline">
+        <span class="field__label">Conduction</span>
         <select id="filter-kind" class="select">
           <option value="all">Any</option>
           <option value="appeared">Abnormality appeared</option>
           <option value="resolved">Abnormality resolved</option>
           <option value="unchanged">Unchanged (controls)</option>
         </select>
-      </div>
+      </label>
 
-      <div class="field">
-        <label class="field__label" for="filter-code">Statement</label>
+      <label class="field field--inline">
+        <span class="field__label">Statement</span>
         <select id="filter-code" class="select">
           <option value="all">Any</option>
         </select>
-      </div>
+      </label>
 
-      <ul class="study-list" id="pair-list"></ul>
+      <div class="page-bar__actions">
+        <label class="field field--inline">
+          <span class="field__label">Gain</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+        <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+      </div>
     </section>
 
-    <section class="panel panel--main" aria-labelledby="view-h">
-      <div class="panel__head">
-        <h2 id="view-h">Comparison</h2>
-        <div class="controls">
-          <label class="field field--inline">
-            <span class="field__label">Display</span>
-            <select id="scale" class="select">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
-          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
-        </div>
-      </div>
+    <section class="panel" aria-label="Choose a pair">
+      <ul class="picker-strip" id="pair-list"></ul>
+    </section>
 
-      <div id="view-placeholder" class="placeholder">
-        <p>Select a serial pair to render it.</p>
-        <p class="placeholder__sub" id="corpus-status"></p>
-      </div>
+    <div id="view-placeholder" class="placeholder">
+      <p>Select a serial pair to render it.</p>
+      <p class="placeholder__sub" id="corpus-status"></p>
+    </div>
 
-      <div id="view-panel" hidden>
-        <div id="pair-header" class="findings"></div>
+    <div id="view-panel" class="page-main" hidden>
+      <div id="pair-header" class="findings"></div>
+      <section class="panel">
         <canvas id="overlay"></canvas>
         <div class="key" id="beat-key">
           <span>shaded band = beat-to-beat spread</span>
           <span>dashed line = alignment anchor (R peak)</span>
           <span>lower lane = difference from the earlier recording</span>
         </div>
-        <div id="serial-findings" class="findings" hidden></div>
-        <pre id="report" class="report"></pre>
-      </div>
-    </section>
+      </section>
+      <div id="serial-findings" class="findings" hidden></div>
+      <pre id="report" class="report"></pre>
+    </div>
   </main>
 
   <footer class="statusbar">
