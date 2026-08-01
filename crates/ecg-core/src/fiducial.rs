@@ -16,15 +16,22 @@
 //!
 //! # Why this matters more than usual here
 //!
-//! QRS onset is the cross-study registration anchor. R-peak anchoring lets a
-//! 20 ms terminal-QRS change — new RBBB, hyperkalaemia, a class Ic effect —
-//! displace the J point by up to 20 ms relative to the anchor. On the ST-T
-//! upstroke, where dV/dt runs 5–15 µV/ms, that manufactures 100–300 µV of
-//! apparent ST shift beneath a perfectly plausible-looking overlay.
+//! Every ST amplitude in the pipeline is sampled at the J point *these* fiducials
+//! locate. The frame itself is anchored on the R peak (see `config::FRAME_T0_S`),
+//! so it is the fiducial, not the anchor, that decides where a measurement is
+//! taken — which makes a mis-located offset the most expensive single error
+//! available here.
+//!
+//! This module previously argued the opposite: that R-peak anchoring would
+//! manufacture 100–300 µV of apparent ST shift when a terminal-QRS change moved
+//! the J point. Measured, the anchoring costs about 12 µV, because ST follows the
+//! measured J point rather than a fixed frame index. The real exposure was the
+//! one that argument obscured — a J point mis-located by the walk below, which
+//! cost over 1.3 mV until `SV_REJOIN_MS` was added.
 
 use crate::config::{
     FRAME_N, FRAME_T0_S, QRS_DUR_PLAUSIBLE_MS, QRS_OFF_CLAMP_MS, QRS_ON_CLAMP_MS,
-    SV_HALF_PT, SV_HALF_QRS, SV_MIN_LEADS, SV_PERSIST_SAMPLES, SV_THRESH_FRAC,
+    SV_HALF_PT, SV_HALF_QRS, SV_MIN_LEADS, SV_PERSIST_SAMPLES, SV_REJOIN_MS, SV_THRESH_FRAC,
     SV_THRESH_MAD_K, T_LS_HALF, T_MIN_AMP_MV, T_MIN_SLOPE_MV_S,
 };
 
@@ -138,7 +145,26 @@ fn mad(x: &[f32]) -> (f32, f32) {
 /// The crossing must persist for `SV_PERSIST_SAMPLES` before it counts, so a
 /// single noisy dip inside the QRS cannot terminate the walk early and clip the
 /// complex.
-fn walk_boundaries(sv: &[f32], peak: usize, threshold: f32) -> (usize, usize) {
+///
+/// # Why persistence alone is not enough
+///
+/// A delayed terminal deflection — new bundle branch block, hyperkalaemia, a
+/// class Ic effect — splits the spatial velocity into two lobes with a trough
+/// between them. The trough is longer than `SV_PERSIST_SAMPLES`, so the walk
+/// ends there, and the reported offset lands *inside* the complex.
+///
+/// That failure is silent and expensive. Measured before this guard existed: a
+/// 16 ms terminal delay made a 90 ms QRS report as 74 ms — shorter, for a
+/// complex that had lengthened — and every ST measurement, taken at the
+/// mis-located J point, moved with it. Over 1.3 mV of ST appeared on a fixture
+/// with nothing injected. `QRS_OFF_CLAMP_MS` does not catch it because 74 ms is
+/// wrong but perfectly plausible.
+///
+/// So after a candidate offset, look ahead: if activity climbs back above
+/// threshold within `SV_REJOIN_MS`, depolarisation had not finished and the walk
+/// resumes. What separates the two cases is that the ST segment which follows a
+/// genuine QRS end is quiet for far longer than any intra-QRS trough.
+fn walk_boundaries(sv: &[f32], peak: usize, threshold: f32, fs_hz: f64) -> (usize, usize) {
     let persist = SV_PERSIST_SAMPLES.max(1);
 
     let mut onset = 0usize;
@@ -155,18 +181,45 @@ fn walk_boundaries(sv: &[f32], peak: usize, threshold: f32) -> (usize, usize) {
         }
     }
 
+    let rejoin = ((SV_REJOIN_MS / 1000.0) * fs_hz).round() as usize;
     let mut offset = sv.len() - 1;
-    let mut run = 0usize;
-    for (i, &v) in sv.iter().enumerate().skip(peak) {
-        if v < threshold {
-            run += 1;
-            if run >= persist {
-                offset = i - run + 1;
-                break;
+    let mut from = peak;
+
+    // Bounded by the number of candidates the walk can produce; each iteration
+    // advances `from` past the previous candidate, so this cannot spin.
+    loop {
+        let mut candidate = None;
+        let mut run = 0usize;
+        for (i, &v) in sv.iter().enumerate().skip(from) {
+            if v < threshold {
+                run += 1;
+                if run >= persist {
+                    candidate = Some(i - run + 1);
+                    break;
+                }
+            } else {
+                run = 0;
             }
-        } else {
-            run = 0;
         }
+
+        let Some(end) = candidate else { break };
+        offset = end;
+
+        // Does activation resume before the ST segment has properly begun?
+        let look_to = (end + rejoin).min(sv.len());
+        let resumes = sv[end..look_to].iter().any(|&v| v >= threshold);
+        if !resumes {
+            break;
+        }
+
+        // It does, so `end` was a trough inside the complex. Restart past the
+        // point where activity came back.
+        let Some(back) = (end..look_to).find(|&i| sv[i] >= threshold) else { break };
+        // Guarantees forward progress, so the loop terminates.
+        if back < from {
+            break;
+        }
+        from = back + 1;
     }
 
     (onset, offset)
@@ -214,7 +267,7 @@ pub fn qrs_boundaries(
         return (Err(Unmeasurable::NoActivation), Err(Unmeasurable::NoActivation), peak_v);
     }
 
-    let (on, off) = walk_boundaries(&sv, peak, threshold);
+    let (on, off) = walk_boundaries(&sv, peak, threshold, fs_hz);
 
     // Physiological clamps, relative to R.
     let ms = |s: usize| (s as f64 - r_index as f64) / fs_hz * 1000.0;

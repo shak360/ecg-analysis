@@ -40,6 +40,15 @@ export interface EcgSpec {
   noiseMv?: number;
   /** Sinusoidal baseline wander amplitude in mV. */
   wanderMv?: number;
+  /**
+   * Broaden the depolarisation waves by this factor, 1 being unchanged.
+   *
+   * Only Q, R and S are scaled; P, T and the ST injection keep their timing. So
+   * this changes conduction without moving the thing being measured, which is
+   * what makes it a clean test of whether a conduction change is detected
+   * separately from an ST change. 1.3 is roughly a new bundle branch block.
+   */
+  qrsScale?: number;
   seed?: number;
 }
 
@@ -97,11 +106,17 @@ function gaussian(t: number, center: number, width: number, amp: number): number
  * rather than as a step, because a hard discontinuity would be trivially
  * detectable and would flatter the digitizer's edge handling.
  */
-function beatValueMv(t: number, b: BeatParams, stShiftMv: number): number {
+function beatValueMv(
+  t: number,
+  b: BeatParams,
+  stShiftMv: number,
+  qrsScale = 1,
+): number {
+  const k = qrsScale;
   let v = gaussian(t, TIMING.pCenter, TIMING.pWidth, b.p) +
-    gaussian(t, TIMING.qCenter, TIMING.qWidth, b.q) +
-    gaussian(t, TIMING.rCenter, TIMING.rWidth, b.r) +
-    gaussian(t, TIMING.sCenter, TIMING.sWidth, b.s) +
+    gaussian(t, TIMING.qCenter * k, TIMING.qWidth * k, b.q) +
+    gaussian(t, TIMING.rCenter, TIMING.rWidth * k, b.r) +
+    gaussian(t, TIMING.sCenter * k, TIMING.sWidth * k, b.s) +
     gaussian(t, TIMING.tCenter, TIMING.tWidth, b.t);
 
   if (stShiftMv !== 0) {
@@ -155,7 +170,7 @@ export function generateEcg(spec: EcgSpec): SyntheticEcg {
       // Only nearby beats contribute; the Gaussians die off well inside ±0.5 s.
       for (const rp of rPeakTimesSec) {
         const dt = t - rp;
-        if (dt > -0.45 && dt < 0.55) v += beatValueMv(dt, b, shift);
+        if (dt > -0.45 && dt < 0.55) v += beatValueMv(dt, b, shift, spec.qrsScale);
       }
       out[i] = v;
     }

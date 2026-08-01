@@ -28,6 +28,16 @@ sample_ECGs/
 test/fixtures/synthetic/
 
 # ---------------------------------------------------------------------------
+# Public reference corpora — fetched, never committed
+# ---------------------------------------------------------------------------
+# PTB-XL and friends are open, de-identified and CC BY 4.0, so this is not a
+# PHI rule — it is a size rule. The full PTB-XL release is 1.7 GB and every byte
+# is reproducible with `npm run fetch:ptbxl`. Committing a corpus also silently
+# takes on its licence: PTB-XL is CC BY, but MIMIC-IV-ECG is ODbL share-alike,
+# and vendoring that would put the whole repository under it.
+data/
+
+# ---------------------------------------------------------------------------
 # Build output
 # ---------------------------------------------------------------------------
 dist/

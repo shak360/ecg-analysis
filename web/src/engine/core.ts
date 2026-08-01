@@ -11,7 +11,8 @@
  */
 import init, {
   compare_studies,
-  st_deltas_json,
+  serial_findings,
+  st_verdicts_json,
   StudyBuilder,
 } from "../../wasm/ecg_core.js";
 import { extractPageGeometry } from "../ingest/pdf-paths.ts";
@@ -21,12 +22,13 @@ import { checkIdentities, detectLayout, sampleUniform, toPhysical } from "../ing
 import type {
   Assumptions,
   ComparisonSnapshot,
+  LeadVerdict,
   Measures,
+  PairBlocker,
   SnapshotDifference,
   SnapshotLead,
   SnapshotPrintout,
   SnapshotTrace,
-  StDelta,
   StudySummary,
 } from "./protocol.ts";
 
@@ -123,9 +125,16 @@ export class EngineCore {
 
     const analysis = builder.analyze(true);
     warnings.push(...(analysis.warnings as string[]));
-    // Hand the measured gain quality to the engine so it propagates into every
-    // amplitude's uncertainty rather than being silently assumed exact.
-    analysis.set_calibration_quality(cal.relativeUncertainty, 0.002);
+    // Tell the engine *how* the millivolt scale was established, not just how
+    // uncertain it is. The same relative sigma read off a calibration pulse and
+    // guessed from the speed/gain selector is the same float and a different
+    // claim, and only the measured one satisfies the gate's gain precondition —
+    // so the boolean is the load-bearing argument here, not the number.
+    //
+    // No bias crosses this boundary any more. Bias follows from the source
+    // tier, which nothing measures yet, and the 0.002 mV that used to be passed
+    // from here was a clinical constant living in TypeScript (decision 0004).
+    analysis.set_gain(cal.source === "pulse", cal.relativeUncertainty);
 
     if (analysis.lead_names.length === 0) {
       throw new IngestError(
@@ -234,13 +243,31 @@ export class EngineCore {
       return { leads: map, rhythm: rhythm && rhythm.length ? rhythm : null };
     });
 
-    let clinicalThresholdMv = 0.1;
-    const deltaSets: StDelta[][] = rest.map((h) => {
-      const parsed = JSON.parse(st_deltas_json(ref, h)) as {
+    // Study-level findings, one list per comparison. Computed here rather than
+    // in the UI because they read the global fiducials, which never leave the
+    // engine.
+    const findingSets: string[][] = rest.map((h) => Array.from(serial_findings(ref, h)));
+
+    // The five-state verdict, per lead and per comparison, plus the pair-level
+    // preconditions the gate could not satisfy.
+    //
+    // Nothing here is recomputed on this side. The UI holds no copy of the gate
+    // — it cannot, or it would eventually render a verdict the engine would not
+    // reach, and the disagreement would be invisible. Both thresholds come out
+    // of the same payload for the same reason.
+    let clinicalThresholdMv = Number.NaN;
+    let stDisplayQuantumMv = Number.NaN;
+    const pairBlockerSets: PairBlocker[][] = [];
+    const verdictSets: LeadVerdict[][] = rest.map((h) => {
+      const parsed = JSON.parse(st_verdicts_json(ref, h)) as {
         clinicalThresholdMv: number;
-        leads: StDelta[];
+        stDisplayQuantumMv: number;
+        pairBlockers: PairBlocker[];
+        leads: LeadVerdict[];
       };
       clinicalThresholdMv = parsed.clinicalThresholdMv;
+      stDisplayQuantumMv = parsed.stDisplayQuantumMv;
+      pairBlockerSets.push(parsed.pairBlockers);
       return parsed.leads;
     });
 
@@ -248,10 +275,13 @@ export class EngineCore {
       studyIds: [...studyIds],
       leads,
       printouts,
-      deltaSets,
+      verdictSets,
+      pairBlockerSets,
+      findingSets,
       anchorIndex: ref.qrs_onset >= 0 ? ref.qrs_onset : ref.anchor_index,
       columnSeconds: held[0]!.columnSeconds || 2.5,
       clinicalThresholdMv,
+      stDisplayQuantumMv,
     };
   }
 

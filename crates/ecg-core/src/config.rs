@@ -5,7 +5,10 @@
 //! a constant cites the section it came from.
 //!
 //! Sections §10–§14 (raster ingest) land with the raster pipeline; only the
-//! signal-path constants are defined here so far.
+//! signal-path constants are defined here so far. §15 and §16 are present but
+//! deliberately partial — a constant is added when the code that reads it is,
+//! and never before, because a defined threshold reads from outside as an
+//! enforced one.
 
 // ---- §0 CANONICAL MODEL ----------------------------------------------------
 
@@ -13,7 +16,16 @@
 /// resampling — every comparison, measurement, and stored signal is on this grid.
 pub const FS: f64 = 500.0;
 
-/// Seconds, frame start relative to the global QRS onset.
+/// Seconds, frame start relative to the **R peak**.
+///
+/// This said "relative to the global QRS onset" and was wrong: `ensemble` is
+/// called with R-peak times, so index `r_index(FS)` = 200 ms into the frame is
+/// the R peak, and the measured QRS onset sits about 30 ms before it. The
+/// two-pass logic in `wasm_api` re-anchors the detrend baseline, not the frame.
+///
+/// `fiducial::r_index` derives from this constant, and the QRS clamps are
+/// evaluated relative to it — so this is the definition the whole frame geometry
+/// hangs off, and changing it is not a local edit.
 pub const FRAME_T0_S: f64 = -0.200;
 
 /// Frame length in samples, so the frame ends at +0.600 s.
@@ -33,6 +45,16 @@ pub const MM_PER_MV_DEFAULT: f64 = 10.0;
 
 /// PDF device units (points) per millimetre.
 pub const PT_PER_MM: f64 = 72.0 / 25.4;
+
+/// Canonical 12-lead order, and the order every per-lead table is emitted in.
+///
+/// This lived in `wasm_api`, which is a private module, so nothing outside the
+/// boundary could iterate the twelve leads without redeclaring them. Two copies
+/// of a lead order is how a table ends up rendering V2's number in V3's row, so
+/// there is one copy and it lives with the other canonical-model constants.
+pub const LEAD_ORDER: [&str; 12] = [
+    "I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6",
+];
 
 // ---- §1 BASELINE / DETREND -------------------------------------------------
 //
@@ -210,7 +232,26 @@ pub const RHO_SUSPECT: f32 = 0.80;
 
 /// Cross-study NCC interlock. Below this, the alignment shift is forced to zero
 /// rather than sliding to whatever lag flatters a changed QRS.
+///
+/// Note what this does *not* catch. Correlation is insensitive to a change of
+/// QRS *duration*: a complex dilated by 30% still correlates at about 0.96 with
+/// the original, because it is the same shape drawn wider. Duration change is
+/// caught by `QRS_DURATION_CHANGE_MS` instead, on the measured fiducials.
 pub const RHO_XSTUDY_MIN: f32 = 0.90;
+
+/// ms of serial QRS-duration change that counts as a conduction change.
+///
+/// Two independent arguments land in the same place. Clinically, the index of
+/// individuality for QRS duration is 0.29 — 92% of the population variance is
+/// stable constitution — so within-subject SD is roughly 3 ms and 10 ms is about
+/// 3.4 of them. Instrumentally, fiducials sit on a 500 Hz grid and duration is a
+/// difference of two of them, so its resolution is ±4 ms in the worst case; 10 ms
+/// is 2.5× that, which keeps grid quantisation from producing findings.
+///
+/// This is the detector for new bundle branch block, hyperkalaemia and class Ic
+/// effect — the changes that widen the complex without altering its shape, and
+/// which the correlation interlock therefore cannot see.
+pub const QRS_DURATION_CHANGE_MS: f64 = 10.0;
 
 /// ms, ± search range for template alignment.
 pub const ALIGN_MAX_LAG_MS: f64 = 20.0;
@@ -266,6 +307,21 @@ pub const SV_THRESH_MAD_K: f32 = 4.0;
 /// Samples the threshold crossing must persist, 6 ms, so a noisy dip does not
 /// terminate the boundary walk early.
 pub const SV_PERSIST_SAMPLES: usize = 3;
+
+/// ms after a candidate QRS offset within which returning activity means
+/// depolarisation had not actually finished.
+///
+/// A delayed terminal deflection splits spatial velocity into two lobes, and the
+/// trough between them outlasts `SV_PERSIST_SAMPLES` — so persistence alone
+/// ends the walk inside the complex. What distinguishes a trough from a genuine
+/// end is what follows: the ST segment is quiet for far longer than any
+/// intra-QRS dip.
+///
+/// 40 ms sits in a wide gap between the two. Intra-QRS troughs are a few
+/// milliseconds; the ST segment runs 80–120 ms at resting rates and stays above
+/// 60 ms even at 150 bpm, so this cannot reach the T upstroke and mistake it for
+/// continued depolarisation. Widening it towards 60 ms would begin to.
+pub const SV_REJOIN_MS: f64 = 40.0;
 
 /// Fewer surviving leads than this makes the fiducial unmeasurable.
 pub const SV_MIN_LEADS: usize = 4;
@@ -403,3 +459,136 @@ pub const EDGE_MARGIN_MS: f64 = 60.0;
 /// mV; an adjacent-sample jump this large near an edge means the trace is
 /// truncated rather than continuous.
 pub const EDGE_DISCONT_MV: f32 = 0.50;
+
+// ---- §15 ERROR BUDGET: PROVENANCE FLOORS -----------------------------------
+//
+// Only the constants the verdict gate consumes today are defined. §9 above is
+// the cautionary precedent: twenty signal-quality constants sit there, none of
+// them read by any code path, and nothing in the file says so — which reads, to
+// anyone auditing it, as a signal-quality stage that exists. The remaining §15
+// terms (SIGMA_ISO_*, SIGMA_TRACE_CENTROID_PX) land with the runtime sigma-hat
+// estimator that consumes them, not before.
+
+/// mV, 1σ; tier A, vector PDF with exact path geometry. Spec §5.1, §15.
+pub const SIGMA_PROV_VECTOR: f32 = 0.010;
+/// mV, 1σ; tier B, ≥300 dpi flatbed, rotation under 1°, no perspective.
+pub const SIGMA_PROV_SCAN300: f32 = 0.025;
+/// mV, 1σ; tier C, ≥200 dpi effective phone photo, ≤3°, ≤1.5% perspective.
+pub const SIGMA_PROV_PHOTO: f32 = 0.040;
+/// mV, 1σ; tier D, ~110 dpi with ≥3% perspective. No ST delta survives this.
+pub const SIGMA_PROV_POOR: f32 = 0.087;
+
+/// mV; systematic amplitude offset for a tier-A source. Spec §15.
+///
+/// Bias enters the MDC linearly, never in quadrature. Trace-centroid pull and
+/// grid-removal asymmetry do not average away and are not zero-mean, so folding
+/// them into an RSS understates the band by roughly the bias itself and
+/// manufactures significance in the leads a reader is most likely to act on.
+pub const BIAS_VECTOR: f32 = 0.002;
+/// mV; tier B. Spec §15.
+pub const BIAS_SCAN300: f32 = 0.005;
+/// mV; tier C. Spec §15.
+pub const BIAS_PHOTO: f32 = 0.012;
+/// mV; tier D, and the value an unmeasured tier is priced at. Spec §15.
+pub const BIAS_POOR: f32 = 0.035;
+
+/// mV, 1σ; repeat-recording variability in a limb lead. Spec §5.3, §15.
+///
+/// This is not our error. Trained technicians place a precordial electrode
+/// within 1 cm in about half of men and a fifth of women, and 1 cm of V2
+/// displacement is 48±28 µV. The number belongs in the band a clinician reads
+/// because it is in the measurement they are reading, whoever caused it.
+pub const SIGMA_BIO_LIMB: f32 = 0.025;
+/// mV, 1σ; V1–V3, where precordial placement dominates. Spec §5.3.
+pub const SIGMA_BIO_V1_V3: f32 = 0.040;
+/// mV, 1σ; V4–V6. Spec §5.3.
+pub const SIGMA_BIO_V4_V6: f32 = 0.030;
+
+// ---- §16 GATING ------------------------------------------------------------
+//
+// The multiplicity constants (`Z_HOLM_12` and the anatomical lead groups) and
+// the runtime sigma-hat terms (`T_INFLATE_N2`, `T_INFLATE_N3`, `SIGMA_MULT_CAP`)
+// are deliberately absent for the same reason as the §15 omissions above: the
+// gate does not apply them yet, and a defined-but-unread threshold is
+// indistinguishable from an enforced one when read from outside.
+
+/// Standard normal deviate for a two-sided 95% interval. Spec §16.
+pub const Z95: f32 = 1.96;
+
+/// mV; the ST change a serial difference must also exceed. UDMI-4, spec §16.
+///
+/// A second hurdle, not an alternative to the detection limit. A pair good
+/// enough to resolve 0.03 mV must still not announce a 0.04 mV shift, because
+/// nothing clinical follows from it and each such announcement spends the
+/// reader's attention on noise until they stop reading.
+pub const CLINICAL_DELTA_ST_MV: f32 = 0.10;
+
+/// mV; MDC floor when both studies are measured tier A. Spec §16.
+///
+/// The floor exists because the runtime σ̂ is an estimate and a confidently
+/// small estimate is still an estimate. Below this the arithmetic outruns what
+/// any paper-derived pair has been shown to resolve.
+pub const MDC_FLOOR_VECTOR_MV: f32 = 0.05;
+/// mV; MDC floor for every other pair, including any pair with an unmeasured
+/// tier. Spec §16.
+pub const MDC_FLOOR_OTHER_MV: f32 = 0.10;
+
+/// Shared fraction of the gain error, same cart and identical printed gain and
+/// speed strings and both vector. Spec §16, decision 47.
+///
+/// ρ > 0 narrows the interval, so it must be positively evidenced. Over-claimed
+/// correlation manufactures significance, and it does so invisibly: the delta
+/// does not move, only the band it is compared against.
+pub const RHO_GAIN_SAME_CART_VECTOR: f32 = 0.90;
+/// Shared fraction of the gain error within one recording session. Spec §16.
+pub const RHO_GAIN_SAME_SESSION: f32 = 0.50;
+/// Shared fraction of the gain error when provenance is unknown, which is
+/// every pair this pipeline currently sees. Spec §16.
+pub const RHO_GAIN_DEFAULT: f32 = 0.00;
+
+/// bpm; above this the rate difference enters the variance and is annotated.
+/// Spec §16.
+pub const DHR_ANNOTATE_BPM: f64 = 10.0;
+/// bpm; above this a rate difference is a hard confounder. Spec §16, §5.5.
+pub const DHR_INDETERMINATE_BPM: f64 = 20.0;
+/// bpm; above this ST and QT deltas are refused outright. Spec §16, §5.5.
+///
+/// Three distinct thresholds on the same quantity, easily conflated: 10 widens
+/// the band, 20 downgrades the verdict, 35 declines to answer.
+pub const DHR_REFUSE_BPM: f64 = 35.0;
+/// mV per bpm; the rate-difference term, squared into the variance. Spec §16.
+pub const DHR_ST_RATE_TERM_MV_BPM: f32 = 0.002;
+
+/// mV, 1σ; added in quadrature when a study's high-pass corner is unreadable.
+/// Spec §16, §8 risk 3.
+///
+/// A causal 0.5 Hz high-pass produced J-point deviation averaging 0.30 mV in 42
+/// of 45 patients (Buendía-Fuentes 2012). A *known* mismatch is therefore a
+/// refusal, because you cannot un-high-pass a signal. An unreadable header is
+/// not: refusing every paper ECG whose header did not survive the scan would
+/// decline the majority of real inputs on a suspicion, so it is priced instead.
+pub const FILTER_UNKNOWN_EXTRA_MV: f32 = 0.030;
+
+/// Beats an ensemble needs before a delta may be gated at all. Spec §16.
+///
+/// At n = 1 the beat-to-beat spread is unestimable, not small. The lead is
+/// excluded from gating rather than reported with a narrow band.
+pub const MIN_BEATS_FOR_DELTA: u32 = 2;
+
+/// Beats below which the count is a hard confounder even though the pair passes
+/// `MIN_BEATS_FOR_DELTA`. Spec §5.5, the `beats_lt_3` confounder.
+pub const BEATS_CONFOUNDER_MIN: u32 = 3;
+
+/// Fraction of the ST window that must be backed by real samples. Spec §16.
+pub const COVERAGE_ST_MIN: f32 = 0.90;
+
+/// σ ratio above which one study is unambiguously the pair's constraint and the
+/// UI must name it rather than describing the pair as jointly limited. Spec §16.
+pub const QUALITY_ASYMMETRY_NAME: f32 = 3.0;
+
+/// mV; the quantum ΔST is rendered to. Spec decision 49.
+///
+/// Never display more precision than the band. A bare "0.15 mV new ST
+/// elevation" at three decimals against a 0.06 mV limit is the exact artifact
+/// this product must not produce.
+pub const ST_DISPLAY_QUANTUM_MV: f32 = 0.05;

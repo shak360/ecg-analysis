@@ -12,13 +12,34 @@
 //! precisely the ones it would erase: new LVH voltage, new low voltage, R-wave
 //! amputation.
 //!
-//! # Why the anchor is QRS onset
+//! # The anchor is the R peak, and why that turns out to be tolerable
 //!
-//! A 20 ms change in the terminal QRS — new RBBB, hyperkalaemia, a class Ic
-//! effect — displaces the J point by up to 20 ms relative to the R peak. On the
-//! ST-T upstroke, where dV/dt runs 5–15 µV/ms, anchoring on R would manufacture
-//! 100–300 µV of apparent ST shift underneath an overlay that looks entirely
-//! plausible. Onset does not move with terminal-QRS morphology.
+//! This section previously claimed the anchor was QRS onset, and justified it:
+//! a 20 ms change in the terminal QRS — new RBBB, hyperkalaemia, a class Ic
+//! effect — displaces the J point by up to 20 ms relative to the R peak, and on
+//! the ST-T upstroke where dV/dt runs 5–15 µV/ms that would manufacture
+//! 100–300 µV of apparent ST shift.
+//!
+//! Both halves were wrong. Frames are anchored on the **R peak** — `ensemble`
+//! is called with the R-peak times from `project_strip_beats`, and the two-pass
+//! logic in `wasm_api` re-anchors the *baseline* rather than the frame. And the
+//! predicted error does not occur: measured on a fixture whose terminal QRS is
+//! delayed enough to move the J point 14 ms relative to R, the fabricated ST is
+//! **12.5 µV**, twenty times below the claim. See
+//! `r_peak_anchoring_does_not_fabricate_st` in `tests/acceptance.rs`.
+//!
+//! The arithmetic was sound; it was answering the wrong question. ST is sampled
+//! at the *measured* J point, which is a global fiducial and moves with the
+//! morphology. The frame anchor decides where the beat is drawn, not where it is
+//! measured, so a J point that shifts relative to R is followed rather than
+//! missed.
+//!
+//! What this does **not** protect against is the fiducial itself mis-locating.
+//! Past roughly 16 ms of terminal delay the QRS-offset detector latches onto the
+//! wrong feature and reports the complex getting *shorter*; the fabricated ST is
+//! then over 1 mV. That is a live defect, tracked separately — it is a failure of
+//! fiducial detection, not of anchoring, and moving the frame anchor would not
+//! touch it.
 //!
 //! # The interlocks
 //!
@@ -144,9 +165,9 @@ fn qrs_window(qrs_onset: usize, qrs_offset: usize, fs_hz: f64) -> (usize, usize)
 
 /// Register one comparison lead against a reference lead.
 ///
-/// Both frames are already anchored on their own study's global QRS onset, so
-/// the residual shift here is small by construction — it corrects sub-sample
-/// fiducial jitter, not gross misalignment.
+/// Both frames are already anchored on their own study's R peak, so the residual
+/// shift here is small by construction — it corrects sub-sample fiducial jitter,
+/// not gross misalignment.
 pub fn register_lead(
     reference_mv: &[f32],
     comparison_mv: &[f32],

@@ -436,6 +436,33 @@ ol, ul { padding: 0; list-style: none; }
 
 /* --- measurements --------------------------------------------------------- */
 
+/*
+ * Study-level findings.
+ *
+ * Weighted heavier than the measurements table below it on purpose. A change in
+ * ventricular conduction is not one finding among twelve — it is the condition
+ * under which the twelve are to be read, so it gets the warning colour and the
+ * left rule that the eye lands on first.
+ */
+.findings { margin-top: 14px; }
+.findings__item {
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--text);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.findings__label {
+  display: block;
+  font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warn);
+  margin-bottom: 3px;
+}
+
 .measurements { margin-top: 14px; }
 
 .cal-note {
@@ -464,21 +491,72 @@ ol, ul { padding: 0; list-style: none; }
 }
 .mtable tbody th[scope="row"] { text-align: left; font-weight: 600; color: var(--text); }
 .mtable td { color: var(--text-muted); }
-.mtable .delta { color: var(--text); }
 
-/* A flagged change gets colour; nothing else does, so colour means something. */
-.mtable tr.notable { background: color-mix(in srgb, var(--warn) 12%, transparent); }
-.mtable tr.notable .delta { color: var(--warn); font-weight: 650; }
-.mtable tr.unresolvable .delta { color: var(--text-faint); }
+/*
+ * The ST table carries sentences, not just numbers, so its cells are blocks and
+ * its rows are taller than the interval tables above and below it. That is the
+ * cost of never rendering a millivolt figure without saying what it is uncertain
+ * by, and it is the right trade: the compact version of this table was one where
+ * a delta and a detection limit were the same size and read as one number.
+ */
+.mtable--st td { vertical-align: top; line-height: 1.5; }
+.st-level { display: block; color: var(--text); }
+.st-band { color: var(--text-faint); font-weight: 400; }
 
-.lim { color: var(--text-faint); font-size: 10.5px; }
+/*
+ * One change line: which band, the figure, and what may be concluded.
+ *
+ * Spec §8 risk 10 requires `BelowDetectionLimit` and `Unmeasurable` to render in
+ * the *same* muted style, so that a suppressed metric never reads as
+ * reassurance. `--suppressed` is that shared style, and `Indeterminate` takes it
+ * too: it establishes nothing either, and a state of its own would eventually
+ * acquire a weight that made it look like an answer.
+ */
+.st-change {
+  display: block; font-size: 10.5px; line-height: 1.45;
+  color: var(--text-muted); margin-top: 2px;
+}
+.st-band-name {
+  color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: .04em; font-size: 9.5px;
+}
+.st-why { color: var(--text-faint); }
+
+/* A change that cleared both hurdles with no confounder. The only coloured
+   state, so colour on this screen means exactly one thing. */
+.st-change--significant { color: var(--warn); font-weight: 650; }
+.st-change--significant .st-why { color: var(--warn); font-weight: 400; }
+/* The only state that asserts something, so it reads as a statement. */
+.st-change--excluded { color: var(--text-muted); }
+/* Nothing was established. Shared, deliberately, by all three such states. */
+.st-change--suppressed { color: var(--text-faint); }
+
+.mtable tr.significant { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+/*
+ * Why the pair cannot be gated at all, stated once above the table.
+ *
+ * Styled like the study-level findings rather than like a table note: this is
+ * the reason every ST cell below is empty, and a reader who misses it sees
+ * twelve leads with nothing to report.
+ */
+.blockers {
+  font-size: 12px; line-height: 1.55; color: var(--text-muted);
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px;
+}
+.blockers__label {
+  display: block; font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text); margin-bottom: 4px;
+}
+.blockers ul { margin: 0; padding-left: 18px; }
+.blockers li { margin-top: 3px; }
 
 .mnote {
   font-size: 11.5px; line-height: 1.5; color: var(--text-faint);
   max-width: 78ch;
 }
-.mtable .chg { color: var(--text-muted); font-size: 10.5px; }
-.mtable tr.notable .chg { color: var(--warn); font-weight: 650; }
 
 /* Per-study colour control, beside the study it identifies. */
 .study__colour {

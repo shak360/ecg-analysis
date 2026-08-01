@@ -9,7 +9,8 @@
  * be added — these are patient tracings.
  */
 import { createEngine } from "./engine/client.ts";
-import type { ComparisonSnapshot, Measures, StDelta } from "./engine/protocol.ts";
+import type { ComparisonSnapshot } from "./engine/protocol.ts";
+import { measurementsHtml } from "./ui/measurements.ts";
 import {
   analyse,
   type Assumptions,
@@ -323,8 +324,21 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
 
   render();
 
-  const measures = chosen.map((s) => s.summary!.measurements);
-  renderMeasurements(chosen, measures, snapshot.deltaSets);
+  renderFindings(chosen, snapshot.findingSets);
+  // The measurements block is a pure function of plain data, so the thresholds
+  // it renders against come from the snapshot rather than from anything on this
+  // side. `main.ts` supplies only the file names, which are UI state.
+  $("measurements").innerHTML = measurementsHtml({
+    studies: chosen.map((s) => ({
+      name: s.fileName,
+      calibration: s.summary!.calibration,
+      measurements: s.summary!.measurements,
+    })),
+    verdictSets: snapshot.verdictSets,
+    pairBlockerSets: snapshot.pairBlockerSets,
+    clinicalThresholdMv: snapshot.clinicalThresholdMv,
+    stDisplayQuantumMv: snapshot.stDisplayQuantumMv,
+  });
 
   const lines: string[] = [
     `reference  ${ref.fileName}   ${fmtHr(ref.summary!.hrBpm)}`,
@@ -356,118 +370,43 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
 }
 
 // ---------------------------------------------------------------------------
-// Measurements
+// Findings
 // ---------------------------------------------------------------------------
 
-const num = (v: number | null, digits: number, unit: string) =>
-  v === null ? "\u2014" : `${v.toFixed(digits)}${unit ? " " + unit : ""}`;
-
 /**
- * Render the measurements table for a series.
+ * Render study-level findings above the measurements.
  *
- * Every amplitude carries its uncertainty and every delta its detection limit.
- * A number without an interval is this product's main way of causing harm, so
- * the two are emitted together or not at all.
- *
- * Deltas are against the first study, not the preceding one: a series is read
- * for distance from baseline, and chaining differences would let three small
- * unflagged steps hide one large real change.
+ * These are deliberately not folded into the table. A conduction change means
+ * every ST and T delta below carries the new activation sequence as well as any
+ * change in repolarisation, and the two cannot be separated — so it has to be
+ * read first, not discovered afterwards in a column.
  */
-function renderMeasurements(
-  studies: Study[],
-  measures: Measures[],
-  deltaSets: StDelta[][],
-): void {
-  const el = $("measurements");
+function renderFindings(studies: Study[], findingSets: string[][]): void {
+  const el = $("serial-findings");
+  el.innerHTML = "";
 
-  const calRows = studies.map((s) =>
-    `<div><strong>${s.fileName}</strong> \u2014 ${
-      s.summary?.calibration?.source === "pulse"
-        ? `${s.summary.calibration.mmPerMv} mm/mV measured from the calibration pulse`
-        : `${s.summary?.calibration?.mmPerMv ?? "?"} mm/mV assumed \u2014 no pulse found`
-    }</div>`
-  ).join("");
+  const any = findingSets.some((f) => f.length > 0);
+  el.hidden = !any;
+  if (!any) return;
 
-  const head = studies.map((s, i) =>
-    `<th scope="col">${i === 0 ? "ref \u00b7 " : ""}${s.fileName.replace(/\.pdf$/i, "")}</th>`
-  ).join("");
+  findingSets.forEach((findings, k) => {
+    // findingSets[k] compares studies[k + 1] against the reference.
+    const subject = studies[k + 1];
+    for (const text of findings) {
+      const item = document.createElement("div");
+      item.className = "findings__item";
 
-  const globalRows: [string, (m: Measures) => string][] = [
-    ["Heart rate", (m) => num(m.hr, 0, "bpm")],
-    ["QRS duration", (m) => num(m.qrs, 0, "ms")],
-    ["QT", (m) => num(m.qt, 0, "ms")],
-    ["QTc (Fridericia)", (m) => num(m.qtcF, 0, "ms")],
-    ["QTc (Bazett)", (m) => num(m.qtcB, 0, "ms")],
-    ["Frontal axis", (m) => num(m.axis, 0, "\u00b0")],
-  ];
-  const globals = globalRows.map(([name, fn]) =>
-    `<tr><th scope="row">${name}</th>${measures.map((m) => `<td>${fn(m)}</td>`).join("")}</tr>`
-  ).join("");
+      const label = document.createElement("strong");
+      label.className = "findings__label";
+      label.textContent = studies.length > 2 && subject
+        ? `Conduction change \u00b7 ${subject.fileName}`
+        : "Conduction change";
+      item.appendChild(label);
 
-  const leads = measures[0]?.leads ?? [];
-
-  const stRows = leads.map((la) => {
-    const cells = [`<td>${num(la.stJ, 3, "")}</td>`];
-    let anyNotable = false;
-    let anyUnresolvable = false;
-
-    for (let k = 1; k < measures.length; k++) {
-      const lb = measures[k]?.leads.find((x) => x.lead === la.lead);
-      const d = deltaSets[k - 1]?.find((x) => x.lead === la.lead);
-      let cell = num(lb?.stJ ?? null, 3, "");
-      if (d && d.delta !== null) {
-        const sign = d.delta >= 0 ? "+" : "";
-        if (d.belowLimit) {
-          anyUnresolvable = true;
-          cell += ` <span class="lim">${sign}${d.delta.toFixed(3)} not resolvable</span>`;
-        } else {
-          if (d.notable) anyNotable = true;
-          cell += ` <span class="${d.notable ? "chg" : "lim"}">${sign}${
-            d.delta.toFixed(3)
-          } \u00b1 ${d.mdc?.toFixed(3) ?? "?"}</span>`;
-        }
-      }
-      cells.push(`<td>${cell}</td>`);
+      item.appendChild(document.createTextNode(text));
+      el.appendChild(item);
     }
-
-    const cls = anyNotable ? "notable" : anyUnresolvable ? "unresolvable" : "";
-    return `<tr class="${cls}"><th scope="row">${la.lead}</th>${cells.join("")}</tr>`;
-  }).join("");
-
-  const rRows = leads.map((la) =>
-    `<tr><th scope="row">${la.lead}</th>${
-      measures.map((m) =>
-        `<td>${num(m.leads.find((x) => x.lead === la.lead)?.r ?? null, 2, "")}</td>`
-      ).join("")
-    }</tr>`
-  ).join("");
-
-  el.innerHTML = `
-    <div class="cal-note">${calRows}</div>
-    <table class="mtable">
-      <caption>Global measurements</caption>
-      <thead><tr><th scope="col">Measure</th>${head}</tr></thead>
-      <tbody>${globals}</tbody>
-    </table>
-    <table class="mtable">
-      <caption>ST at the J point (mV), each study with its change from the reference</caption>
-      <thead><tr><th scope="col">Lead</th>${head}</tr></thead>
-      <tbody>${stRows}</tbody>
-    </table>
-    <table class="mtable">
-      <caption>R amplitude (mV)</caption>
-      <thead><tr><th scope="col">Lead</th>${head}</tr></thead>
-      <tbody>${rRows}</tbody>
-    </table>
-    <p class="mnote">
-      Changes are measured against the <strong>reference</strong>, the earliest study
-      selected, not against the preceding one \u2014 three small steps would otherwise
-      each escape flagging while together amounting to a large real change.
-      A \u0394 is flagged only when it exceeds both the pair's detection limit and the
-      0.10 mV clinical threshold. <span class="lim">not resolvable</span> means the
-      limit is itself above 0.10 mV, so a clinically significant change can be
-      neither confirmed nor excluded \u2014 it does not mean no change.
-    </p>`;
+  });
 }
 
 const fmtHr = (v: number) => Number.isFinite(v) ? `${v.toFixed(0)} bpm` : "rate n/a";

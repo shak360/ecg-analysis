@@ -34,19 +34,37 @@ that motivated this.
 
 ## Status
 
-Early. What works today:
+Early, and the vector-PDF path runs end to end. What works today:
 
 - **Vector-PDF extraction.** When a cart emits a vector PDF the tracing is literally a polyline in the
   content stream, so coordinates are read directly rather than inferred from pixels. On the 12-lead
   fixture this recovers all 12 lead panels, the rhythm strip, and the calibration pulses, and measures
   the grid pitch to 1.0000 mm.
 - **Grid/trace classification** and grid-pitch estimation, including mixed 1 mm / 5 mm lattices.
+- **Calibration** to millivolts and seconds, read from the calibration pulse in preference to any
+  header text, per row, because split-gain printouts are routine.
+- **The measurement path**: PCHIP and Kaiser resampling to a 500 Hz grid, a throwaway median cascade
+  that stabilises beat detection and is then discarded, Pan–Tompkins detection on the rhythm strip as
+  the sole timing authority, panel↔strip time-base verification, PQ-anchored piecewise-linear detrend,
+  ensemble beats with per-sample σ, and two-pass global fiducials from spatial velocity.
+- **Registration and comparison.** Rigid cross-study alignment on QRS onset with the correlation
+  interlocks, per-lead Δ(t), a series view rather than only a pair, and study-level findings — a QRS
+  duration change is reported separately, because it changes how every other number should be read.
+- **The verdict gate.** Serial ST change is reported through five states — `Significant`,
+  `Indeterminate`, `BelowDetectionLimit`, `NoChange`, `Unmeasurable` — behind the spec's fail-closed
+  preconditions, with an MDC95 for the pair and both uncertainty bands. `NoChange` requires positively
+  excluding the clinical threshold; it is never the fallback. See
+  [docs/decisions/0007-verdict-gate.md](docs/decisions/0007-verdict-gate.md), which also records what
+  this costs today: the pipeline does not yet measure ST-window coverage, lead identity, or the
+  electrode arrangement, so on real input every lead currently returns `Unmeasurable` rather than a
+  number the evidence does not support.
 - **Synthetic fixture generator** — 12-lead ECGs rendered as realistic printout PDFs with exact ground
   truth, including a serial pair differing only by a known +0.25 mV ST elevation in V2–V4.
-- Rust → WebAssembly compute core wired end to end, with a numeric self-check at boot.
+- Rust → WebAssembly compute core in a Web Worker behind a plain-data boundary, with a numeric
+  self-check at boot.
 
-Not yet built: calibration to mV/seconds, lead assignment, DSP, the registration engine, the
-comparison UI, and the raster (scan/photo) path.
+Not yet built: the raster (scan/photo) path, lead assignment from labels, the five human-in-the-loop
+gates, and the evidence the verdict gate is waiting on.
 
 ## The constraint that shapes the design
 
@@ -62,24 +80,30 @@ reconstructed 12-lead as continuous simultaneous signal.
 
 - [Rust](https://rustup.rs) with the `wasm32-unknown-unknown` target, and
   [`wasm-pack`](https://rustwasm.github.io/wasm-pack/)
-- [Deno](https://deno.com) 2.x
+- Node 24, pinned in `.node-version` (see
+  [docs/decisions/0006-node-toolchain.md](docs/decisions/0006-node-toolchain.md))
 
 ```bash
-brew install rustup deno wasm-pack
+brew install rustup wasm-pack fnm
 rustup default stable
 rustup target add wasm32-unknown-unknown
+fnm install && fnm use
+npm ci --ignore-scripts   # lifecycle scripts are npm's main supply-chain vector
 ```
 
 ## Usage
 
 ```bash
-deno task fixtures   # generate synthetic ECG PDFs with ground truth
-deno task dev        # build WASM, bundle, serve on :8080
-deno task test       # Rust unit tests + Deno tests
+npm run fixtures   # generate synthetic ECG PDFs with ground truth
+npm run dev        # build WASM, serve with HMR
+npm test           # Rust tests + web tests
+npm run check      # tsc --noEmit and clippy
 ```
 
-Then open <http://localhost:8080/> for the app, or <http://localhost:8080/dev.html> for the vector
-extraction harness, which renders a fixture PDF beside the geometry the extractor recovered from it.
+Then open the printed dev-server URL for the app, or `/dev.html` for the vector extraction harness,
+which renders a fixture PDF beside the geometry the extractor recovered from it.
+
+`npm test` needs `web/wasm` present, so run `npm run wasm:dev` (or `npm run dev` once) first.
 
 ## Layout
 
@@ -89,7 +113,7 @@ web/src/ingest/    file routing, PDF geometry extraction, classification
 web/src/ui/        canvas views and controls
 web/vendor/pdfjs/  vendored pdf.js, pinned (see VERSION)
 tools/synth/       synthetic ECG generator and printout renderer
-test/              Rust and Deno tests
+test/              web tests (vitest); Rust tests live beside the code and in crates/*/tests/
 sample_ECGs/       your own ECGs — gitignored, never committed
 ```
 

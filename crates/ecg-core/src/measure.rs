@@ -10,7 +10,8 @@
 //! measured from the study's own global fiducials.
 
 use crate::config::{
-    FS, ST_CAP_MS_BY_HR, ST_J60_WIN_MS, ST_J_WIN_MS, ST_SLOPE_PTS_MS, ST_TPEAK_GUARD_FRAC,
+    FS, MIN_BEATS_FOR_DELTA, ST_CAP_MS_BY_HR, ST_J60_WIN_MS, ST_J_WIN_MS, ST_SLOPE_PTS_MS,
+    ST_TPEAK_GUARD_FRAC,
 };
 use crate::fiducial::GlobalFiducials;
 
@@ -33,8 +34,23 @@ pub struct LeadMeasurements {
     pub q_duration_ms: Option<f32>,
     /// Peak T amplitude within the repolarisation window.
     pub t_amplitude_mv: Option<f32>,
-    /// 1σ uncertainty on the ST values, millivolts.
-    pub sigma_st_mv: f32,
+    /// mV, 1σ beat-to-beat spread at the J point. `None` when unestimable — at
+    /// n = 1, or on any path that returned before measuring.
+    ///
+    /// This was a plain `f32` and the struct derives `Default`, so both early
+    /// returns below reported σ = 0 for a lead whose QRS boundaries were never
+    /// found. The resulting serial row read `mdc: 0.0040, belowLimit: false`,
+    /// which every downstream reader treats as "resolved, no change" — perfect
+    /// certainty about a lead nobody looked at.
+    pub sigma_ens_mv: Option<f32>,
+    /// mV, 1σ gain contribution at this lead's ST level. `None` for the same
+    /// reasons, and additionally when no gain was ever recorded.
+    ///
+    /// Separate from `sigma_ens_mv` because ρ applies here and nowhere else:
+    /// two studies off the same cart share their gain error and share none of
+    /// their beat-to-beat noise, and folding the two together makes an
+    /// evidenced correlation unrepresentable.
+    pub sigma_gain_mv: Option<f32>,
     /// Why an ST value is absent, when it is.
     pub st_note: Option<&'static str>,
 }
@@ -84,13 +100,24 @@ fn net_area(sig: &[f32], from: usize, to: usize, fs: f64) -> f32 {
 }
 
 /// Measure one lead against the study's global fiducials.
+///
+/// `gain_relative_sigma` is `None` when no millivolt scale was ever recorded.
+/// There is then no relative error to propagate, and inventing a conservative
+/// stand-in would put a number in `sigma_gain_mv` that looks exactly like a
+/// measured one everywhere downstream.
+///
+/// `n_beats` is the count that went into this lead's ensemble. It is taken
+/// separately from `sigma_mv` rather than inferred from it: the array can carry
+/// a finite value at n = 1 the moment anyone floors or sanitises it for display,
+/// and the beat count is the fact the precondition is actually about.
 pub fn measure_lead(
     lead: &str,
     beat_mv: &[f32],
     sigma_mv: &[f32],
     fid: &GlobalFiducials,
     hr_bpm: Option<f64>,
-    gain_relative_sigma: f32,
+    gain_relative_sigma: Option<f32>,
+    n_beats: u32,
 ) -> LeadMeasurements {
     let mut m = LeadMeasurements { lead: lead.to_string(), ..Default::default() };
 
@@ -182,30 +209,39 @@ pub fn measure_lead(
     }
 
     // --- uncertainty ---------------------------------------------------------
-    // Beat-to-beat spread at the J point, combined with the gain's own relative
-    // error. Gain error scales with the value, so it matters little for a
-    // 0.1 mV ST level and a great deal for a 2 mV R wave.
-    let ens_sigma = sigma_mv
-        .get(off)
-        .copied()
-        .filter(|s| s.is_finite())
-        .unwrap_or(f32::INFINITY);
-    let level = m.st_j_mv.unwrap_or(0.0).abs();
-    m.sigma_st_mv = if ens_sigma.is_finite() {
-        (ens_sigma.powi(2) + (gain_relative_sigma * level).powi(2)).sqrt()
-    } else {
-        f32::INFINITY
-    };
+    //
+    // The two terms are kept apart. Beat-to-beat spread is independent between
+    // two studies; gain error is shared to whatever degree the same cart printed
+    // both, and only the gain term may ever carry a ρ. Gain error also scales
+    // with the value, so it matters little for a 0.1 mV ST level and a great
+    // deal for a 2 mV R wave.
+    //
+    // Both stay `None` unless an ST level was actually measured. A σ attached to
+    // a level that does not exist is a band around nothing.
+    if let Some(level) = m.st_j_mv {
+        // Below the beat-count precondition the spread is unestimable, not
+        // small — independently of whatever the ensemble wrote into the array.
+        if n_beats >= MIN_BEATS_FOR_DELTA {
+            m.sigma_ens_mv = sigma_mv.get(off).copied().filter(|s| s.is_finite());
+        }
+        m.sigma_gain_mv = gain_relative_sigma.map(|g| g * level.abs());
+    }
 
     m
 }
 
 /// Measure a whole study.
+///
+/// `n_used[i]` is the beat count behind `leads[i]`'s ensemble. A lead with no
+/// entry is measured as though it had no beats, which costs it its uncertainty
+/// and therefore its verdict — the safe direction for a mismatch that should
+/// not happen.
 pub fn measure_study(
     leads: &[(String, Vec<f32>, Vec<f32>)],
     fid: &GlobalFiducials,
     hr_bpm: Option<f64>,
-    gain_relative_sigma: f32,
+    gain_relative_sigma: Option<f32>,
+    n_used: &[u32],
 ) -> StudyMeasurements {
     let mut s = StudyMeasurements {
         hr_bpm,
@@ -225,8 +261,9 @@ pub fn measure_study(
         }
     }
 
-    for (name, beat, sigma) in leads {
-        s.leads.push(measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma));
+    for (i, (name, beat, sigma)) in leads.iter().enumerate() {
+        let n = n_used.get(i).copied().unwrap_or(0);
+        s.leads.push(measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma, n));
     }
 
     // Frontal axis from net QRS *area* in I and aVF. Area is far steadier than
@@ -249,59 +286,12 @@ pub fn measure_study(
     s
 }
 
-/// A serial change in one lead, with the limit below which it cannot be claimed.
-#[derive(Debug, Clone)]
-pub struct StDelta {
-    pub lead: String,
-    pub delta_mv: Option<f32>,
-    /// Minimum detectable change at 95% confidence, millivolts.
-    pub mdc95_mv: f32,
-    /// True when |delta| exceeds both the detection limit and the clinical threshold.
-    pub notable: bool,
-    /// True when the detection limit is itself above the clinical threshold, so
-    /// a clinically significant change can be neither confirmed nor excluded.
-    pub below_detection_limit: bool,
-}
-
-/// Clinical ST-shift threshold, millivolts. UDMI-4 convention.
-pub const CLINICAL_ST_MV: f32 = 0.10;
-
-/// Compare ST levels between two studies, gated by their combined uncertainty.
-///
-/// A difference smaller than what the pair can resolve is not reported as a
-/// change. The bias terms add linearly rather than in quadrature because they
-/// are systematic, not random.
-pub fn st_delta(
-    reference: &LeadMeasurements,
-    comparison: &LeadMeasurements,
-    bias_ref_mv: f32,
-    bias_cmp_mv: f32,
-) -> StDelta {
-    let delta = match (reference.st_j_mv, comparison.st_j_mv) {
-        (Some(a), Some(b)) => Some(b - a),
-        _ => None,
-    };
-
-    let var = reference.sigma_st_mv.powi(2) + comparison.sigma_st_mv.powi(2);
-    let mdc = if var.is_finite() {
-        1.96 * var.sqrt() + bias_ref_mv + bias_cmp_mv
-    } else {
-        f32::INFINITY
-    };
-
-    // Explicitly NaN- and infinity-safe: an unestimable sigma gives an infinite
-    // MDC, which must read as "cannot resolve", not as "no change".
-    let below = !mdc.is_finite() || mdc >= CLINICAL_ST_MV;
-    let notable = delta.is_some_and(|d| d.abs() > mdc && d.abs() >= CLINICAL_ST_MV);
-
-    StDelta {
-        lead: reference.lead.clone(),
-        delta_mv: delta,
-        mdc95_mv: mdc,
-        notable,
-        below_detection_limit: below,
-    }
-}
+// The two-state serial gate that used to live here — `StDelta`, `st_delta` and
+// `CLINICAL_ST_MV` — is now `serial::gate`. It collapsed seven preconditions and
+// five verdict states into two booleans, and `below_detection_limit == false`
+// did not mean the pair had resolved the lead: it meant the arithmetic had run.
+// Keeping it alongside the new gate would leave two gates that disagree, with
+// the looser one wired to the screen.
 
 #[cfg(test)]
 mod tests {
@@ -338,7 +328,7 @@ mod tests {
     #[test]
     fn r_amplitude_is_recovered() {
         let b = beat(1.35, 0.0);
-        let m = measure_lead("V4", &b, &vec![0.01; FRAME_N], &fid(88, 112, 210), Some(60.0), 0.02);
+        let m = measure_lead("V4", &b, &vec![0.01; FRAME_N], &fid(88, 112, 210), Some(60.0), Some(0.02), 4);
         let r = m.r_amplitude_mv.expect("no R");
         assert!((r - 1.35).abs() < 0.05, "R {r} should be 1.35");
     }
@@ -346,7 +336,7 @@ mod tests {
     #[test]
     fn st_level_is_measured_against_the_isoelectric_zero() {
         let b = beat(1.2, 0.25);
-        let m = measure_lead("V3", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), 0.02);
+        let m = measure_lead("V3", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), Some(0.02), 4);
         let st = m.st_j_mv.expect("no ST");
         assert!((st - 0.25).abs() < 0.03, "ST {st} should be 0.25");
     }
@@ -354,7 +344,7 @@ mod tests {
     #[test]
     fn a_flat_st_reads_as_zero_not_as_missing() {
         let b = beat(1.2, 0.0);
-        let m = measure_lead("I", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), 0.02);
+        let m = measure_lead("I", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), Some(0.02), 4);
         assert!(m.st_j_mv.is_some());
         assert!(m.st_j_mv.unwrap().abs() < 0.02);
     }
@@ -369,7 +359,7 @@ mod tests {
             t_offset: Err(Unmeasurable::NoActivation),
             sv_peak: 0.0,
         };
-        let m = measure_lead("I", &b, &vec![0.01; FRAME_N], &f, Some(60.0), 0.02);
+        let m = measure_lead("I", &b, &vec![0.01; FRAME_N], &f, Some(60.0), Some(0.02), 4);
         assert!(m.st_j_mv.is_none(), "an ST value appeared without QRS boundaries");
         assert!(m.st_note.is_some());
     }
@@ -378,7 +368,7 @@ mod tests {
     fn j60_is_withheld_at_tachycardia() {
         // At 140 bpm the cap is 40 ms, so J+60 would land on the T wave.
         let b = beat(1.2, 0.2);
-        let m = measure_lead("V2", &b, &vec![0.01; FRAME_N], &fid(88, 125, 190), Some(140.0), 0.02);
+        let m = measure_lead("V2", &b, &vec![0.01; FRAME_N], &fid(88, 125, 190), Some(140.0), Some(0.02), 4);
         assert!(m.st_j_mv.is_some(), "ST_J should still be available");
         assert!(m.st_j60_mv.is_none(), "J+60 should be withheld at 140 bpm");
         assert!(m.st_note.is_some());
@@ -387,7 +377,7 @@ mod tests {
     #[test]
     fn fridericia_and_bazett_diverge_with_rate_as_expected() {
         let mk = |hr: f64| {
-            measure_study(&[], &fid(88, 125, 300), Some(hr), 0.02)
+            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[])
         };
         let slow = mk(60.0);
         let fast = mk(100.0);
@@ -412,65 +402,80 @@ mod tests {
             ]
         };
         // Equal positive areas in I and aVF put the axis at +45 degrees.
-        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), 0.02);
+        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
         let ax = s.axis_deg.expect("no axis");
         assert!((ax - 45.0).abs() < 5.0, "axis {ax} should be near +45");
 
         // Positive I, negative aVF is left axis deviation.
-        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), 0.02);
+        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
         assert!(s2.axis_deg.unwrap() < -30.0, "expected left axis deviation");
     }
 
-    // ---- gating ------------------------------------------------------------
+    // ---- uncertainty, and the shape of its absence --------------------------
+    //
+    // The five gating tests that used to sit here went with `st_delta`, into
+    // `serial::gate`, where the decision rule now lives: the notable case became
+    // `a_change_clearing_both_the_detection_limit_and_the_clinical_criterion_is_significant`,
+    // the sub-threshold case `a_change_clearing_the_detection_limit_but_not_the_criterion_is_indeterminate`,
+    // the unresolvable pair `a_pair_that_cannot_resolve_the_criterion_reads_as_below_the_detection_limit`,
+    // and the single-beat lead `a_lead_built_from_one_beat_is_unmeasurable_not_unchanged`.
+    // What belongs here is the half of that story this file owns: whether a
+    // measurement has an uncertainty at all.
 
-    fn lead_with(st: f32, sigma: f32) -> LeadMeasurements {
-        LeadMeasurements {
-            lead: "V2".into(),
-            st_j_mv: Some(st),
-            sigma_st_mv: sigma,
-            ..Default::default()
-        }
+    #[test]
+    fn a_lead_that_measured_nothing_reports_no_uncertainty_rather_than_zero() {
+        use crate::fiducial::Unmeasurable;
+        let b = beat(1.2, 0.25);
+        let f = GlobalFiducials {
+            qrs_onset: Err(Unmeasurable::NoActivation),
+            qrs_offset: Err(Unmeasurable::NoActivation),
+            t_offset: Err(Unmeasurable::NoActivation),
+            sv_peak: 0.0,
+        };
+        let m = measure_lead("V2", &b, &vec![0.01; FRAME_N], &f, Some(60.0), Some(0.02), 4);
+
+        // This is the regression the whole verdict gate was built around. The
+        // struct derives `Default`, so before this change the early return left
+        // sigma at 0.0 and the pair reported a 0.004 mV detection limit for a
+        // lead whose QRS boundaries were never found.
+        assert_eq!(m.sigma_ens_mv, None, "an unmeasured lead claimed a beat-to-beat sigma");
+        assert_eq!(m.sigma_gain_mv, None, "an unmeasured lead claimed a gain sigma");
+        assert!(m.st_j_mv.is_none());
     }
 
     #[test]
-    fn a_change_above_the_detection_limit_is_notable() {
-        let d = st_delta(&lead_with(0.00, 0.010), &lead_with(0.25, 0.010), 0.002, 0.002);
-        assert!((d.delta_mv.unwrap() - 0.25).abs() < 1e-6);
-        assert!(d.notable, "0.25 mV against an MDC of {} should be notable", d.mdc95_mv);
-        assert!(!d.below_detection_limit);
+    fn a_single_beat_lead_has_no_estimable_ensemble_sigma() {
+        // The array is finite and small — deliberately, because that is what it
+        // looks like the moment anyone floors or sanitises it for display. The
+        // beat count is what makes the spread unestimable, so the beat count is
+        // what this reads.
+        let b = beat(1.2, 0.25);
+        let m = measure_lead("V2", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), Some(0.02), 1);
+        assert_eq!(m.sigma_ens_mv, None, "n=1 must not report a beat-to-beat sigma");
+        assert!(m.st_j_mv.is_some(), "the level itself is still measurable and still shown");
+
+        let two = measure_lead("V2", &b, &vec![0.01; FRAME_N], &fid(88, 125, 210), Some(60.0), Some(0.02), 2);
+        assert!(two.sigma_ens_mv.is_some(), "n=2 is estimable");
     }
 
     #[test]
-    fn a_change_below_the_detection_limit_is_not_claimed() {
-        // Real difference, but smaller than the pair can resolve.
-        let d = st_delta(&lead_with(0.00, 0.040), &lead_with(0.06, 0.040), 0.012, 0.012);
-        assert!(!d.notable, "a 0.06 mV change must not be claimed at MDC {}", d.mdc95_mv);
-    }
+    fn the_gain_term_is_reported_separately_from_the_beat_to_beat_term() {
+        // They cannot be summed here. Beat-to-beat noise is independent between
+        // two studies and gain error is shared to whatever degree the same cart
+        // printed both, so only one of the two may ever carry a rho.
+        let b = beat(1.2, 0.25);
+        let m = measure_lead("V2", &b, &vec![0.02; FRAME_N], &fid(88, 125, 210), Some(60.0), Some(0.04), 4);
+        let ens = m.sigma_ens_mv.expect("no ensemble sigma");
+        let gain = m.sigma_gain_mv.expect("no gain sigma");
+        assert!((ens - 0.02).abs() < 1e-6, "ensemble sigma {ens}");
+        // Gain error scales with the level: 4% of a 0.25 mV ST segment.
+        assert!((gain - 0.04 * m.st_j_mv.unwrap().abs()).abs() < 1e-6, "gain sigma {gain}");
+        assert!(gain != ens, "the two terms collapsed into one number");
 
-    #[test]
-    fn a_pair_that_cannot_resolve_the_clinical_threshold_says_so() {
-        // Poor-quality pair: the detection limit exceeds 0.10 mV, so a
-        // clinically significant change can be neither confirmed nor excluded.
-        let d = st_delta(&lead_with(0.00, 0.087), &lead_with(0.09, 0.087), 0.035, 0.035);
-        assert!(d.below_detection_limit);
-        assert!(!d.notable);
-        assert!(d.mdc95_mv > CLINICAL_ST_MV);
-    }
-
-    #[test]
-    fn a_single_beat_lead_cannot_support_a_delta() {
-        // sigma is infinite at n=1, so the MDC is infinite and nothing is claimed.
-        let d = st_delta(&lead_with(0.0, f32::INFINITY), &lead_with(0.4, 0.01), 0.002, 0.002);
-        assert!(!d.notable);
-        assert!(d.below_detection_limit);
-    }
-
-    #[test]
-    fn a_large_change_is_still_gated_by_the_clinical_threshold() {
-        // Exceeds the detection limit but sits under 0.10 mV: measurable, but
-        // not a change worth flagging.
-        let d = st_delta(&lead_with(0.00, 0.005), &lead_with(0.04, 0.005), 0.002, 0.002);
-        assert!(d.delta_mv.unwrap() > d.mdc95_mv, "should be measurable");
-        assert!(!d.notable, "0.04 mV is under the clinical threshold");
+        // And with no gain recorded there is no term to report, rather than a
+        // conservative stand-in that would look measured downstream.
+        let none = measure_lead("V2", &b, &vec![0.02; FRAME_N], &fid(88, 125, 210), Some(60.0), None, 4);
+        assert_eq!(none.sigma_gain_mv, None);
+        assert!(none.sigma_ens_mv.is_some(), "an unrecorded gain must not erase the beat sigma");
     }
 }
