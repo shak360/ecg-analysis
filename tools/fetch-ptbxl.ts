@@ -19,6 +19,8 @@
  * Two selections, because the site asks two different questions of this corpus.
  *
  *   --unchanged N   serial pairs, for validating change detection
+ *   --reindex       rebuild the atlas index from every human-validated record
+ *                   already on disk, with no network at all
  *   --atlas N       N human-validated records per statement, for the teaching
  *                   atlas: one browsable example set across all 71 SCP
  *                   statements rather than the eight conduction ones
@@ -29,8 +31,9 @@
  * 5,743 unvalidated records are left out entirely.
  *
  * Usage:  npm run fetch:ptbxl [-- --unchanged 300] [-- --atlas 6]
+ *         npm run fetch:ptbxl -- --reindex
  */
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const BASE = "https://physionet.org/files/ptb-xl/1.0.3";
@@ -125,6 +128,7 @@ function numArg(flag: string, fallback: number): number {
 
 const unchangedWanted = numArg("--unchanged", 200);
 const atlasPer = args.includes("--atlas") ? numArg("--atlas", 6) : 0;
+const reindexOnly = args.includes("--reindex");
 
 await mkdir(OUT, { recursive: true });
 
@@ -184,49 +188,66 @@ async function readStatements(): Promise<Map<string, Statement>> {
   return out;
 }
 
-if (atlasPer > 0) {
+if (atlasPer > 0 || reindexOnly) {
   const statements = await readStatements();
 
   // Human-validated only. See the header: an unreviewed label is tolerable in a
   // training set and not in a teaching one.
   const usable = rows.filter((r) => (r as unknown as Record<string, string>).validated_by_human === "True");
 
-  const chosenByCode = new Map<string, Row[]>();
-  for (const r of usable) {
-    for (const code of scpCodes(r.scp_codes)) {
-      if (!statements.has(code)) continue;
-      const list = chosenByCode.get(code) ?? [];
-      if (list.length >= atlasPer) continue;
-      list.push(r);
-      chosenByCode.set(code, list);
-    }
-  }
-
   const wanted = new Set<number>();
-  for (const list of chosenByCode.values()) {
-    for (const r of list) wanted.add(Number(r.ecg_id));
-  }
-
-  console.log(
-    `atlas: ${chosenByCode.size} statements covered, ${wanted.size} records ` +
-      `(~${(wanted.size * 120_600 / 1e6).toFixed(0)} MB), from ${usable.length} human-validated`,
-  );
-
-  await mkdir(`${OUT}records500`, { recursive: true });
   let got = 0;
-  for (const id of [...wanted].sort((a, b) => a - b)) {
-    const rel = recordPath(id);
-    const flat = rel.split("/").pop()!;
-    for (const ext of [".hea", ".dat"]) {
-      const dest = `${OUT}records500/${flat}${ext}`;
-      try {
-        await stat(dest);
-        continue;
-      } catch { /* not yet fetched */ }
-      await download(`${rel}${ext}`, dest);
-      got++;
+
+  if (reindexOnly) {
+    // Everything already on disk that meets the atlas standard, whichever
+    // selection fetched it. The serial-pair fetch pulls records by *pair*
+    // structure and the atlas fetch pulls them by *statement*, so the two sets
+    // barely overlap: the pairs left 722 human-validated records sitting in
+    // records500/ that no atlas index mentioned. Downloading more before
+    // indexing what we hold would have been the wrong order of work.
+    const onDisk = (await readdir(`${OUT}records500`).catch(() => []))
+      .filter((f) => f.endsWith(".hea"))
+      .map((f) => Number(f.slice(0, 5)));
+    const validated = new Set(usable.map((r) => Number(r.ecg_id)));
+    for (const id of onDisk) if (validated.has(id)) wanted.add(id);
+    console.log(
+      `reindex: ${onDisk.length} records on disk, ${wanted.size} human-validated`,
+    );
+  } else {
+    const chosenByCode = new Map<string, Row[]>();
+    for (const r of usable) {
+      for (const code of scpCodes(r.scp_codes)) {
+        if (!statements.has(code)) continue;
+        const list = chosenByCode.get(code) ?? [];
+        if (list.length >= atlasPer) continue;
+        list.push(r);
+        chosenByCode.set(code, list);
+      }
     }
-    if (got && got % 200 === 0) console.log(`  ${got} files …`);
+    for (const list of chosenByCode.values()) {
+      for (const r of list) wanted.add(Number(r.ecg_id));
+    }
+
+    console.log(
+      `atlas: ${chosenByCode.size} statements covered, ${wanted.size} records ` +
+        `(~${(wanted.size * 120_600 / 1e6).toFixed(0)} MB), from ${usable.length} human-validated`,
+    );
+
+    await mkdir(`${OUT}records500`, { recursive: true });
+    for (const id of [...wanted].sort((a, b) => a - b)) {
+      const rel = recordPath(id);
+      const flat = rel.split("/").pop()!;
+      for (const ext of [".hea", ".dat"]) {
+        const dest = `${OUT}records500/${flat}${ext}`;
+        try {
+          await stat(dest);
+          continue;
+        } catch { /* not yet fetched */ }
+        await download(`${rel}${ext}`, dest);
+        got++;
+      }
+      if (got && got % 200 === 0) console.log(`  ${got} files …`);
+    }
   }
 
   // One entry per record, carrying every statement on it. A record usually has
@@ -237,8 +258,9 @@ if (atlasPer > 0) {
   // concatenate. `provenance` is the field that keeps the merge honest: PTB-XL
   // is the only corpus that records whether a human reviewed the label, and
   // only its cases may claim it.
+  const byId = new Map(usable.map((r) => [Number(r.ecg_id), r]));
   const entries = [...wanted].sort((a, b) => a - b).map((id) => {
-    const r = usable.find((x) => Number(x.ecg_id) === id)!;
+    const r = byId.get(id)!;
     const raw = r as unknown as Record<string, string>;
     // 300 is PTB-XL's sentinel for "over 89", not an age.
     const age = raw.age === "300.0" ? null : Number(raw.age);

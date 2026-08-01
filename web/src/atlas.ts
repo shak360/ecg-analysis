@@ -71,9 +71,41 @@ let ticket = 0;
 // The finding list
 // ---------------------------------------------------------------------------
 
-function visibleCodes(): Statement[] {
+/**
+ * The seven categories the fan offers.
+ *
+ * Ordered as ECGs are taught rather than alphabetically or by frequency: what
+ * normal looks like, then the rhythm, then how the impulse travels, then what
+ * the muscle has suffered, then repolarisation, then chamber size. "Other"
+ * collects the morphology statements that describe the tracing without
+ * committing to a diagnosis, and is last because it is the least self-contained.
+ *
+ * `NORM`, `MI`, `STTC`, `CD` and `HYP` are PTB-XL's own `diagnostic_class`
+ * values, carried through the shared vocabulary; the last two are derived from
+ * `kind`, since a rhythm statement has no diagnostic class.
+ */
+const CATEGORIES: { id: string; label: string; blurb: string }[] = [
+  { id: "NORM", label: "Normal", blurb: "the reference every other card is read against" },
+  { id: "RHYTHM", label: "Rhythm", blurb: "what is driving the heart, and how regularly" },
+  { id: "CD", label: "Conduction", blurb: "blocks, delays and accessory pathways" },
+  { id: "MI", label: "Infarction", blurb: "Q waves and the territories they name" },
+  { id: "STTC", label: "ST & T", blurb: "repolarisation: elevation, depression, inversion" },
+  { id: "HYP", label: "Hypertrophy", blurb: "voltage and chamber enlargement" },
+  { id: "OTHER", label: "Other morphology", blurb: "descriptive findings without a diagnosis" },
+];
+
+/** Which card a statement belongs under. Every statement lands in exactly one. */
+function categoryOf(s: Statement): string {
+  if (s.kind === "rhythm") return "RHYTHM";
+  if (CATEGORIES.some((c) => c.id === s.diagnosticClass)) return s.diagnosticClass;
+  return "OTHER";
+}
+
+let openClass: string = CATEGORIES[0]!.id;
+
+/** Statements passing every filter *except* the category, for the fan's counts. */
+function filteredCodes(): Statement[] {
   const kind = $<HTMLSelectElement>("filter-kind").value;
-  const cls = $<HTMLSelectElement>("filter-class").value;
   const q = $<HTMLInputElement>("search").value.trim().toLowerCase();
   const source = $<HTMLSelectElement>("filter-source").value;
 
@@ -82,7 +114,6 @@ function visibleCodes(): Statement[] {
       (byCode.get(s.id) ?? []).some((e) => source === "all" || e.source === source)
     )
     .filter((s) => kind === "all" || s.kind === kind)
-    .filter((s) => cls === "all" || s.diagnosticClass === cls)
     .filter((s) =>
       !q ||
       s.id.toLowerCase().includes(q) ||
@@ -92,81 +123,137 @@ function visibleCodes(): Statement[] {
     .sort((a, b) => a.description.localeCompare(b.description));
 }
 
+function visibleCodes(): Statement[] {
+  return filteredCodes().filter((s) => categoryOf(s) === openClass);
+}
+
+/** Cases carrying `code`, honouring the corpus filter. */
+function casesFor(code: string): Entry[] {
+  const source = $<HTMLSelectElement>("filter-source").value;
+  return (byCode.get(code) ?? []).filter((e) => source === "all" || e.source === source);
+}
+
+function renderFan(): void {
+  const fan = $("class-fan");
+  const all = filteredCodes();
+  fan.innerHTML = "";
+
+  CATEGORIES.forEach((c, i) => {
+    const codes = all.filter((s) => categoryOf(s) === c.id);
+    // A category's case count is over distinct records: a record with both
+    // CLBBB and IVCD is one ECG under Conduction, not two.
+    const cases = new Set<string>();
+    for (const s of codes) for (const e of casesFor(s.id)) cases.add(e.id);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fan__card";
+    btn.style.setProperty("--i", String(i));
+    btn.setAttribute("role", "tab");
+    btn.disabled = codes.length === 0;
+    btn.setAttribute("aria-selected", String(openClass === c.id));
+    if (openClass === c.id) btn.classList.add("fan__card--open");
+    if (!codes.length) btn.classList.add("fan__card--empty");
+
+    btn.innerHTML =
+      `<span class="fan__label"></span>` +
+      `<span class="fan__count"></span>` +
+      `<span class="fan__blurb"></span>`;
+    btn.querySelector(".fan__label")!.textContent = c.label;
+    btn.querySelector(".fan__count")!.textContent = codes.length
+      ? `${cases.size} ECG${cases.size === 1 ? "" : "s"} · ${codes.length} finding${
+        codes.length === 1 ? "" : "s"
+      }`
+      : "nothing here under this filter";
+    btn.querySelector(".fan__blurb")!.textContent = c.blurb;
+
+    btn.addEventListener("click", () => {
+      openClass = c.id;
+      openCode = null;
+      renderFan();
+      renderFindings();
+    });
+    fan.appendChild(btn);
+  });
+}
+
 function renderFindings(): void {
   const list = $("finding-list");
   const shown = visibleCodes();
   list.innerHTML = "";
-  // Count what is actually on screen. Reporting the whole corpus while a filter
-  // is applied reads as "these 29 findings cover 485 cases", which is false and
-  // in the flattering direction.
+
+  // Both halves must be the same scope. Pairing the open category's finding
+  // count with the whole corpus's case count read as "these 2 findings cover
+  // 1,207 cases", which is false and in the flattering direction. The fan gives
+  // the per-category breakdown, so this line states the filtered whole.
   const source = $<HTMLSelectElement>("filter-source").value;
-  const visibleCases = source === "all"
-    ? entries.length
-    : entries.filter((e) => e.source === source).length;
-  $("record-count").textContent = `${shown.length} findings · ${visibleCases} cases`;
+  const all = filteredCodes();
+  const cases = new Set<string>();
+  for (const s of all) for (const e of casesFor(s.id)) cases.add(e.id);
+  $("record-count").textContent = `${all.length} findings · ${cases.size} cases` +
+    (source === "all" ? "" : " in this corpus");
 
   if (!shown.length) {
     const li = document.createElement("li");
-    li.className = "picker-strip__empty";
-    li.textContent = "No findings match that filter.";
+    li.className = "chip-strip__empty";
+    li.textContent = "No findings in this category match that filter.";
     list.appendChild(li);
     return;
   }
 
   for (const s of shown) {
-    const source = $<HTMLSelectElement>("filter-source").value;
-    const cases = (byCode.get(s.id) ?? []).filter(
-      (e) => source === "all" || e.source === source,
-    );
+    const cases = casesFor(s.id);
     const li = document.createElement("li");
-    li.className = "study study--stacked";
-    if (openCode === s.id) li.classList.add("study--selected");
+    li.className = "chip-strip__item";
 
-    const body = document.createElement("div");
-    body.className = "study__body";
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    if (openCode === s.id) chip.classList.add("chip--open");
+    chip.setAttribute("aria-expanded", String(openCode === s.id));
+    chip.title = `${s.sourceCode} · ${s.kind}`;
+    chip.innerHTML = `<span class="chip__name"></span><span class="chip__n"></span>`;
+    chip.querySelector(".chip__name")!.textContent = s.description || s.id;
+    chip.querySelector(".chip__n")!.textContent = String(cases.length);
 
-    const name = document.createElement("div");
-    name.className = "study__name";
-    name.textContent = s.description || s.id;
-    body.appendChild(name);
-
-    const sub = document.createElement("div");
-    sub.className = "study__when";
-    sub.textContent = `${s.sourceCode} · ${s.kind}${
-      s.diagnosticClass ? ` · ${s.diagnosticClass}` : ""
-    } · ${cases.length} case${cases.length === 1 ? "" : "s"}`;
-    body.appendChild(sub);
-
-    li.appendChild(body);
-
-    // The cases sit under the finding rather than in a separate pane: the
-    // question a learner asks is "show me some of these", not "show me record
-    // 1043".
-    // A case can carry several findings, so a common one like sinus rhythm
-    // accumulates every record that mentions it — hundreds of buttons wrapping
-    // into thirty rows. Twelve is as many examples as anyone browses; the rest
-    // are reachable by filtering, and the count says they exist.
-    const SHOWN = 12;
-    const row = document.createElement("div");
-    row.className = "study__cases";
-    cases.slice(0, SHOWN).forEach((e, i) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "btn btn--ghost";
-      b.textContent = String(i + 1);
-      b.title = `${e.id}${e.sex ? `, ${e.sex}` : ""}${
-        e.age ? `, ${e.age}` : ""
-      }`;
-      b.addEventListener("click", () => void openCase(s.id, e));
-      row.appendChild(b);
+    // One click reaches an ECG. Selecting a finding opens its first case rather
+    // than only revealing more buttons — "show me one of these" is the question,
+    // and making it two clicks taught nobody anything extra.
+    chip.addEventListener("click", () => {
+      if (openCode === s.id) return;
+      openCode = s.id;
+      renderFindings();
+      const first = cases[0];
+      if (first) void openCase(s.id, first);
     });
-    if (cases.length > SHOWN) {
-      const more = document.createElement("span");
-      more.className = "study__when";
-      more.textContent = `+${cases.length - SHOWN} more`;
-      row.appendChild(more);
+    li.appendChild(chip);
+
+    // The chosen finding's cases sit directly beneath its chip. A case can carry
+    // several findings, so a common one like sinus rhythm accumulates every
+    // record that mentions it — hundreds of buttons wrapping into thirty rows.
+    // Twelve is as many examples as anyone browses; the rest are reachable by
+    // filtering, and the count on the chip says they exist.
+    if (openCode === s.id) {
+      const SHOWN = 12;
+      const row = document.createElement("div");
+      row.className = "chip__cases";
+      cases.slice(0, SHOWN).forEach((e, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn btn--ghost";
+        b.textContent = String(i + 1);
+        b.title = `${e.id}${e.sex ? `, ${e.sex}` : ""}${e.age ? `, ${e.age}` : ""}`;
+        b.addEventListener("click", () => void openCase(s.id, e));
+        row.appendChild(b);
+      });
+      if (cases.length > SHOWN) {
+        const more = document.createElement("span");
+        more.className = "chip__more";
+        more.textContent = `+${cases.length - SHOWN}`;
+        row.appendChild(more);
+      }
+      li.appendChild(row);
     }
-    li.appendChild(row);
 
     list.appendChild(li);
   }
@@ -296,10 +383,31 @@ function renderReport(summary: any): void {
 // Wiring
 // ---------------------------------------------------------------------------
 
-for (const id of ["filter-kind", "filter-class", "filter-source"]) {
-  $(id).addEventListener("change", renderFindings);
+/**
+ * Re-render both tiers after a filter change.
+ *
+ * The fan's counts depend on the filters, so it cannot be drawn once at boot.
+ * And a filter can empty the open category — searching "fibrillation" while
+ * Hypertrophy is open leaves a selected card with nothing under it, which reads
+ * as "no results" when the results are one card away. So the selection falls
+ * through to the first category that still has findings.
+ */
+function refresh(): void {
+  if (!visibleCodes().length) {
+    const fallback = filteredCodes()[0];
+    if (fallback) {
+      openClass = categoryOf(fallback);
+      openCode = null;
+    }
+  }
+  renderFan();
+  renderFindings();
 }
-$("search").addEventListener("input", renderFindings);
+
+for (const id of ["filter-kind", "filter-source"]) {
+  $(id).addEventListener("change", refresh);
+}
+$("search").addEventListener("input", refresh);
 $("scale").addEventListener("change", render);
 globalThis.addEventListener("resize", render);
 $("theme-toggle").addEventListener("click", () => {
@@ -367,7 +475,7 @@ async function boot(): Promise<void> {
   $("atlas-status").textContent =
     `${entries.length} cases across ${meta.size} findings, from ${bySource.size} ` +
     `corpora — ${reviewed} with human-reviewed labels.`;
-  renderFindings();
+  refresh();
 }
 
 void boot();

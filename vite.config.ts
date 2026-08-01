@@ -144,7 +144,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(webRoot, "index.html"),
-        atlas: resolve(webRoot, "atlas.html"),
+        compare: resolve(webRoot, "compare.html"),
         quiz: resolve(webRoot, "quiz.html"),
         ptbxl: resolve(webRoot, "ptbxl.html"),
         dev: resolve(webRoot, "dev.html"),

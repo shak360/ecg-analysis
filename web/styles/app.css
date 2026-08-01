@@ -367,11 +367,16 @@ ol, ul { padding: 0; list-style: none; }
 .field--inline { flex-direction: row; align-items: center; gap: 6px; }
 .field--inline > span { text-transform: none; letter-spacing: 0; font-size: 12px; }
 
-.field select {
+/* The search box is an `<input class="select">`, so a `.field select` selector
+   misses it and the browser's own control styling shows through — a grey box in
+   a light page and a black one in a dark page. Match on the class instead. */
+.field select,
+.field .select {
   font: inherit; font-size: 12.5px; padding: 5px 8px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--bg-raised); color: var(--text);
 }
+.field .select::placeholder { color: var(--text-faint); }
 .check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted); }
 
 /* --- study cards ---------------------------------------------------------- */
@@ -734,6 +739,137 @@ ol, ul { padding: 0; list-style: none; }
   max-width: 260px;
 }
 .picker-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 8px 2px; }
+
+/* ---------------------------------------------------------------------------
+ * The category fan, and the finding chips it opens.
+ *
+ * The atlas has 120 findings, which is not a list anyone reads across. They sit
+ * in seven categories, so the categories get the persistent row and the findings
+ * appear only under the chosen one.
+ *
+ * The cards overlap by a third so the row stays one glance wide. Each card's
+ * text is left-aligned into the strip its right-hand neighbour cannot cover —
+ * an overlapping card that hides its own label would be decoration.
+ * ------------------------------------------------------------------------- */
+.panel--fan { display: flex; flex-direction: column; gap: 10px; }
+
+.fan {
+  display: flex;
+  align-items: flex-start;
+  /* Room above for the lift and below for the shadow, so neither is clipped by
+     the horizontal scroller. */
+  padding: 10px 2px 14px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.fan__card {
+  --overlap: 38px;
+  flex: 0 0 auto;
+  width: 186px;
+  min-height: 92px;
+  margin-left: calc(-1 * var(--overlap));
+  /* Later cards sit on top of earlier ones, so the overlap always falls on a
+     card's right edge and never on its label. */
+  z-index: var(--i);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: -3px 0 10px rgb(0 0 0 / 0.10);
+  cursor: pointer;
+  transition: transform 160ms ease, margin 160ms ease, box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+.fan__card:first-child { margin-left: 0; }
+
+.fan__card:hover:not(:disabled),
+.fan__card:focus-visible {
+  transform: translateY(-5px);
+  z-index: 15;
+  border-color: var(--border-strong);
+}
+.fan__card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.fan__card--open {
+  transform: translateY(-9px);
+  /* Above every sibling, and pushing the next card clear, so the chosen card is
+     the one thing in the row shown whole. */
+  z-index: 20;
+  margin-right: var(--overlap);
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.16);
+}
+.fan__card--empty { opacity: 0.45; cursor: default; box-shadow: none; }
+
+.fan__label { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.fan__count { font-size: 11.5px; color: var(--text-muted); }
+.fan__card--open .fan__count { color: var(--accent); }
+.fan__blurb {
+  margin-top: auto;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-faint);
+  /* Hidden while the card is tucked behind its neighbour, because there is no
+     room to read it there. The card keeps its height either way, so revealing
+     it moves nothing. */
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.fan__card--open .fan__blurb,
+.fan__card:hover:not(:disabled) .fan__blurb { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fan__card, .fan__blurb { transition: none; }
+}
+
+/* The findings of the open category: one wrapped row of chips, with the chosen
+   chip's cases directly beneath it. */
+.chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chip-strip__item { display: flex; flex-direction: column; gap: 5px; }
+.chip-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 4px 2px; }
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--border-strong); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip--open {
+  color: var(--accent);
+  background: var(--accent-weak);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.chip__n { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.chip--open .chip__n { color: var(--accent); }
+
+.chip__cases { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.chip__cases .btn { padding: 2px 8px; font-size: 12px; }
+.chip__more { font-size: 11px; color: var(--text-faint); }
 
 .page-main { display: flex; flex-direction: column; gap: 12px; }
 .page-main canvas { width: 100%; display: block; }
