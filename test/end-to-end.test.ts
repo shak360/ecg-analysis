@@ -242,8 +242,12 @@ test("a widened QRS raises a conduction-change finding", async () => {
   // measured QRS duration is where the change actually shows.
   const findings = snap.findingSets[0]!;
   expect(findings.length, "a 30% wider QRS must be reported").toBeGreaterThan(0);
-  expect(findings[0]).toMatch(/widened/);
-  expect(findings[0]).toMatch(/conduction has changed/i);
+  // 18 ms of widening clears the upper threshold, so this is a change and not
+  // the equivocal band. Asserting the level rather than the prose is what keeps
+  // this test honest if the wording is ever rewritten.
+  expect(findings[0]!.level).toBe("changed");
+  expect(findings[0]!.text).toMatch(/widened/);
+  expect(findings[0]!.text).toMatch(/conduction has changed/i);
 });
 
 test("an ordinary follow-up raises no conduction finding", async () => {

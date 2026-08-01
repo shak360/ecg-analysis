@@ -7,13 +7,57 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL(".", import.meta.url));
 const webRoot = resolve(root, "web");
 const fixtureRoot = resolve(root, "test/fixtures");
+const corpusRoot = resolve(root, "data/ptbxl");
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf",
   ".json": "application/json",
   ".png": "image/png",
   ".jpg": "image/jpeg",
+  ".hea": "text/plain",
+  ".dat": "application/octet-stream",
+  ".csv": "text/csv",
 };
+
+/**
+ * Serve one directory read-only under one URL prefix, and nothing else.
+ *
+ * Both static mounts go through this, because the interesting part is the
+ * escape check and having two copies of it is how one of them ends up without
+ * the `startsWith` guard. `sample_ECGs/` sits a couple of levels above both
+ * roots, and a dev server must not be a way to read patient data off disk.
+ */
+function serveDir(name: string, prefix: string, dir: string): Plugin {
+  return {
+    name,
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? "").split("?")[0]!;
+        if (!url.startsWith(prefix)) return next();
+
+        const rel = normalize(decodeURIComponent(url.slice(prefix.length)))
+          .replace(/^(\.\.[/\\])+/, "");
+        const file = resolve(dir, rel);
+        if (!file.startsWith(dir)) {
+          res.statusCode = 403;
+          return res.end("forbidden");
+        }
+
+        readFile(file).then(
+          (buf: Buffer) => {
+            res.setHeader("Content-Type", MIME[extname(file)] ?? "application/octet-stream");
+            res.end(buf);
+          },
+          () => {
+            res.statusCode = 404;
+            res.end("not found");
+          },
+        );
+      });
+    },
+  };
+}
 
 /**
  * Serves the synthetic fixtures under `/fixtures/` during development.
@@ -57,7 +101,13 @@ function fixtures(): Plugin {
 export default defineConfig({
   root: webRoot,
   publicDir: false,
-  plugins: [fixtures()],
+  plugins: [
+    fixtures(),
+    // PTB-XL, for the corpus browser. Dev only, and absent unless the corpus
+    // has been fetched — it is 140 MB and gitignored, so this mount simply
+    // 404s on a fresh clone rather than breaking the dev server.
+    serveDir("ecg-corpus", "/corpus/", corpusRoot),
+  ],
   server: {
     port: 8080,
     headers: {
@@ -91,6 +141,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(webRoot, "index.html"),
+        ptbxl: resolve(webRoot, "ptbxl.html"),
         dev: resolve(webRoot, "dev.html"),
         try: resolve(webRoot, "try.html"),
         compare: resolve(webRoot, "compare.html"),

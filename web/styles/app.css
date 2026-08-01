@@ -455,6 +455,21 @@ ol, ul { padding: 0; list-style: none; }
   padding: 10px 12px;
   margin-bottom: 8px;
 }
+/*
+ * Equivocal: same shape, much less shout.
+ *
+ * Muted border and no fill, so it reads as context rather than as a finding.
+ * The distinction has to survive being skim-read — someone scanning for red
+ * blocks should not stop here, and someone reading should still see it.
+ */
+.findings__item--equivocal {
+  background: var(--bg-sunken);
+  border-color: var(--border);
+  border-left-color: var(--text-muted);
+  color: var(--text-muted);
+}
+.findings__item--equivocal .findings__label { color: var(--text-muted); }
+
 .findings__label {
   display: block;
   font-size: 11px; font-weight: 650; letter-spacing: 0.04em;

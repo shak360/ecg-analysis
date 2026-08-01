@@ -191,6 +191,19 @@ export interface PairBlocker {
 }
 
 /**
+ * A study-level finding, with how firmly it can be asserted.
+ *
+ * `equivocal` exists because the QRS-duration distributions of changed and
+ * unchanged pairs genuinely overlap; see `config::QRS_DURATION_EQUIVOCAL_MS`.
+ * The UI must render the two differently — an equivocal item in the same colour
+ * as a confirmed one asserts something the engine deliberately did not.
+ */
+export interface SerialFinding {
+  level: "changed" | "equivocal";
+  text: string;
+}
+
+/**
  * The result of one comparison, in draw order.
  *
  * `studyIds[0]` is the reference; `verdictSets[k]` compares `studyIds[k + 1]`
@@ -213,7 +226,7 @@ export interface ComparisonSnapshot {
    * well as any change in repolarisation, so every number below is conditional
    * on it.
    */
-  findingSets: string[][];
+  findingSets: SerialFinding[][];
   anchorIndex: number;
   columnSeconds: number;
   /**

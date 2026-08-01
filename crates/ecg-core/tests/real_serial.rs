@@ -132,7 +132,8 @@ fn conduction_change_detection_against_cardiologist_labels() {
     #[derive(Default)]
     struct Tally {
         n: usize,
-        flagged: usize,
+        changed: usize,
+        equivocal: usize,
         unmeasurable: usize,
         deltas: Vec<f64>,
     }
@@ -158,14 +159,20 @@ fn conduction_change_detection_against_cardiologist_labels() {
             (Some(da), Some(db)) => t.deltas.push(db - da),
             _ => t.unmeasurable += 1,
         }
-        if !ecg_core::serial_findings(&sa, &sb).is_empty() {
-            t.flagged += 1;
+        // Split by band. "Flagged" collapsing both would hide the entire point
+        // of having three: a run where every hit is equivocal is a very
+        // different result from one where they are all changes.
+        let json = ecg_core::serial_findings_json(&sa, &sb);
+        if json.contains("\"level\":\"changed\"") {
+            t.changed += 1;
+        } else if json.contains("\"level\":\"equivocal\"") {
+            t.equivocal += 1;
         }
     }
 
     println!(
-        "\n{:<18} {:>5} {:>9} {:>7} {:>8} {:>8} {:>8}",
-        "group", "n", "flagged", "unmeas", "p50", "p75", "p90"
+        "\n{:<18} {:>5} {:>9} {:>11} {:>7} {:>7} {:>7} {:>7}",
+        "group", "n", "changed", "equivocal", "unmeas", "p50", "p75", "p90"
     );
     for (name, t) in &g {
         let mut abs: Vec<f64> = t.deltas.iter().map(|d| d.abs()).collect();
@@ -174,9 +181,10 @@ fn conduction_change_detection_against_cardiologist_labels() {
             if abs.is_empty() { f64::NAN } else { abs[((abs.len() - 1) as f64 * f) as usize] }
         };
         println!(
-            "{name:<18} {:>5} {:>8.0}% {:>6.0}% {:>8.0} {:>8.0} {:>8.0}",
+            "{name:<18} {:>5} {:>8.0}% {:>10.0}% {:>6.0}% {:>7.0} {:>7.0} {:>7.0}",
             t.n,
-            100.0 * t.flagged as f64 / t.n.max(1) as f64,
+            100.0 * t.changed as f64 / t.n.max(1) as f64,
+            100.0 * t.equivocal as f64 / t.n.max(1) as f64,
             100.0 * t.unmeasurable as f64 / t.n.max(1) as f64,
             q(0.50), q(0.75), q(0.90)
         );

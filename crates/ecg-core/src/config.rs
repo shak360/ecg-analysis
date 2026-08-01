@@ -251,7 +251,40 @@ pub const RHO_XSTUDY_MIN: f32 = 0.90;
 /// This is the detector for new bundle branch block, hyperkalaemia and class Ic
 /// effect — the changes that widen the complex without altering its shape, and
 /// which the correlation interlock therefore cannot see.
-pub const QRS_DURATION_CHANGE_MS: f64 = 10.0;
+/// ms of serial QRS-duration change below which conduction is called unchanged.
+///
+/// Between this and `QRS_DURATION_CHANGE_MS` the answer is *equivocal*, which is
+/// the honest description of that interval rather than a hedge. Measured against
+/// PTB-XL's cardiologist statements on 604 serial pairs, a single cut anywhere
+/// in this region buys sensitivity with false alarms at roughly one for one:
+///
+///   threshold   complete blocks caught   unchanged pairs false-flagged
+///      10 ms              59%                       18%
+///      15 ms              48%                        9%
+///
+/// There is no cut that separates them, because the distributions genuinely
+/// overlap — a control pair's p90 |dQRS| is 12 ms. Forcing a binary answer
+/// across that overlap means choosing which way to be wrong; three bands say
+/// where the overlap is instead.
+pub const QRS_DURATION_EQUIVOCAL_MS: f64 = 10.0;
+
+/// ms of serial QRS-duration change at or above which conduction has changed.
+///
+/// The upper edge of the equivocal band. At this threshold roughly one unchanged
+/// pair in eleven is still flagged, which is the price of catching about half of
+/// complete bundle branch blocks; the remainder are caught by their absolute
+/// duration rather than their change.
+///
+/// Both edges are calibrated on PTB-XL and should be re-checked against held-out
+/// records before being quoted as performance — picking them from the same data
+/// they are then scored on is exactly the circularity this project has been
+/// careful about elsewhere.
+pub const QRS_DURATION_CHANGE_MS: f64 = 15.0;
+
+// The equivocal band must be non-empty and the right way round. Editing one
+// constant past the other would silently invert it -- every change becoming
+// equivocal and none reported -- so this fails the build instead of a test.
+const _: () = assert!(QRS_DURATION_EQUIVOCAL_MS < QRS_DURATION_CHANGE_MS);
 
 /// ms, ± search range for template alignment.
 pub const ALIGN_MAX_LAG_MS: f64 = 20.0;

@@ -9,7 +9,7 @@
  * be added — these are patient tracings.
  */
 import { createEngine } from "./engine/client.ts";
-import type { ComparisonSnapshot } from "./engine/protocol.ts";
+import type { ComparisonSnapshot, SerialFinding } from "./engine/protocol.ts";
 import { measurementsHtml } from "./ui/measurements.ts";
 import {
   analyse,
@@ -381,7 +381,7 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
  * change in repolarisation, and the two cannot be separated — so it has to be
  * read first, not discovered afterwards in a column.
  */
-function renderFindings(studies: Study[], findingSets: string[][]): void {
+function renderFindings(studies: Study[], findingSets: SerialFinding[][]): void {
   const el = $("serial-findings");
   el.innerHTML = "";
 
@@ -392,18 +392,24 @@ function renderFindings(studies: Study[], findingSets: string[][]): void {
   findingSets.forEach((findings, k) => {
     // findingSets[k] compares studies[k + 1] against the reference.
     const subject = studies[k + 1];
-    for (const text of findings) {
+    for (const finding of findings) {
+      const equivocal = finding.level === "equivocal";
       const item = document.createElement("div");
-      item.className = "findings__item";
+      // Equivocal findings get their own, quieter treatment. Rendering them in
+      // the same warning colour as a confirmed change would assert something
+      // the engine deliberately declined to assert, and the reader cannot be
+      // expected to recover the distinction from the prose alone.
+      item.className = equivocal ? "findings__item findings__item--equivocal" : "findings__item";
 
       const label = document.createElement("strong");
       label.className = "findings__label";
+      const kind = equivocal ? "Conduction \u2014 equivocal" : "Conduction change";
       label.textContent = studies.length > 2 && subject
-        ? `Conduction change \u00b7 ${subject.fileName}`
-        : "Conduction change";
+        ? `${kind} \u00b7 ${subject.fileName}`
+        : kind;
       item.appendChild(label);
 
-      item.appendChild(document.createTextNode(text));
+      item.appendChild(document.createTextNode(finding.text));
       el.appendChild(item);
     }
   });
