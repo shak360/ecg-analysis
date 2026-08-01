@@ -48,104 +48,90 @@
     by a qualified clinician.
   </div>
 
-  <main id="main" class="layout">
-    <section class="panel panel--studies" aria-labelledby="studies-heading">
-      <div class="panel__head">
-        <h2 id="studies-heading" class="panel__title">Studies</h2>
-        <button type="button" class="btn btn--ghost btn--sm" id="clear-all" hidden>Clear all</button>
+  <main id="main" class="page">
+    <section class="panel page-bar" aria-labelledby="studies-heading">
+      <div class="page-bar__group">
+        <h2 id="studies-heading" class="page-bar__title">Studies</h2>
+        <span class="panel__count" id="study-count"></span>
       </div>
 
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-describedby="dropzone-help">
-        <svg viewBox="0 0 24 24" class="dropzone__icon" aria-hidden="true" focusable="false">
-          <path d="M12 16V4m0 0L7 9m5-5 5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
-                fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <p class="dropzone__title">Drop ECGs here</p>
-        <p class="dropzone__hint" id="dropzone-help">Vector PDF &middot; or click to browse</p>
-        <input type="file" id="file-input" multiple hidden
-               accept="application/pdf,.pdf">
-      </div>
+      <button type="button" class="btn" id="dropzone">Add ECGs</button>
+      <input type="file" id="file-input" accept="application/pdf" multiple hidden>
+      <span class="field__label" id="dropzone-help">or drop PDFs anywhere on this page</span>
 
-      <ol class="study-list" id="study-list" aria-live="polite"></ol>
+      <label class="field field--inline">
+        <span class="field__label">Paper speed</span>
+        <select id="speed" class="select">
+          <option value="25" selected>25 mm/s</option>
+          <option value="50">50 mm/s</option>
+        </select>
+      </label>
 
-      <div class="assume">
-        <h3 class="assume__title">Assumed calibration</h3>
-        <p class="assume__note">
-          Not yet read from the tracing. Changing either re-analyses every study.
-        </p>
-        <div class="assume__row">
-          <label class="field">
-            <span>Paper speed</span>
-            <select id="speed">
-              <option value="25" selected>25 mm/s</option>
-              <option value="50">50 mm/s</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Gain</span>
-            <select id="gain">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-        </div>
+      <label class="field field--inline">
+        <span class="field__label">Gain</span>
+        <select id="gain" class="select">
+          <option value="5">5 mm/mV</option>
+          <option value="10" selected>10 mm/mV</option>
+          <option value="20">20 mm/mV</option>
+        </select>
+      </label>
+
+      <div class="page-bar__actions">
+        <label class="field field--inline">
+          <span class="field__label">Display</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+        <label class="field field--inline">
+          <span class="field__label">View</span>
+          <select id="view" class="select">
+            <option value="overlay" selected>Beats (3×4)</option>
+            <option value="printout">Full ECG</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+        <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+        <button type="button" class="btn btn--ghost" id="clear-all" hidden>Clear all</button>
       </div>
     </section>
 
-    <section class="panel panel--view" aria-labelledby="view-heading">
-      <div class="panel__head">
-        <h2 id="view-heading" class="panel__title">Comparison</h2>
-        <div class="view-controls">
-          <label class="field field--inline">
-            <span>Display</span>
-            <select id="scale">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-          <label class="field field--inline">
-            <span>View</span>
-            <select id="view">
-              <option value="beats" selected>Beats (3&times;4)</option>
-              <option value="printout">Full ECG</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
-          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
-        </div>
-      </div>
+    <!--
+      The studies run left to right in time order, because that is what they
+      are: one patient's tracings along a timeline. Stacked vertically in a
+      sidebar the ordering was arbitrary-looking; laid out this way the interval
+      labels ("+9.7 months after previous") read as the axis they describe.
+    -->
+    <section class="panel" aria-label="Studies on the timeline">
+      <ul class="picker-strip picker-strip--timeline" id="study-list"></ul>
+    </section>
 
-      <div class="placeholder" id="view-placeholder">
-        <p>Load two or more ECGs to compare them.</p>
-        <p class="placeholder__sub">
-          Each study is registered onto a common voltage and time base before overlay, so
-          differences in paper speed, gain, and baseline do not masquerade as clinical change.
-        </p>
-      </div>
+    <div id="view-placeholder" class="placeholder">
+      <p>Load two or more ECGs to compare them.</p>
+      <p class="placeholder__sub">
+        Each study is registered onto a common voltage and time base before overlay, so
+        differences in paper speed, gain, and baseline do not masquerade as clinical change.
+      </p>
+    </div>
 
-      <div id="view-panel" hidden>
+    <div id="view-panel" class="page-main" hidden>
+      <div id="serial-findings" class="findings" hidden></div>
+      <section class="panel" aria-labelledby="view-heading">
+        <h2 id="view-heading" class="visually-hidden">Comparison</h2>
         <canvas id="overlay"></canvas>
         <canvas id="printout" hidden></canvas>
         <div class="key" id="beat-key">
           <span>shaded band = beat-to-beat spread</span>
           <span>dashed line = alignment anchor (R peak)</span>
           <span>lower lane = difference from the reference</span>
-          <span>trace colours are set per study, on the left</span>
+          <span>trace colours are set per study, above</span>
         </div>
-        <!--
-          Study-level findings sit above the measurements, not among them. A
-          change in ventricular conduction is the condition under which every
-          number below it should be read with suspicion, so it must not be
-          something the reader scrolls past.
-        -->
-        <div id="serial-findings" class="findings" hidden></div>
-        <div id="measurements" class="measurements"></div>
-        <pre id="report" class="report"></pre>
-      </div>
-    </section>
+      </section>
+      <div id="measurements" class="measurements"></div>
+      <pre id="report" class="report"></pre>
+    </div>
   </main>
 
   <footer class="statusbar">

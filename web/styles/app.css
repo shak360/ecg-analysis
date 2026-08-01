@@ -725,3 +725,33 @@ ol, ul { padding: 0; list-style: none; }
 
 .page-main { display: flex; flex-direction: column; gap: 12px; }
 .page-main canvas { width: 100%; display: block; }
+
+
+/* Screen-reader-only headings, for panels whose title is obvious visually. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/*
+ * The timeline strip.
+ *
+ * Studies run left to right in acquisition order, which is what they are: one
+ * patient along a time axis. The connector makes the axis visible, so the
+ * "+9.7 months after previous" labels read as intervals on it rather than as
+ * unrelated captions.
+ */
+.picker-strip--timeline { align-items: stretch; }
+.picker-strip--timeline .study { position: relative; }
+.picker-strip--timeline .study + .study::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* Whole-page drop target. */
+body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px; }

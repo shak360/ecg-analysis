@@ -107,10 +107,24 @@ function renderStudies(): void {
   const list = $("study-list");
   list.innerHTML = "";
 
+  // Say how they are ordered, not how we wish they were. `placeOnTimeline` can
+  // only sort studies whose filename carries a timestamp; the rest keep load
+  // order. Claiming "oldest first" over an unsorted strip would put a timeline
+  // reading on an arbitrary one, which is the same error as reporting a
+  // measurement we did not make.
+  const dated = studies.filter((s) => s.acquiredAt).length;
+  $("study-count").textContent = !studies.length
+    ? ""
+    : dated === studies.length
+    ? `${studies.length} loaded · oldest first`
+    : dated === 0
+    ? `${studies.length} loaded · load order, no dates in filenames`
+    : `${studies.length} loaded · ${dated} dated first, then load order`;
+
   if (studies.length === 0) {
     const li = document.createElement("li");
-    li.className = "study-list__empty";
-    li.textContent = "No studies loaded yet.";
+    li.className = "picker-strip__empty";
+    li.textContent = "No studies loaded yet — add or drop ECG PDFs.";
     list.appendChild(li);
     $("clear-all").hidden = true;
     return;
@@ -119,7 +133,7 @@ function renderStudies(): void {
 
   studies.forEach((s, i) => {
     const li = document.createElement("li");
-    li.className = "study";
+    li.className = "study study--stacked";
     if (selected.has(s.id)) li.classList.add("study--selected");
     if (s.error) li.classList.add("study--error");
 
@@ -454,34 +468,33 @@ function render(): void {
 // ---------------------------------------------------------------------------
 
 function wireIngest(): void {
-  const zone = $("dropzone");
+  const button = $("dropzone");
   const input = $<HTMLInputElement>("file-input");
 
-  zone.addEventListener("click", () => input.click());
-  zone.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      input.click();
-    }
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    if (input.files?.length) void accept(input.files);
   });
+
+  // The drop target is the whole page now that the studies live in a strip
+  // rather than a panel-sized well. Aiming at a small target was never the
+  // point, and a page-wide target is what people try first anyway.
+  const body = document.body;
   for (const type of ["dragenter", "dragover"]) {
-    zone.addEventListener(type, (e) => {
+    body.addEventListener(type, (e) => {
       e.preventDefault();
-      zone.classList.add("dropzone--active");
+      body.classList.add("dropzone--active");
     });
   }
   for (const type of ["dragleave", "drop"]) {
-    zone.addEventListener(type, (e) => {
+    body.addEventListener(type, (e) => {
       e.preventDefault();
-      zone.classList.remove("dropzone--active");
+      body.classList.remove("dropzone--active");
     });
   }
-  zone.addEventListener("drop", (e) => {
+  body.addEventListener("drop", (e) => {
     const files = (e as DragEvent).dataTransfer?.files;
     if (files?.length) void accept(files);
-  });
-  input.addEventListener("change", () => {
-    if (input.files?.length) void accept(input.files);
   });
 
   $("clear-all").addEventListener("click", () => {
