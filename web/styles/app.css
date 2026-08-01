@@ -755,3 +755,30 @@ ol, ul { padding: 0; list-style: none; }
 
 /* Whole-page drop target. */
 body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+
+/*
+ * Controls that belong to the tracing, docked to the tracing.
+ *
+ * The distinction is what a control *does*. Paper speed and assumed gain are
+ * claims about the source recording and re-analyse every study, so they sit in
+ * the page bar with the other data controls. Display gain, view mode, and the
+ * difference and spread toggles only change what is drawn — putting them at the
+ * top of the page implied they were of the same kind, and implied a re-analysis
+ * that never happens.
+ */
+.panel__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.panel__toolbar .field--inline { margin: 0; }
+.panel__toolbar__label {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin-right: 2px;
+}

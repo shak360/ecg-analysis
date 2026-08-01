@@ -67,15 +67,6 @@
         </select>
       </label>
 
-      <label class="field field--inline">
-        <span class="field__label">Gain</span>
-        <select id="scale" class="select">
-          <option value="5">5 mm/mV</option>
-          <option value="10" selected>10 mm/mV</option>
-          <option value="20">20 mm/mV</option>
-        </select>
-      </label>
-
       <div class="quiz-bar__actions">
         <button type="button" class="btn" id="next-case">New case</button>
         <button type="button" class="btn btn--ghost" id="reset-score">Reset progress</button>
@@ -95,6 +86,17 @@
     -->
     <div id="quiz-panel" class="quiz-panes" hidden>
       <section class="panel quiz-panes__ecg" aria-label="Tracing">
+        <div class="panel__toolbar">
+          <span class="panel__toolbar__label">Display</span>
+          <label class="field field--inline">
+        <span class="field__label">Gain</span>
+        <select id="scale" class="select">
+          <option value="5">5 mm/mV</option>
+          <option value="10" selected>10 mm/mV</option>
+          <option value="20">20 mm/mV</option>
+        </select>
+      </label>
+        </div>
         <canvas id="printout"></canvas>
         <div class="key">
           <span id="case-demographics"></span>

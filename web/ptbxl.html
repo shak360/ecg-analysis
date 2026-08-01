@@ -71,16 +71,6 @@
       </label>
 
       <div class="page-bar__actions">
-        <label class="field field--inline">
-          <span class="field__label">Gain</span>
-          <select id="scale" class="select">
-            <option value="5">5 mm/mV</option>
-            <option value="10" selected>10 mm/mV</option>
-            <option value="20">20 mm/mV</option>
-          </select>
-        </label>
-        <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
-        <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
       </div>
     </section>
 
@@ -96,6 +86,20 @@
     <div id="view-panel" class="page-main" hidden>
       <div id="pair-header" class="findings"></div>
       <section class="panel">
+        <div class="panel__toolbar">
+          <span class="panel__toolbar__label">Display</span>
+          <label class="field field--inline">
+          <span class="field__label">Gain</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+        </div>
+
         <canvas id="overlay"></canvas>
         <div class="key" id="beat-key">
           <span>shaded band = beat-to-beat spread</span>

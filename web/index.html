@@ -77,23 +77,6 @@
       </label>
 
       <div class="page-bar__actions">
-        <label class="field field--inline">
-          <span class="field__label">Display</span>
-          <select id="scale" class="select">
-            <option value="5">5 mm/mV</option>
-            <option value="10" selected>10 mm/mV</option>
-            <option value="20">20 mm/mV</option>
-          </select>
-        </label>
-        <label class="field field--inline">
-          <span class="field__label">View</span>
-          <select id="view" class="select">
-            <option value="overlay" selected>Beats (3×4)</option>
-            <option value="printout">Full ECG</option>
-          </select>
-        </label>
-        <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
-        <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
         <button type="button" class="btn btn--ghost" id="clear-all" hidden>Clear all</button>
       </div>
     </section>
@@ -120,6 +103,27 @@
       <div id="serial-findings" class="findings" hidden></div>
       <section class="panel" aria-labelledby="view-heading">
         <h2 id="view-heading" class="visually-hidden">Comparison</h2>
+        <div class="panel__toolbar">
+          <span class="panel__toolbar__label">Display</span>
+          <label class="field field--inline">
+          <span class="field__label">Display</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+          <label class="field field--inline">
+          <span class="field__label">View</span>
+          <select id="view" class="select">
+            <option value="overlay" selected>Beats (3×4)</option>
+            <option value="printout">Full ECG</option>
+          </select>
+        </label>
+          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
+          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
+        </div>
+
         <canvas id="overlay"></canvas>
         <canvas id="printout" hidden></canvas>
         <div class="key" id="beat-key">
