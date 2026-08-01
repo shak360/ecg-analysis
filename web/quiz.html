@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test yourself — ECG atlas</title>
+  <meta name="description" content="Self-testing on real labelled ECGs: read the tracing, answer, then see what the cardiologist recorded.">
+  <link rel="stylesheet" href="./styles/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <div class="topbar__brand">
+      <svg class="topbar__mark" viewBox="0 0 48 24" aria-hidden="true" focusable="false">
+        <path d="M0 12h10l3-9 5 18 4-12 3 6h5l3-4 3 4h9"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h1>Serial ECG</h1>
+        <p class="topbar__sub">Test yourself</p>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Main">
+      <a class="nav__link" href="./index.html">Compare</a>
+      <a class="nav__link" href="./atlas.html">Atlas</a>
+      <a class="nav__link nav__link--current" href="./quiz.html" aria-current="page">Test yourself</a>
+      <a class="nav__link" href="./ptbxl.html">Serial pairs</a>
+      <a class="nav__link" href="./try.html">Single strip</a>
+      <a class="nav__link" href="./dev.html">Extraction</a>
+    </nav>
+
+    <div class="topbar__right">
+      <p class="badge badge--privacy" title="Your score is kept in this browser only. There is no account and no server.">
+        Scores stay local
+      </p>
+      <button type="button" class="btn btn--ghost" id="theme-toggle">Theme</button>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <strong>Read the tracing first.</strong> Each case is a real, de-identified ECG from
+    <strong>PTB-XL</strong> (Wagner et al. 2020, CC BY 4.0) and every answer is the original
+    cardiologist's. The tool's own measurements are hidden until you answer, because a QRS
+    duration on screen gives away a bundle branch block. Cases you get wrong come back
+    sooner.
+  </div>
+
+  <main id="main" class="layout">
+    <section class="panel panel--side" aria-labelledby="score-h">
+      <div class="panel__head">
+        <h2 id="score-h">Progress</h2>
+        <span class="panel__count" id="score-line"></span>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="filter-kind">Ask me about</label>
+        <select id="filter-kind" class="select">
+          <option value="all">Anything</option>
+          <option value="diagnostic">Diagnoses</option>
+          <option value="rhythm">Rhythms</option>
+          <option value="form">Morphology</option>
+        </select>
+      </div>
+
+      <div class="controls">
+        <button type="button" class="btn" id="next-case">New case</button>
+        <button type="button" class="btn btn--ghost" id="reset-score">Reset progress</button>
+      </div>
+
+      <div class="panel__head"><h2>Weakest findings</h2></div>
+      <ul class="study-list" id="weak-list"></ul>
+    </section>
+
+    <section class="panel panel--main" aria-labelledby="case-h">
+      <div class="panel__head">
+        <h2 id="case-h">Case</h2>
+        <div class="controls">
+          <label class="field field--inline">
+            <span class="field__label">Gain</span>
+            <select id="scale" class="select">
+              <option value="5">5 mm/mV</option>
+              <option value="10" selected>10 mm/mV</option>
+              <option value="20">20 mm/mV</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="quiz-placeholder" class="placeholder">
+        <p>Loading a case…</p>
+        <p class="placeholder__sub" id="quiz-status"></p>
+      </div>
+
+      <div id="quiz-panel" hidden>
+        <canvas id="printout"></canvas>
+        <div class="key">
+          <span id="case-demographics"></span>
+          <span>25 mm/s · standard 3×4 with rhythm strips</span>
+        </div>
+        <div id="questions"></div>
+        <div id="reveal" class="findings" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="engine-status" class="statusbar__item">Starting engine…</span>
+    <span class="statusbar__item statusbar__item--muted">
+      Not a medical device · answers are PTB-XL's cardiologists', not this tool's
+    </span>
+  </footer>
+
+  <script type="module" src="./src/quiz.ts"></script>
+</body>
+</html>

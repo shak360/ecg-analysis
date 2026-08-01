@@ -142,6 +142,7 @@ export default defineConfig({
       input: {
         main: resolve(webRoot, "index.html"),
         atlas: resolve(webRoot, "atlas.html"),
+        quiz: resolve(webRoot, "quiz.html"),
         ptbxl: resolve(webRoot, "ptbxl.html"),
         dev: resolve(webRoot, "dev.html"),
         try: resolve(webRoot, "try.html"),
