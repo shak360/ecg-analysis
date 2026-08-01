@@ -14,8 +14,16 @@
  * which is why this costs megabytes rather than the full 88,000-record set.
  *
  * Usage:  npm run fetch:challenge -- [--atlas 4] [--scan 1200]
+ *         npm run fetch:challenge -- --reindex
+ *
+ * `--reindex` rebuilds the index from the headers already on disk, with no
+ * network at all. The vocabulary is hand-written and will be corrected as
+ * mistakes surface in it; when that happens the labels are stale but the signals
+ * are not, and re-scanning a thousand headers to fix a mapping is the wrong
+ * cost. Reindexing is also the honest way to see what a vocabulary change did:
+ * same records, different labels, diffable.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -51,6 +59,7 @@ const SOURCES: { dir: string; label: string }[] = [
 const args = process.argv.slice(2);
 const perFinding = numArg(args, "--atlas", 4);
 const scanLimit = numArg(args, "--scan", 1200);
+const reindexOnly = args.includes("--reindex");
 
 /** Pull hrefs out of a PhysioNet directory listing. */
 function hrefs(html: string, re: RegExp): string[] {
@@ -142,6 +151,28 @@ interface Scanned {
 }
 
 const scanned: Scanned[] = [];
+
+if (reindexOnly) {
+  for (const src of SOURCES) {
+    let names: string[];
+    try {
+      names = (await readdir(`${OUT}${src.dir}`)).filter((f) => f.endsWith(".hea"));
+    } catch {
+      continue;
+    }
+    for (const f of names) {
+      const name = f.slice(0, -4);
+      scanned.push({
+        source: src.dir,
+        sourceLabel: src.label,
+        group: "",
+        name,
+        header: await readFile(`${OUT}${src.dir}/${f}`, "utf8"),
+      });
+    }
+    console.log(`  ${src.dir}: ${names.length} headers on disk`);
+  }
+} else {
 for (const src of SOURCES) {
   let listing: string;
   try {
@@ -172,6 +203,7 @@ for (const src of SOURCES) {
   scanned.push(...got);
   console.log(`  ${src.dir}: scanned ${got.length} headers`);
 }
+}
 
 // --- select -----------------------------------------------------------------
 
@@ -182,6 +214,7 @@ function dxOf(header: string): string[] {
     : [];
 }
 
+const cap = reindexOnly ? Number.POSITIVE_INFINITY : perFinding;
 const perFindingCount = new Map<string, number>();
 const unmapped = new Map<string, number>();
 const chosen: Scanned[] = [];
@@ -196,7 +229,7 @@ for (const rec of scanned) {
       continue;
     }
     const n = perFindingCount.get(f.id) ?? 0;
-    if (n < perFinding) {
+    if (n < cap) {
       perFindingCount.set(f.id, n + 1);
       wanted = true;
     }
@@ -222,7 +255,7 @@ if (unmapped.size) {
 // --- fetch and index --------------------------------------------------------
 
 let bytes = 0;
-for (const rec of chosen) {
+for (const rec of reindexOnly ? [] : chosen) {
   const dir = `${OUT}${rec.source}/`;
   await ensureDir(dir);
   for (const ext of ["hea", "mat"]) {

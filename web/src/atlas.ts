@@ -18,7 +18,7 @@
  * is impossible if the page quietly merges them.
  */
 import { createEngine } from "./engine/client.ts";
-import { fetchRecord } from "./ingest/wfdb.ts";
+import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -31,19 +31,30 @@ const engine = createEngine();
 const TRACE = "#1b4a8f";
 
 interface Statement {
-  code: string;
+  id: string;
   description: string;
-  category: string;
   diagnosticClass: string;
   kind: "diagnostic" | "form" | "rhythm";
+  sourceCode: string;
 }
 
 interface Entry {
-  ecgId: number;
+  id: string;
+  source: string;
+  sourceLabel: string;
+  /**
+   * Whether a human reviewed this label.
+   *
+   * Only PTB-XL records it. Shown on every case rather than quietly dropped,
+   * because the atlas held itself to human-validated labels while it had one
+   * corpus, and a learner is entitled to know when that standard no longer
+   * applies.
+   */
+  provenance: "human-validated" | "as-published";
   age: number | null;
   sex: "M" | "F" | null;
   report: string;
-  statements: Statement[];
+  findings: Statement[];
 }
 
 let entries: Entry[] = [];
@@ -64,16 +75,19 @@ function visibleCodes(): Statement[] {
   const kind = $<HTMLSelectElement>("filter-kind").value;
   const cls = $<HTMLSelectElement>("filter-class").value;
   const q = $<HTMLInputElement>("search").value.trim().toLowerCase();
+  const source = $<HTMLSelectElement>("filter-source").value;
 
   return [...meta.values()]
-    .filter((s) => byCode.get(s.code)?.length)
+    .filter((s) =>
+      (byCode.get(s.id) ?? []).some((e) => source === "all" || e.source === source)
+    )
     .filter((s) => kind === "all" || s.kind === kind)
     .filter((s) => cls === "all" || s.diagnosticClass === cls)
     .filter((s) =>
       !q ||
-      s.code.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
       s.description.toLowerCase().includes(q) ||
-      s.category.toLowerCase().includes(q)
+      s.sourceCode.toLowerCase().includes(q)
     )
     .sort((a, b) => a.description.localeCompare(b.description));
 }
@@ -82,7 +96,14 @@ function renderFindings(): void {
   const list = $("finding-list");
   const shown = visibleCodes();
   list.innerHTML = "";
-  $("record-count").textContent = `${shown.length} findings · ${entries.length} cases`;
+  // Count what is actually on screen. Reporting the whole corpus while a filter
+  // is applied reads as "these 29 findings cover 485 cases", which is false and
+  // in the flattering direction.
+  const source = $<HTMLSelectElement>("filter-source").value;
+  const visibleCases = source === "all"
+    ? entries.length
+    : entries.filter((e) => e.source === source).length;
+  $("record-count").textContent = `${shown.length} findings · ${visibleCases} cases`;
 
   if (!shown.length) {
     const li = document.createElement("li");
@@ -93,22 +114,25 @@ function renderFindings(): void {
   }
 
   for (const s of shown) {
-    const cases = byCode.get(s.code) ?? [];
+    const source = $<HTMLSelectElement>("filter-source").value;
+    const cases = (byCode.get(s.id) ?? []).filter(
+      (e) => source === "all" || e.source === source,
+    );
     const li = document.createElement("li");
     li.className = "study study--stacked";
-    if (openCode === s.code) li.classList.add("study--selected");
+    if (openCode === s.id) li.classList.add("study--selected");
 
     const body = document.createElement("div");
     body.className = "study__body";
 
     const name = document.createElement("div");
     name.className = "study__name";
-    name.textContent = s.description || s.code;
+    name.textContent = s.description || s.id;
     body.appendChild(name);
 
     const sub = document.createElement("div");
     sub.className = "study__when";
-    sub.textContent = `${s.code} · ${s.kind}${
+    sub.textContent = `${s.sourceCode} · ${s.kind}${
       s.diagnosticClass ? ` · ${s.diagnosticClass}` : ""
     } · ${cases.length} case${cases.length === 1 ? "" : "s"}`;
     body.appendChild(sub);
@@ -125,10 +149,10 @@ function renderFindings(): void {
       b.type = "button";
       b.className = "btn btn--ghost";
       b.textContent = String(i + 1);
-      b.title = `Record ${e.ecgId}${e.sex ? `, ${e.sex}` : ""}${
+      b.title = `${e.id}${e.sex ? `, ${e.sex}` : ""}${
         e.age ? `, ${e.age}` : ""
       }`;
-      b.addEventListener("click", () => void openCase(s.code, e));
+      b.addEventListener("click", () => void openCase(s.id, e));
       row.appendChild(b);
     });
     li.appendChild(row);
@@ -157,13 +181,13 @@ async function openCase(code: string, e: Entry): Promise<void> {
 
   $("case-placeholder").hidden = false;
   $("case-panel").hidden = true;
-  $("atlas-status").textContent = `Loading record ${e.ecgId}…`;
+  $("atlas-status").textContent = `Loading ${e.id}…`;
 
   try {
-    const rec = await fetchRecord(e.ecgId);
+    const rec = await fetchAtlasRecord(e.id);
     if (mine !== ticket) return;
 
-    const summary = await engine.analyseSignals(`atlas-${e.ecgId}`, rec.leads, rec.fsHz);
+    const summary = await engine.analyseSignals(`atlas-${e.id}`, rec.leads, rec.fsHz);
     if (mine !== ticket) return;
 
     // A digital record has no columns — the whole ten seconds is one window per
@@ -171,7 +195,7 @@ async function openCase(code: string, e: Entry): Promise<void> {
     // 2.5 s panels.
     lastColumnSeconds = rec.nSamples / rec.fsHz / 4;
     lastPrintout = [{
-      label: `PTB-XL ${e.ecgId}`,
+      label: e.id,
       colour: TRACE,
       leads: rec.leads,
       rhythm: rec.leads.get("II") ?? null,
@@ -182,7 +206,7 @@ async function openCase(code: string, e: Entry): Promise<void> {
     $("case-placeholder").hidden = true;
     $("case-panel").hidden = false;
     render();
-    await engine.release([`atlas-${e.ecgId}`]);
+    await engine.release([`atlas-${e.id}`]);
   } catch (err) {
     if (mine !== ticket) return;
     $("atlas-status").textContent = err instanceof Error ? err.message : String(err);
@@ -199,15 +223,24 @@ function renderLabels(e: Entry): void {
   const label = document.createElement("strong");
   label.className = "findings__label";
   const who = [e.sex, e.age ? `${e.age}` : null].filter(Boolean).join(", ");
-  label.textContent = `PTB-XL record ${e.ecgId}${who ? ` · ${who}` : ""}`;
+  label.textContent = `${e.sourceLabel} · ${e.id}${who ? ` · ${who}` : ""}`;
   item.appendChild(label);
 
+  // Whether a human reviewed this label. Only PTB-XL records it, so saying so
+  // per case is the only way a learner can tell which standard applies.
+  const prov = document.createElement("div");
+  prov.className = "study__when";
+  prov.textContent = e.provenance === "human-validated"
+    ? "label reviewed by a human (PTB-XL validated_by_human)"
+    : "label as published by the source corpus — not separately reviewed";
+  item.appendChild(prov);
+
   const ul = document.createElement("ul");
-  for (const s of e.statements) {
+  for (const s of e.findings) {
     const li = document.createElement("li");
     // textContent throughout: the report field is free text from a clinical
     // system and must never be interpolated into markup.
-    li.textContent = `${s.description || s.code} (${s.code}, ${s.kind}${
+    li.textContent = `${s.description || s.id} (${s.sourceCode}, ${s.kind}${
       s.diagnosticClass ? `, ${s.diagnosticClass}` : ""
     })`;
     ul.appendChild(li);
@@ -252,7 +285,7 @@ function renderReport(summary: any): void {
 // Wiring
 // ---------------------------------------------------------------------------
 
-for (const id of ["filter-kind", "filter-class"]) {
+for (const id of ["filter-kind", "filter-class", "filter-source"]) {
   $(id).addEventListener("change", renderFindings);
 }
 $("search").addEventListener("input", renderFindings);
@@ -275,15 +308,24 @@ async function boot(): Promise<void> {
     status.classList.add("statusbar__item--error");
   }
 
-  try {
-    const res = await fetch("/corpus/atlas.json");
-    if (!res.ok) throw new Error(`atlas.json: HTTP ${res.status}`);
-    entries = (await res.json()) as Entry[];
-  } catch {
-    // The corpus is fetched, not committed, so absence is the expected state on
-    // a fresh clone rather than a fault.
+  // Both corpora, concatenated. Each writes its own index in the same shape, so
+  // merging is an append — and either being absent is the ordinary state on a
+  // machine that has fetched only one of them, not a fault.
+  const sources = ["/corpus/atlas.json", "/corpus-challenge/atlas.json"];
+  const loaded = await Promise.all(sources.map(async (u) => {
+    try {
+      const res = await fetch(u);
+      return res.ok ? (await res.json()) as Entry[] : [];
+    } catch {
+      return [];
+    }
+  }));
+  entries = loaded.flat();
+
+  if (!entries.length) {
     $("atlas-status").textContent =
-      "No atlas index found. Run `npm run fetch:ptbxl -- --atlas 6` to build one.";
+      "No atlas index found. Run `npm run fetch:ptbxl -- --atlas 6`, " +
+      "and optionally `npm run fetch:challenge -- --atlas 4` for the other corpora.";
     $("record-count").textContent = "not fetched";
     return;
   }
@@ -291,16 +333,29 @@ async function boot(): Promise<void> {
   byCode = new Map();
   meta = new Map();
   for (const e of entries) {
-    for (const s of e.statements) {
-      meta.set(s.code, s);
-      const list = byCode.get(s.code) ?? [];
+    for (const s of e.findings) {
+      meta.set(s.id, s);
+      const list = byCode.get(s.id) ?? [];
       list.push(e);
-      byCode.set(s.code, list);
+      byCode.set(s.id, list);
     }
   }
 
+  // Populate the corpus filter from what actually loaded.
+  const bySource = new Map<string, string>();
+  for (const e of entries) bySource.set(e.source, e.sourceLabel);
+  const sel = $<HTMLSelectElement>("filter-source");
+  for (const [id, label] of [...bySource].sort((a, b) => a[1].localeCompare(b[1]))) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = `${label} (${entries.filter((e) => e.source === id).length})`;
+    sel.appendChild(opt);
+  }
+
+  const reviewed = entries.filter((e) => e.provenance === "human-validated").length;
   $("atlas-status").textContent =
-    `${entries.length} human-validated cases across ${meta.size} findings.`;
+    `${entries.length} cases across ${meta.size} findings, from ${bySource.size} ` +
+    `corpora — ${reviewed} with human-reviewed labels.`;
   renderFindings();
 }
 

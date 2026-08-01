@@ -232,24 +232,35 @@ if (atlasPer > 0) {
   // One entry per record, carrying every statement on it. A record usually has
   // several, and an atlas that showed only the first would teach that an ECG
   // has one finding.
+  //
+  // Emitted in the shared AtlasCase shape so this index and the Challenge one
+  // concatenate. `provenance` is the field that keeps the merge honest: PTB-XL
+  // is the only corpus that records whether a human reviewed the label, and
+  // only its cases may claim it.
   const entries = [...wanted].sort((a, b) => a - b).map((id) => {
     const r = usable.find((x) => Number(x.ecg_id) === id)!;
     const raw = r as unknown as Record<string, string>;
+    // 300 is PTB-XL's sentinel for "over 89", not an age.
+    const age = raw.age === "300.0" ? null : Number(raw.age);
     return {
-      ecgId: id,
-      age: raw.age === "300.0" ? null : Number(raw.age),
-      sex: raw.sex === "1" ? "F" : raw.sex === "0" ? "M" : null,
+      id: `ptbxl:${id}`,
+      source: "ptbxl",
+      sourceLabel: "PTB-XL (Germany)",
+      provenance: "human-validated" as const,
+      age: Number.isFinite(age) ? age : null,
+      sex: raw.sex === "1" ? "F" as const : raw.sex === "0" ? "M" as const : null,
       report: raw.report ?? "",
-      statements: [...scpCodes(r.scp_codes)]
+      findings: [...scpCodes(r.scp_codes)]
         .filter((c) => statements.has(c))
         .map((c) => {
           const s = statements.get(c)!;
           return {
-            code: c,
+            id: c,
             description: s.description,
-            category: s.category,
+            kind: (s.isRhythm ? "rhythm" : s.isForm && !s.isDiagnostic ? "form" : "diagnostic") as
+              "diagnostic" | "form" | "rhythm",
             diagnosticClass: s.diagnosticClass,
-            kind: s.isRhythm ? "rhythm" : s.isForm && !s.isDiagnostic ? "form" : "diagnostic",
+            sourceCode: c,
           };
         }),
     };

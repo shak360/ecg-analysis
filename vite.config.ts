@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 const webRoot = resolve(root, "web");
 const fixtureRoot = resolve(root, "test/fixtures");
 const corpusRoot = resolve(root, "data/ptbxl");
+const challengeRoot = resolve(root, "data/challenge2021");
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf",
@@ -17,6 +18,7 @@ const MIME: Record<string, string> = {
   ".hea": "text/plain",
   ".dat": "application/octet-stream",
   ".csv": "text/csv",
+  ".mat": "application/octet-stream",
 };
 
 /**
@@ -107,6 +109,7 @@ export default defineConfig({
     // has been fetched — it is 140 MB and gitignored, so this mount simply
     // 404s on a fresh clone rather than breaking the dev server.
     serveDir("ecg-corpus", "/corpus/", corpusRoot),
+    serveDir("ecg-corpus-challenge", "/corpus-challenge/", challengeRoot),
   ],
   server: {
     port: 8080,

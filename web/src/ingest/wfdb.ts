@@ -223,6 +223,30 @@ export async function fetchRecord(ecgId: number, base = "/corpus"): Promise<Wfdb
   return decodeWfdb(await hea.text(), await dat.arrayBuffer());
 }
 
+/**
+ * Fetch any atlas case by its corpus-qualified id.
+ *
+ * `ptbxl:1234` and `chapman_shaoxing:JS00001` live in different trees with
+ * different file extensions, so the id carries which. Routing on the id rather
+ * than probing both keeps a missing record an error instead of a slow retry.
+ */
+export async function fetchAtlasRecord(caseId: string): Promise<WfdbRecord> {
+  const [source, ref] = caseId.split(":");
+  if (!source || !ref) throw new Error(`unrecognised case id: ${caseId}`);
+
+  if (source === "ptbxl") return fetchRecord(Number(ref));
+
+  const base = `/corpus-challenge/${source}/${ref}`;
+  const [hea, sig] = await Promise.all([fetch(`${base}.hea`), fetch(`${base}.mat`)]);
+  if (!hea.ok || !sig.ok) {
+    throw new Error(
+      `${caseId} not in the local corpus (${hea.status}/${sig.status}). ` +
+        `Run \`npm run fetch:challenge\` to populate it.`,
+    );
+  }
+  return decodeWfdb(await hea.text(), await sig.arrayBuffer());
+}
+
 /** One serial pair, as `tools/fetch-ptbxl.ts` writes them. */
 export interface SerialPair {
   patient: string;

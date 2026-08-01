@@ -24,7 +24,7 @@
  * class, so the choice is between things that actually look alike.
  */
 import { createEngine } from "./engine/client.ts";
-import { fetchRecord } from "./ingest/wfdb.ts";
+import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -38,19 +38,22 @@ const TRACE = "#1b4a8f";
 const STORE_KEY = "ecg-quiz-progress-v1";
 
 interface Statement {
-  code: string;
+  id: string;
   description: string;
-  category: string;
   diagnosticClass: string;
   kind: "diagnostic" | "form" | "rhythm";
+  sourceCode: string;
 }
 
 interface Entry {
-  ecgId: number;
+  id: string;
+  source: string;
+  sourceLabel: string;
+  provenance: "human-validated" | "as-published";
   age: number | null;
   sex: "M" | "F" | null;
   report: string;
-  statements: Statement[];
+  findings: Statement[];
 }
 
 interface Question {
@@ -163,16 +166,16 @@ const PROMPT: Record<string, string> = {
 
 function buildQuestions(e: Entry): Question[] {
   const want = $<HTMLSelectElement>("filter-kind").value;
-  const onRecord = new Set(e.statements.map((s) => s.code));
+  const onRecord = new Set(e.findings.map((s) => s.id));
 
-  const pool = e.statements.filter((s) => want === "all" || s.kind === want);
+  const pool = e.findings.filter((s) => want === "all" || s.kind === want);
   const out: Question[] = [];
 
   for (const answer of shuffle(pool).slice(0, 4)) {
     // Same kind, and prefer the same diagnostic class so the options are
     // genuinely confusable rather than separable by category alone.
     const sameKind = [...allStatements.values()].filter(
-      (s) => s.kind === answer.kind && !onRecord.has(s.code),
+      (s) => s.kind === answer.kind && !onRecord.has(s.id),
     );
     const sameClass = sameKind.filter(
       (s) => answer.diagnosticClass && s.diagnosticClass === answer.diagnosticClass,
@@ -226,7 +229,7 @@ function renderQuestions(): void {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "btn btn--ghost";
-      b.textContent = o.description || o.code;
+      b.textContent = o.description || o.id;
       b.addEventListener("click", () => {
         if (q.chosen) return;
         q.chosen = o;
@@ -237,8 +240,8 @@ function renderQuestions(): void {
       if (q.chosen) {
         // Mark the truth as well as the choice: a learner who guessed wrong
         // needs to see which one was right, not only that theirs was not.
-        if (o.code === q.answer.code) b.classList.add("btn--right");
-        else if (o.code === q.chosen.code) b.classList.add("btn--wrong");
+        if (o.id === q.answer.id) b.classList.add("btn--right");
+        else if (o.id === q.chosen.id) b.classList.add("btn--wrong");
         b.disabled = true;
       }
       opts.appendChild(b);
@@ -250,10 +253,10 @@ function renderQuestions(): void {
 
 function record(q: Question): void {
   const p = loadProgress();
-  const r = p[q.answer.code] ?? { seen: 0, right: 0 };
+  const r = p[q.answer.id] ?? { seen: 0, right: 0 };
   r.seen += 1;
-  if (q.chosen?.code === q.answer.code) r.right += 1;
-  p[q.answer.code] = r;
+  if (q.chosen?.id === q.answer.id) r.right += 1;
+  p[q.answer.id] = r;
   saveProgress(p);
   renderProgress();
 }
@@ -265,7 +268,7 @@ async function reveal(): Promise<void> {
   el.hidden = false;
   el.innerHTML = "";
 
-  const right = questions.filter((q) => q.chosen?.code === q.answer.code).length;
+  const right = questions.filter((q) => q.chosen?.id === q.answer.id).length;
 
   const item = document.createElement("div");
   item.className = right === questions.length
@@ -274,13 +277,13 @@ async function reveal(): Promise<void> {
 
   const label = document.createElement("strong");
   label.className = "findings__label";
-  label.textContent = `${right} of ${questions.length} correct · PTB-XL record ${current.ecgId}`;
+  label.textContent = `${right} of ${questions.length} correct · ${current.sourceLabel} · ${current.id}`;
   item.appendChild(label);
 
   const ul = document.createElement("ul");
-  for (const s of current.statements) {
+  for (const s of current.findings) {
     const li = document.createElement("li");
-    li.textContent = `${s.description || s.code} (${s.code}, ${s.kind})`;
+    li.textContent = `${s.description || s.id} (${s.sourceCode}, ${s.kind})`;
     ul.appendChild(li);
   }
   item.appendChild(ul);
@@ -296,8 +299,8 @@ async function reveal(): Promise<void> {
 
   // Only now the numbers, and only labelled as ours.
   try {
-    const rec = await fetchRecord(current.ecgId);
-    const s = await engine.analyseSignals(`quiz-${current.ecgId}`, rec.leads, rec.fsHz);
+    const rec = await fetchAtlasRecord(current.id);
+    const s = await engine.analyseSignals(`quiz-${current.id}`, rec.leads, rec.fsHz);
     // deno-lint-ignore no-explicit-any
     const m = (s as any).measurements ?? {};
     const n = (v: number | null | undefined, u: string) =>
@@ -312,7 +315,7 @@ async function reveal(): Promise<void> {
       `  frontal axis  ${n(m.axis, "°")}`,
     ].join("\n");
     el.appendChild(pre);
-    await engine.release([`quiz-${current.ecgId}`]);
+    await engine.release([`quiz-${current.id}`]);
   } catch {
     // The numbers are a bonus; the case still taught what it was for.
   }
@@ -327,7 +330,7 @@ function pickEntry(): Entry | null {
   const p = loadProgress();
 
   const eligible = entries.filter((e) =>
-    e.statements.some((s) => want === "all" || s.kind === want)
+    e.findings.some((s) => want === "all" || s.kind === want)
   );
   if (!eligible.length) return null;
 
@@ -336,7 +339,7 @@ function pickEntry(): Entry | null {
   // — always serving the single worst finding would be a drill, not a review.
   const scored = eligible.map((e) => ({
     e,
-    w: Math.max(...e.statements.map((s) => weakness(s.code, p))) + Math.random() * 0.35,
+    w: Math.max(...e.findings.map((s) => weakness(s.id, p))) + Math.random() * 0.35,
   }));
   scored.sort((a, b) => b.w - a.w);
   return scored[Math.floor(Math.random() * Math.min(12, scored.length))]!.e;
@@ -357,7 +360,7 @@ async function nextCase(): Promise<void> {
   $("quiz-status").textContent = "Loading a case…";
 
   try {
-    const rec = await fetchRecord(e.ecgId);
+    const rec = await fetchAtlasRecord(e.id);
     if (mine !== ticket) return;
 
     questions = buildQuestions(e);
@@ -368,7 +371,7 @@ async function nextCase(): Promise<void> {
 
     lastColumnSeconds = rec.nSamples / rec.fsHz / 4;
     lastPrintout = [{
-      label: `case ${e.ecgId}`,
+      label: e.id,
       colour: TRACE,
       leads: rec.leads,
       rhythm: rec.leads.get("II") ?? null,
@@ -430,7 +433,7 @@ async function boot(): Promise<void> {
   }
 
   for (const e of entries) {
-    for (const s of e.statements) allStatements.set(s.code, s);
+    for (const s of e.findings) allStatements.set(s.id, s);
   }
   renderProgress();
   await nextCase();
