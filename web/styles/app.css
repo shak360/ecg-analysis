@@ -391,6 +391,14 @@ ol, ul { padding: 0; list-style: none; }
  * letter wide, so these stack and let the case buttons wrap into a grid.
  */
 .study--stacked { flex-direction: column; align-items: stretch; gap: 7px; }
+/*
+ * `.study__body` carries `flex: 1` for the original ROW layout, where it takes
+ * the remaining horizontal space beside the checkbox and the remove button.
+ * Turned on its side it takes the remaining VERTICAL space instead, so the body
+ * grew to fill the card and the strip stretched every sibling to match — cards
+ * a thousand pixels tall with their content in the top forty.
+ */
+.study--stacked .study__body { flex: 0 0 auto; }
 .study--stacked .study__cases {
   display: flex; flex-wrap: wrap; gap: 4px;
 }
@@ -711,6 +719,10 @@ ol, ul { padding: 0; list-style: none; }
  */
 .picker-strip {
   display: flex;
+  /* Cards size to their own content. The default stretch made every card as
+     tall as the tallest, which turns one long finding name into a row of
+     mostly-empty boxes. */
+  align-items: flex-start;
   gap: 8px;
   overflow-x: auto;
   padding: 4px 2px 10px;

@@ -142,9 +142,14 @@ function renderFindings(): void {
     // The cases sit under the finding rather than in a separate pane: the
     // question a learner asks is "show me some of these", not "show me record
     // 1043".
+    // A case can carry several findings, so a common one like sinus rhythm
+    // accumulates every record that mentions it — hundreds of buttons wrapping
+    // into thirty rows. Twelve is as many examples as anyone browses; the rest
+    // are reachable by filtering, and the count says they exist.
+    const SHOWN = 12;
     const row = document.createElement("div");
     row.className = "study__cases";
-    cases.forEach((e, i) => {
+    cases.slice(0, SHOWN).forEach((e, i) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "btn btn--ghost";
@@ -155,6 +160,12 @@ function renderFindings(): void {
       b.addEventListener("click", () => void openCase(s.id, e));
       row.appendChild(b);
     });
+    if (cases.length > SHOWN) {
+      const more = document.createElement("span");
+      more.className = "study__when";
+      more.textContent = `+${cases.length - SHOWN} more`;
+      row.appendChild(more);
+    }
     li.appendChild(row);
 
     list.appendChild(li);
