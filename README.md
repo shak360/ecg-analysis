@@ -92,8 +92,15 @@ reconstructed 12-lead as continuous simultaneous signal.
 
 - [Rust](https://rustup.rs) with the `wasm32-unknown-unknown` target, and
   [`wasm-pack`](https://rustwasm.github.io/wasm-pack/)
-- Node 24, pinned in `.node-version` (see
-  [docs/decisions/0006-node-toolchain.md](docs/decisions/0006-node-toolchain.md))
+- Node 24, pinned in `.node-version` and now also declared in `package.json`
+  `engines` (see
+  [docs/decisions/0006-node-toolchain.md](docs/decisions/0006-node-toolchain.md)).
+  `engines` previously said `>=20`, which contradicted the pin and let a shell
+  that had not run `fnm use` fail twelve tests with a misleading message.
+
+Browsers: the build targets Chrome 100, Firefox 100, Safari 15.4 and Edge 100,
+and the PDF path holds that line only because of a local patch to the vendored
+pdf.js — see [web/vendor/pdfjs/PATCHES.md](web/vendor/pdfjs/PATCHES.md).
 
 ```bash
 brew install rustup wasm-pack fnm

@@ -13,6 +13,17 @@
  * plausible-looking no-ops — a silent wrong answer is worse than a stack trace.
  */
 
+/**
+ * The application's own runtime shim, not a test-local one.
+ *
+ * pdf.js calls `ArrayBuffer.prototype.transferToFixedLength`, which Node gained
+ * in 21; on Node 20 every PDF test failed as "No lead produced a usable beat".
+ * Importing the shipped module rather than redefining the method here is the
+ * point: a test-only copy would go green against code that is not the code that
+ * runs, and the two would drift. See `web/src/compat.ts`.
+ */
+import "../web/src/compat.ts";
+
 class StubDOMMatrix {
   a = 1;
   b = 0;
