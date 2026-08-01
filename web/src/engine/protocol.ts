@@ -248,6 +248,15 @@ export interface ComparisonSnapshot {
 
 export type Request =
   | { kind: "analyse"; id: string; studyId: string; bytes: Uint8Array; assumptions: Assumptions }
+  // Already-digital recordings: WFDB corpora, cart exports. Millivolts go
+  // straight in, so there is no grid, no calibration pulse and no columns.
+  | {
+    kind: "analyseSignals";
+    id: string;
+    studyId: string;
+    leads: Map<string, Float32Array>;
+    fsHz: number;
+  }
   | { kind: "compare"; id: string; studyIds: string[] }
   | { kind: "release"; id: string; studyIds: string[] };
 

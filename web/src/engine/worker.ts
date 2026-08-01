@@ -44,6 +44,20 @@ self.addEventListener("message", (e: MessageEvent<Request>) => {
           }
           return;
         }
+        case "analyseSignals": {
+          try {
+            const summary = await core.analyseSignals(req.studyId, req.leads, req.fsHz);
+            reply({ kind: "analysed", id: req.id, summary, error: null });
+          } catch (err) {
+            reply({
+              kind: "analysed",
+              id: req.id,
+              summary: null,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
         case "compare": {
           const snapshot = core.compare(req.studyIds);
           reply({ kind: "compared", id: req.id, snapshot }, snapshotTransfers(snapshot));

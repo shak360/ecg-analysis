@@ -38,6 +38,14 @@ export interface AnalyseResult {
 export interface Engine {
   ready(): Promise<void>;
   analyse(studyId: string, bytes: Uint8Array, assumptions: Assumptions): Promise<AnalyseResult>;
+  /** Analyse an already-digital recording. Throws rather than returning an
+   * error record: unlike a dropped file, a corpus record that will not parse is
+   * a fault in this code, not an ordinary thing a user did. */
+  analyseSignals(
+    studyId: string,
+    leads: Map<string, Float32Array>,
+    fsHz: number,
+  ): Promise<StudySummary>;
   compare(studyIds: string[]): Promise<ComparisonSnapshot>;
   release(studyIds: string[]): Promise<void>;
   /** Where the compute is actually running, for the status bar. */
@@ -69,6 +77,14 @@ export class InlineEngine implements Engine {
     } catch (err) {
       return { summary: null, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  analyseSignals(
+    studyId: string,
+    leads: Map<string, Float32Array>,
+    fsHz: number,
+  ): Promise<StudySummary> {
+    return this.#core.analyseSignals(studyId, leads, fsHz);
   }
 
   async compare(studyIds: string[]): Promise<ComparisonSnapshot> {
@@ -142,6 +158,20 @@ export class WorkerEngine implements Engine {
     } catch (err) {
       return { summary: null, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  async analyseSignals(
+    studyId: string,
+    leads: Map<string, Float32Array>,
+    fsHz: number,
+  ): Promise<StudySummary> {
+    // A `Map` of `Float32Array` is structured-cloneable as it stands. The
+    // buffers are not transferred: the caller may still want the samples, and
+    // detaching them under it would be a surprise for a few hundred kilobytes.
+    const r = await this.#send({ kind: "analyseSignals", studyId, leads, fsHz });
+    if (r.kind !== "analysed") throw new Error(`unexpected reply ${r.kind}`);
+    if (!r.summary) throw new Error(r.error ?? "analysis failed");
+    return r.summary;
   }
 
   async compare(studyIds: string[]): Promise<ComparisonSnapshot> {
