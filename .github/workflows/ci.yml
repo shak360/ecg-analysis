@@ -24,9 +24,12 @@
 
 name: CI
 
+# Every branch, not just main. Scoping `push` to main meant this file sat in the
+# repository for a day without running once — the work happens on branches, and
+# a check that only fires at merge time tells you about a mistake after it is
+# expensive to have made. `concurrency` below keeps that from piling up runs.
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
