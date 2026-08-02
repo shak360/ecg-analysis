@@ -1,0 +1,40 @@
+# Dependency updates, grouped and monthly.
+#
+# Monthly rather than weekly, and grouped rather than one PR per package,
+# because the alternative on a project this size is a permanent queue of
+# single-line PRs that nobody reads — and an unread dependency PR is worse than
+# no dependency PR, since merging it launders an unreviewed change.
+#
+# Note what is deliberately absent: pdf.js. It is vendored under
+# `web/vendor/pdfjs/` rather than installed, carries a local patch documented in
+# `web/vendor/pdfjs/PATCHES.md`, and `test/compat.test.ts` fails if that patch
+# goes missing. Upgrading it is a manual job that has to re-apply the patch, so
+# an automated bump would either break the build or silently drop a fix that
+# keeps the Compare page working on older browsers.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      dev-dependencies:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
