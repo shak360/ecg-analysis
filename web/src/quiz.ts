@@ -193,6 +193,12 @@ const tools = mountTools({
   canvas: $<HTMLCanvasElement>("printout"),
   mount: document.querySelector<HTMLElement>(".panel__toolbar")!,
   getScale: () => lastScale,
+  renderHiRes: (target) =>
+    drawPrintout(target, lastPrintout, {
+      ...DEFAULT_PRINTOUT,
+      mmPerMv: Number($<HTMLSelectElement>("scale").value),
+      columnSeconds: lastColumnSeconds,
+    }),
 });
 
 

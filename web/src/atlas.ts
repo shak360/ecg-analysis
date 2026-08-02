@@ -498,6 +498,16 @@ const tools = mountTools({
   mount: document.querySelector<HTMLElement>(".panel__toolbar")!,
   getScale: () => lastScale,
   getAxis: () => lastAxis,
+  // The same call as `render()`, into a wider canvas. `drawPrintout` derives its
+  // millimetre scale from the canvas width, so a canvas `zoom` times wider is a
+  // genuine `zoom`-times-finer rendering rather than the same pixels stretched.
+  renderHiRes: (target) =>
+    drawPrintout(target, lastPrintout, {
+      ...DEFAULT_PRINTOUT,
+      mmPerMv: Number($<HTMLSelectElement>("scale").value),
+      columnSeconds: lastColumnSeconds,
+      emphasiseLeads: markedLeads,
+    }),
 });
 
 $("case-evidence").addEventListener("click", (ev) => {

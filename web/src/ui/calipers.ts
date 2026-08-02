@@ -40,7 +40,7 @@ interface Point {
 }
 
 const MAG_R = 78;
-const MAG_ZOOM = 2.6;
+export const MAG_ZOOM = 2.6;
 
 /**
  * Attach to a canvas. Returns a handle the page uses to change mode, and a
@@ -50,6 +50,17 @@ const MAG_ZOOM = 2.6;
 export function attachCalipers(
   canvas: HTMLCanvasElement,
   getScale: () => CaliperScale,
+  /**
+   * A second rendering of the same tracing, drawn `MAG_ZOOM` times larger.
+   *
+   * Supplying one turns the magnifier into a real magnifier. Without it the lens
+   * can only enlarge the pixels already on screen, which is a photograph of a
+   * photograph: the 1 mm grid turns to mush at exactly the scale someone reached
+   * for the lens to read. With it, the lens shows the trace re-drawn at
+   * `MAG_ZOOM` times the millimetre scale — the fine structure is genuinely
+   * there rather than interpolated.
+   */
+  getHiRes?: () => HTMLCanvasElement | null,
 ) {
   const layer = document.createElement("canvas");
   layer.className = "caliper-layer";
@@ -74,6 +85,7 @@ export function attachCalipers(
   /** What the current drag is moving, when it is moving a placed caliper. */
   let grab: Grab = null;
   let grabFrom: Point | null = null;
+  let onChange: (() => void) | null = null;
 
   const at = (e: PointerEvent): Point => {
     const r = canvas.getBoundingClientRect();
@@ -185,14 +197,30 @@ export function attachCalipers(
     ctx.arc(p.x, p.y, MAG_R, 0, Math.PI * 2);
     ctx.clip();
 
-    // Sample the tracing canvas itself, so the lens shows exactly what was
-    // drawn — grid included — rather than a second rendering that could differ.
-    const s = MAG_R / MAG_ZOOM;
-    ctx.drawImage(
-      canvas,
-      (p.x - s) * dpr, (p.y - s) * dpr, s * 2 * dpr, s * 2 * dpr,
-      p.x - MAG_R, p.y - MAG_R, MAG_R * 2, MAG_R * 2,
-    );
+    const hi = getHiRes?.() ?? null;
+    if (hi && hi.width > 0) {
+      // The real thing: the same tracing re-drawn at MAG_ZOOM times the
+      // millimetre scale, sampled 1:1. `hi` is that many times wider than the
+      // canvas on screen, so a point maps across by the same factor.
+      const k = hi.width / (canvas.width || 1);
+      const src = MAG_R * k;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        hi,
+        p.x * dpr * k - src, p.y * dpr * k - src, src * 2, src * 2,
+        p.x - MAG_R, p.y - MAG_R, MAG_R * 2, MAG_R * 2,
+      );
+    } else {
+      // Fallback: enlarge what is already on screen. Blurry by construction —
+      // there is no more detail in a bitmap than was rasterised into it — and
+      // only used where a page has not supplied a high-resolution render.
+      const s = MAG_R / MAG_ZOOM;
+      ctx.drawImage(
+        canvas,
+        (p.x - s) * dpr, (p.y - s) * dpr, s * 2 * dpr, s * 2 * dpr,
+        p.x - MAG_R, p.y - MAG_R, MAG_R * 2, MAG_R * 2,
+      );
+    }
     ctx.restore();
 
     ctx.save();
@@ -289,6 +317,7 @@ export function attachCalipers(
     anchor = null;
     cursor = null;
     render();
+    onChange?.();
   };
   layer.addEventListener("pointerup", finish);
   layer.addEventListener("pointercancel", finish);
@@ -305,6 +334,7 @@ export function attachCalipers(
       anchor = null;
       cursor = null;
       held = null;
+      onChange?.();
       layer.classList.toggle("caliper-layer--on", next !== "off");
       layer.dataset.mode = next;
       size();
@@ -318,6 +348,10 @@ export function attachCalipers(
     /** Whether a measurement is currently placed, for enabling the repeat toggle. */
     hasMeasurement() {
       return held !== null;
+    },
+    /** Called whenever a measurement appears or is cleared. */
+    onMeasurementChange(fn: () => void) {
+      onChange = fn;
     },
     /** Call after the tracing is repainted; the overlay cannot detect that. */
     redraw() {
