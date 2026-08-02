@@ -113,36 +113,6 @@ function renderProgress(): void {
     ? `${right} of ${seen} (${Math.round(100 * right / seen)}%)`
     : "not started";
 
-  const weak = Object.entries(p)
-    .filter(([, r]) => r.seen >= 2 && r.right < r.seen)
-    .sort((a, b) => weakness(b[0], p) - weakness(a[0], p))
-    .slice(0, 8);
-
-  const list = $("weak-list");
-  list.innerHTML = "";
-  if (!weak.length) {
-    const li = document.createElement("li");
-    li.className = "study-list__empty";
-    li.textContent = seen ? "Nothing missed yet." : "Answer a few to see this.";
-    list.appendChild(li);
-    return;
-  }
-  for (const [code, r] of weak) {
-    const s = allStatements.get(code);
-    const li = document.createElement("li");
-    li.className = "study";
-    const body = document.createElement("div");
-    body.className = "study__body";
-    const name = document.createElement("div");
-    name.className = "study__name";
-    name.textContent = s?.description || code;
-    const sub = document.createElement("div");
-    sub.className = "study__when";
-    sub.textContent = `${r.right} of ${r.seen} correct`;
-    body.append(name, sub);
-    li.appendChild(body);
-    list.appendChild(li);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,58 +167,139 @@ function buildQuestions(e: Entry): Question[] {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/** Pixels the last draw overflowed the viewport by, fed back into the next. */
+let overflowPx = 0;
+
 function render(): void {
   if (!lastPrintout.length) return;
-  drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
-    ...DEFAULT_PRINTOUT,
-    mmPerMv: Number($<HTMLSelectElement>("scale").value),
-    columnSeconds: lastColumnSeconds,
-  });
+  const draw = () =>
+    drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
+      ...DEFAULT_PRINTOUT,
+      mmPerMv: Number($<HTMLSelectElement>("scale").value),
+      columnSeconds: lastColumnSeconds,
+      maxHeightPx: tracingBudgetPx(),
+    });
+
+  draw();
+
+  // Measure what actually happened and correct once. The alternative was a
+  // hand-tuned constant for the panel gaps and page padding, which is a number
+  // that is right on the machine it was tuned on and drifts the moment a
+  // stylesheet changes. One feedback pass, never a loop: `overflowPx` only ever
+  // grows toward the real gap, and the floor in `tracingBudgetPx` bounds it.
+  const over = document.documentElement.scrollHeight - globalThis.innerHeight;
+  if (over > 1 && overflowPx < over) {
+    overflowPx += over;
+    draw();
+  }
 }
+
+/**
+ * How tall the tracing may be and still leave the question on screen.
+ *
+ * The point of this page is looking at the ECG while answering, so a layout
+ * that puts one of them below the fold has failed however good each half looks
+ * on its own. Measured from what is actually rendered rather than assumed, so
+ * the disclaimer growing a line or the browser's chrome changing does not
+ * silently push the question off.
+ *
+ * Floored at 300 px: past that the tracing is too small to read, and scrolling
+ * a legible ECG beats not scrolling an illegible one.
+ */
+function tracingBudgetPx(): number {
+  const h = (sel: string) =>
+    document.querySelector(sel)?.getBoundingClientRect().height ?? 0;
+  const chrome = h(".topbar") + h(".disclaimer") + h(".quiz-bar") + h(".statusbar") +
+    h(".quiz-panes__ask") + h(".panel__toolbar") + h(".key");
+  return Math.max(300, globalThis.innerHeight - chrome - 24 - overflowPx);
+}
+
+/**
+ * Which question is on screen.
+ *
+ * One at a time, rather than all three stacked. Stacking made the column taller
+ * than the tracing, so answering the last question meant scrolling the ECG out
+ * of view — in a exercise whose entire content is looking at the ECG while you
+ * answer. It also let a learner read question three before answering question
+ * one, which gives away more than it sounds: the three prompts are drawn from
+ * the same case's findings, so a later prompt's options narrow the earlier one.
+ */
+let step = 0;
 
 function renderQuestions(): void {
   const el = $("questions");
   el.innerHTML = "";
 
-  questions.forEach((q, qi) => {
-    const block = document.createElement("div");
-    block.className = "findings__item findings__item--equivocal";
+  const q = questions[step];
+  if (!q) return;
 
-    const label = document.createElement("strong");
-    label.className = "findings__label";
-    label.textContent = `Question ${qi + 1} of ${questions.length}`;
-    block.appendChild(label);
+  const block = document.createElement("div");
+  block.className = "findings__item findings__item--equivocal";
 
-    const prompt = document.createElement("div");
-    prompt.textContent = q.prompt;
-    block.appendChild(prompt);
+  const label = document.createElement("strong");
+  label.className = "findings__label";
+  label.textContent = `Question ${step + 1} of ${questions.length}`;
+  block.appendChild(label);
 
-    const opts = document.createElement("div");
-    opts.className = "study__cases";
-    for (const o of q.options) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "btn btn--ghost";
-      b.textContent = o.description || o.id;
-      b.addEventListener("click", () => {
-        if (q.chosen) return;
-        q.chosen = o;
-        record(q);
-        renderQuestions();
-        if (questions.every((x) => x.chosen)) reveal();
-      });
-      if (q.chosen) {
-        // Mark the truth as well as the choice: a learner who guessed wrong
-        // needs to see which one was right, not only that theirs was not.
-        if (o.id === q.answer.id) b.classList.add("btn--right");
-        else if (o.id === q.chosen.id) b.classList.add("btn--wrong");
-        b.disabled = true;
-      }
-      opts.appendChild(b);
+  const prompt = document.createElement("div");
+  prompt.textContent = q.prompt;
+  block.appendChild(prompt);
+
+  const opts = document.createElement("div");
+  opts.className = "study__cases";
+  for (const o of q.options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn--ghost";
+    b.textContent = o.description || o.id;
+    b.addEventListener("click", () => {
+      if (q.chosen) return;
+      q.chosen = o;
+      record(q);
+      renderQuestions();
+    });
+    if (q.chosen) {
+      // Mark the truth as well as the choice: a learner who guessed wrong needs
+      // to see which one was right, not only that theirs was not.
+      if (o.id === q.answer.id) b.classList.add("btn--right");
+      else if (o.id === q.chosen.id) b.classList.add("btn--wrong");
+      b.disabled = true;
     }
-    block.appendChild(opts);
-    el.appendChild(block);
-  });
+    opts.appendChild(b);
+  }
+  block.appendChild(opts);
+
+  // Advance on a click rather than a timer. A timer would decide how long
+  // someone needs to look back at the tracing having just got one wrong, which
+  // is exactly the moment they most want to.
+  if (q.chosen) {
+    const row = document.createElement("div");
+    row.className = "quiz-step";
+
+    const right = q.chosen.id === q.answer.id;
+    const verdict = document.createElement("span");
+    verdict.className = `quiz-step__verdict quiz-step__verdict--${right ? "right" : "wrong"}`;
+    verdict.textContent = right ? "Correct" : "Not this one";
+    row.appendChild(verdict);
+
+    const last = step === questions.length - 1;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "btn";
+    next.textContent = last ? "See the answers" : "Next question";
+    next.addEventListener("click", () => {
+      if (last) {
+        void reveal();
+      } else {
+        step += 1;
+        renderQuestions();
+      }
+    });
+    row.appendChild(next);
+    block.appendChild(row);
+  }
+
+  el.appendChild(block);
 }
 
 function record(q: Question): void {
@@ -364,6 +415,7 @@ async function nextCase(): Promise<void> {
     if (mine !== ticket) return;
 
     questions = buildQuestions(e);
+    step = 0;
     if (!questions.length) {
       $("quiz-status").textContent = "That case had nothing askable; try again.";
       return;

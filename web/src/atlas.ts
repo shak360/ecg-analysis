@@ -64,6 +64,8 @@ let meta = new Map<string, Statement>();
 let openCode: string | null = null;
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 10;
+/** Full duration in seconds when the record was longer than the shown window. */
+let lastTrimmedFrom: number | null = null;
 /** Guards against an older case landing after a newer one. */
 let ticket = 0;
 
@@ -272,6 +274,38 @@ function render(): void {
   });
 }
 
+/**
+ * How much of a record the atlas shows and measures.
+ *
+ * Every corpus here is a standard resting ECG at 10 seconds — except INCART,
+ * which is 30-minute ambulatory Holter at 257 Hz: 462,600 samples per lead,
+ * 1,800 times the recording a resting layout is drawn for. Handing that to the
+ * engine does not fail, it simply does not come back; the page sat on
+ * "Loading st_petersburg_incart:I0004…" indefinitely, which is the least
+ * diagnosable way for something to be wrong.
+ *
+ * Ten seconds is not an arbitrary cap, it is what the printout beneath already
+ * claims to be: 25 mm/s across a standard page.
+ */
+const ATLAS_WINDOW_S = 10;
+
+/**
+ * The leading window of a record, and how much was left off.
+ *
+ * The *first* window rather than a chosen one, because any other rule is a
+ * judgement about which part of somebody's Holter is representative, and this
+ * page does not make judgements about tracings. The caller says what it did.
+ */
+function firstWindow(rec: { leads: Map<string, Float32Array>; fsHz: number; nSamples: number }) {
+  const want = Math.round(ATLAS_WINDOW_S * rec.fsHz);
+  if (rec.nSamples <= want) {
+    return { leads: rec.leads, nSamples: rec.nSamples, trimmedFrom: null };
+  }
+  const leads = new Map<string, Float32Array>();
+  for (const [name, samples] of rec.leads) leads.set(name, samples.subarray(0, want));
+  return { leads, nSamples: want, trimmedFrom: rec.nSamples / rec.fsHz };
+}
+
 async function openCase(code: string, e: Entry): Promise<void> {
   openCode = code;
   renderFindings();
@@ -285,19 +319,22 @@ async function openCase(code: string, e: Entry): Promise<void> {
     const rec = await fetchAtlasRecord(e.id);
     if (mine !== ticket) return;
 
-    const summary = await engine.analyseSignals(`atlas-${e.id}`, rec.leads, rec.fsHz);
+    const { leads, nSamples, trimmedFrom } = firstWindow(rec);
+
+    const summary = await engine.analyseSignals(`atlas-${e.id}`, leads, rec.fsHz);
     if (mine !== ticket) return;
 
     // A digital record has no columns — the whole ten seconds is one window per
     // lead, so the printout draws each row continuously rather than as four
     // 2.5 s panels.
-    lastColumnSeconds = rec.nSamples / rec.fsHz / 4;
+    lastColumnSeconds = nSamples / rec.fsHz / 4;
     lastPrintout = [{
       label: e.id,
       colour: TRACE,
-      leads: rec.leads,
-      rhythm: rec.leads.get("II") ?? null,
+      leads,
+      rhythm: leads.get("II") ?? null,
     }];
+    lastTrimmedFrom = trimmedFrom;
 
     renderLabels(e);
     renderReport(summary);
@@ -370,6 +407,18 @@ function renderReport(summary: any): void {
     `  frontal axis    ${n(m.axis, "°")}`,
     `  leads recovered ${summary.leadNames?.length ?? 0} of 12`,
   ];
+
+  // Say so when the tracing above is a window onto something longer. Measuring
+  // ten seconds of a thirty-minute Holter and reporting the rate without
+  // qualification would present one window as the whole recording.
+  if (lastTrimmedFrom !== null) {
+    lines.push(
+      "",
+      `  showing the first ${ATLAS_WINDOW_S} s of a ` +
+        `${(lastTrimmedFrom / 60).toFixed(0)}-minute recording;`,
+      `  every measurement above is of that window alone`,
+    );
+  }
 
   if (summary.warnings?.length) {
     lines.push("", "warnings:");

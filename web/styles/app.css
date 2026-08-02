@@ -656,33 +656,28 @@ ol, ul { padding: 0; list-style: none; }
 /* Pushed right so the destructive one is not adjacent to "New case". */
 .quiz-bar__actions { display: flex; gap: 8px; margin-left: auto; }
 
+/* One column: the tracing at full width, the question under it.
+   `drawPrintout` scale-locks the canvas to its width in both dimensions, so
+   every pixel given to a side column came out of the grid square as well as the
+   page — a 340px questions pane cost about a fifth of the millimetre scale. */
 .quiz-panes {
-  display: grid;
-  /* The tracing takes the larger share: twelve leads need the width, and the
-     options are short strings. */
-  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 14px;
-  align-items: start;
 }
 .quiz-panes__ecg,
 .quiz-panes__ask { padding: 14px; }
 .quiz-panes__ecg #printout { width: 100%; display: block; }
 
-/* The questions column scrolls independently, so a case with four questions
-   plus the reveal does not push the tracing off screen. */
-.quiz-panes__ask {
-  position: sticky;
-  top: 14px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
-}
+/* Only one question is on screen at a time, so this never needs its own
+   scroller — the height is bounded by the tallest single question. */
+.quiz-panes__ask { min-height: 132px; }
 
-/* Below roughly a laptop, side-by-side stops helping and the tracing gets too
-   narrow to read, so it stacks. */
-@media (max-width: 1100px) {
-  .quiz-panes { grid-template-columns: 1fr; }
-  .quiz-panes__ask { position: static; max-height: none; }
-}
+/* The question's own controls sit on one line under the prompt. */
+.quiz-step { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.quiz-step__verdict { font-size: 12.5px; font-weight: 600; }
+.quiz-step__verdict--right { color: var(--ok); }
+.quiz-step__verdict--wrong { color: var(--error); }
 
 .quiz-placeholder { padding: 40px 16px; }
 
