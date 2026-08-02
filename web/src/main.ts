@@ -39,7 +39,12 @@ const engine = createEngine();
 let studies: Study[] = [];
 const selected = new Set<string>();
 let lastLeads: OverlayLead[] = [];
-let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
+let lastScale: {
+  pxPerMm: number;
+  mmPerSec: number;
+  mmPerMv: number;
+  panels: { x: number; y: number; w: number; h: number }[];
+} = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10, panels: [] };
 let lastAnchor = DEFAULT_OVERLAY.anchorIndex;
 
 /**

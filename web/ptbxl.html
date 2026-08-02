@@ -84,7 +84,6 @@
     </div>
 
     <div id="view-panel" class="page-main" hidden>
-      <div id="pair-header" class="findings"></div>
       <section class="panel">
         <div class="panel__toolbar">
           <span class="panel__toolbar__label">Display</span>
@@ -107,6 +106,9 @@
           <span>lower lane = difference from the earlier recording</span>
         </div>
       </section>
+      <!-- The cardiologist's own reading, under the tracing it describes, in the
+           order a reader works: look first, then read what was written about it. -->
+      <div id="pair-header" class="findings"></div>
       <div id="serial-findings" class="findings" hidden></div>
       <pre id="report" class="report"></pre>
     </div>

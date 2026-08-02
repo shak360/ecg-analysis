@@ -97,6 +97,15 @@ export interface PrintoutScale {
   pxPerMm: number;
   mmPerSec: number;
   mmPerMv: number;
+  /**
+   * The rectangles that are ECG, in CSS pixels.
+   *
+   * A printout is not one continuous strip: each of the twelve panels is a
+   * different 2.5 s window, and the gaps between columns are paper, not signal.
+   * A caliper that spans them measures across a discontinuity in time, so it
+   * needs to know where the signal actually is.
+   */
+  panels: { x: number; y: number; w: number; h: number }[];
 }
 
 export function drawPrintout(
@@ -302,5 +311,27 @@ export function drawPrintout(
     y0 + plotH + 3.2 * pxPerMm,
   );
 
-  return { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv };
+  const panels: { x: number; y: number; w: number; h: number }[] = [];
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < COLUMNS.length; c++) {
+      panels.push({
+        x: x0 + c * colW,
+        y: y0 + r * rowMm * pxPerMm,
+        w: colW,
+        h: rowMm * pxPerMm,
+      });
+    }
+  }
+  // A rhythm strip spans the full width: it is one continuous window, so a
+  // caliper may cross the column boundaries there and only there.
+  opts.rhythmLeads.forEach((_, k) => {
+    panels.push({
+      x: x0,
+      y: y0 + (3 + k) * rowMm * pxPerMm,
+      w: plotW,
+      h: rowMm * pxPerMm,
+    });
+  });
+
+  return { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv, panels };
 }

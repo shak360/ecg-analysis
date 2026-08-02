@@ -27,6 +27,16 @@ export interface CaliperScale {
   pxPerMm: number;
   mmPerSec: number;
   mmPerMv: number;
+  /**
+   * The rectangles that are ECG. Everything else on the canvas is paper.
+   *
+   * A 3x4 printout is twelve *different* 2.5 s windows, not one strip, so a
+   * caliper drawn straight across the canvas measures across a discontinuity in
+   * time and lands in the margin on its way. Given these, the caliper is drawn
+   * once per panel at the same offset *into* each panel — the same instant in
+   * every lead — and never outside one.
+   */
+  panels?: { x: number; y: number; w: number; h: number }[];
 }
 
 type Mode = "off" | "caliper" | "magnify";
@@ -40,7 +50,7 @@ interface Point {
 }
 
 const MAG_R = 78;
-export const MAG_ZOOM = 2.6;
+export const MAG_ZOOM = 3.1;
 
 /**
  * Attach to a canvas. Returns a handle the page uses to change mode, and a
@@ -109,63 +119,98 @@ export function attachCalipers(
     ctx.clearRect(0, 0, layer.clientWidth || layer.width, layer.clientHeight || layer.height);
   }
 
+  /** The panel containing `x`, or null when it is over paper. */
+  function panelAt(x: number, y: number) {
+    const ps = getScale().panels;
+    if (!ps?.length) return null;
+    return ps.find((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h) ?? null;
+  }
+
   function drawCaliper(a: Point, b: Point, live: boolean): void {
     const ctx = layer.getContext("2d")!;
-    const { pxPerMm, mmPerSec, mmPerMv } = getScale();
-    const ms = Math.abs(b.x - a.x) / pxPerMm / mmPerSec * 1000;
+    const { pxPerMm, mmPerSec, mmPerMv, panels } = getScale();
+    const ms = (Math.abs(b.x - a.x) / pxPerMm / mmPerSec) * 1000;
     const mv = Math.abs(b.y - a.y) / pxPerMm / mmPerMv;
     const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
       document.documentElement.dataset.theme !== "light";
     const ink = dark ? "#7dd3fc" : "#0369a1";
+    const band = dark ? "rgba(125,211,252,0.16)" : "rgba(3,105,161,0.15)";
+
+    // Where the caliper sits *within* its panel. That offset is a time, and the
+    // same time exists in every panel, which is why the marks appear in all of
+    // them at once rather than one line running across the page.
+    // Without a home panel there is no offset to replicate, so the caliper is
+    // drawn where it was dragged and nowhere else. That happens on a canvas with
+    // no panel geometry at all; a press on the margin of one that has it is
+    // refused at `pointerdown` instead, so it cannot reach here.
+    const home = panelAt(a.x, a.y);
+    const boxes = home && panels?.length
+      ? panels
+      : [{ x: 0, y: 0, w: layer.clientWidth || layer.width, h: layer.clientHeight || layer.height }];
+    const originIn = home ? a.x - home.x : a.x;
+    const step = b.x - a.x;
 
     ctx.save();
-    ctx.strokeStyle = ink;
-    ctx.fillStyle = ink;
     ctx.lineWidth = 1.2;
 
-    // Two full-height jaws and a tie between them, which is what dividers on
-    // paper look like and what makes the span readable against the grid.
-    ctx.setLineDash(live ? [4, 3] : []);
-    for (const p of [a, b]) {
+    for (const box of boxes) {
+      ctx.save();
+      // Clipped to the panel: a caliper only exists in ECG space, never in the
+      // margin between panels.
       ctx.beginPath();
-      ctx.moveTo(p.x, 0);
-      ctx.lineTo(p.x, layer.clientHeight || layer.height);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, a.y);
-    ctx.stroke();
+      ctx.rect(box.x, box.y, box.w, box.h);
+      ctx.clip();
 
-    // The march-out. Fainter than the jaws so the measurement itself stays the
-    // brightest thing, and stepping outward in both directions because the beat
-    // you want to check is as often before the pair as after it.
-    if (repeat && !live) {
-      const step = b.x - a.x;
-      if (Math.abs(step) > 6) {
-        const h = layer.clientHeight || layer.height;
-        const w = layer.clientWidth || layer.width;
-        ctx.globalAlpha = 0.42;
+      const x1 = box.x + originIn;
+      const x2 = x1 + step;
+
+      // Alternating shaded bands when stepping out. The measured span stays
+      // clear and its neighbours are filled, then clear, then filled — the
+      // stripe is legible in the light theme where a hairline was not, and the
+      // alternation is what lets you count intervals rather than just see lines.
+      if (repeat && !live && Math.abs(step) > 6) {
+        ctx.fillStyle = band;
+        for (let k = -200; k < 200; k++) {
+          if (k === 0 || k % 2 !== 0) continue;
+          const bx = x1 + step * k;
+          if (bx + Math.abs(step) < box.x || bx - Math.abs(step) > box.x + box.w) continue;
+          ctx.fillRect(Math.min(bx, bx + step), box.y, Math.abs(step), box.h);
+        }
+        ctx.strokeStyle = ink;
+        ctx.globalAlpha = 0.5;
         ctx.setLineDash([2, 4]);
-        for (const dir of [1, -1]) {
-          for (let k = 1; k < 200; k++) {
-            const x = (dir > 0 ? b.x : a.x) + dir * step * k;
-            if (x < 0 || x > w) break;
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, h);
-            ctx.stroke();
-          }
+        for (let k = -200; k < 200; k++) {
+          if (k === 0) continue;
+          const bx = x1 + step * k;
+          if (bx < box.x || bx > box.x + box.w) continue;
+          ctx.beginPath();
+          ctx.moveTo(bx, box.y);
+          ctx.lineTo(bx, box.y + box.h);
+          ctx.stroke();
         }
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
       }
+
+      ctx.strokeStyle = ink;
+      ctx.setLineDash(live ? [4, 3] : []);
+      for (const x of [x1, x2]) {
+        ctx.beginPath();
+        ctx.moveTo(x, box.y);
+        ctx.lineTo(x, box.y + box.h);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
     }
 
-    // The amplitude arm only when the drag has vertical extent worth reading;
-    // otherwise every horizontal measurement carries a meaningless 0.00 mV.
+    // The tie and the label belong to the panel the caliper was drawn in.
     const showMv = Math.abs(b.y - a.y) > 4;
+    ctx.strokeStyle = ink;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, a.y);
+    ctx.stroke();
     if (showMv) {
       ctx.beginPath();
       ctx.moveTo(b.x, a.y);
@@ -180,7 +225,7 @@ export function attachCalipers(
     const w = ctx.measureText(label).width + 10;
     const lx = Math.min(Math.max((a.x + b.x) / 2 - w / 2, 2), (layer.clientWidth || 0) - w - 2);
     const ly = Math.max(a.y - 22, 2);
-    ctx.fillStyle = dark ? "rgba(18,21,26,0.92)" : "rgba(255,255,255,0.94)";
+    ctx.fillStyle = dark ? "rgba(18,21,26,0.92)" : "rgba(255,255,255,0.96)";
     ctx.fillRect(lx, ly, w, 18);
     ctx.strokeStyle = ink;
     ctx.strokeRect(lx + 0.5, ly + 0.5, w - 1, 17);
@@ -267,6 +312,13 @@ export function attachCalipers(
       grabFrom = p;
       return;
     }
+
+    // A caliper only exists in ECG space. Starting one on the margin would
+    // measure from a point that is not on any time axis, and — once the marks
+    // are replicated into every panel — from an offset that means nothing in
+    // any of them.
+    const ps = getScale().panels;
+    if (ps?.length && !panelAt(p.x, p.y)) return;
 
     anchor = p;
     cursor = p;

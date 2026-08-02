@@ -73,7 +73,12 @@ let lastLeads: OverlayLead[] = [];
 let lastAnchor = DEFAULT_OVERLAY.anchorIndex;
 /** Guards against an older comparison landing after a newer one. */
 let ticket = 0;
-let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
+let lastScale: {
+  pxPerMm: number;
+  mmPerSec: number;
+  mmPerMv: number;
+  panels: { x: number; y: number; w: number; h: number }[];
+} = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10, panels: [] };
 
 // ---------------------------------------------------------------------------
 // The list

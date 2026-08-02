@@ -73,7 +73,12 @@ let lastTrimmedFrom: number | null = null;
 /** Leads the chosen criterion row names, washed on the tracing. */
 let markedLeads: string[] = [];
 /** The scale the last draw used, so the calipers convert with the same numbers. */
-let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
+let lastScale: {
+  pxPerMm: number;
+  mmPerSec: number;
+  mmPerMv: number;
+  panels: { x: number; y: number; w: number; h: number }[];
+} = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10, panels: [] };
 /** The measured frontal axis, for the wheel. Null when it was not measurable. */
 let lastAxis: number | null = null;
 /** Guards against an older case landing after a newer one. */
