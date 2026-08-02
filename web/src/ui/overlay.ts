@@ -214,7 +214,12 @@ interface PanelBox {
  */
 export interface OverlayResult {
   panels: Map<string, PanelBox>;
-  scale: { pxPerMm: number; mmPerSec: number; mmPerMv: number };
+  scale: {
+    pxPerMm: number;
+    mmPerSec: number;
+    mmPerMv: number;
+    panels: { x: number; y: number; w: number; h: number }[];
+  };
 }
 
 export function drawOverlay(
@@ -291,7 +296,8 @@ export function drawOverlay(
     drawPanel(ctx, lead, { x, y, w: panelW, h: panelH, zeroY, diffZeroY }, pxPerMm, opts, th);
   });
 
-  return { panels: boxes, scale: { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv } };
+  return { panels: boxes, scale: { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv,
+    panels: [...boxes.values()].map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h })) } };
 }
 
 function drawPanel(

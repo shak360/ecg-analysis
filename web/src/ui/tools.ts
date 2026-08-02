@@ -12,7 +12,7 @@
  * button that opens an empty wheel.
  */
 
-import { attachCalipers, type CaliperScale } from "./calipers.ts";
+import { attachCalipers, type CaliperScale, MAG_ZOOM } from "./calipers.ts";
 import { drawAxisWheel } from "./axis-wheel.ts";
 
 export interface ToolsOptions {
@@ -27,6 +27,21 @@ export interface ToolsOptions {
    * measure one; the axis button is then not created at all.
    */
   getAxis?: () => number | null;
+  /**
+   * Redraw the same tracing into `target`, which has been sized `zoom` times
+   * wider than the on-screen canvas.
+   *
+   * This is what makes the magnifier a magnifier. Enlarging the on-screen
+   * bitmap can only stretch pixels that were already rasterised, so the 1 mm
+   * grid dissolves at exactly the scale someone reached for the lens to read.
+   * Given this, the lens shows the trace re-drawn at `zoom` times the
+   * millimetre scale instead.
+   *
+   * Called only while the magnifier is on, and the result is thrown away when
+   * it is switched off — at 2.6x a full printout is some tens of megabytes of
+   * bitmap, which is not worth holding for a tool nobody is using.
+   */
+  renderHiRes?: (target: HTMLCanvasElement, zoom: number) => void;
 }
 
 export interface Tools {
@@ -69,7 +84,31 @@ export function mountTools(opts: ToolsOptions): Tools {
   const magnify = button("Magnify", "Magnify the tracing under the pointer");
   group.append(caliper, march, magnify);
 
-  const tools = attachCalipers(canvas, getScale);
+  /**
+   * The off-screen high-resolution copy. Attached to the document but parked
+   * outside it, because `drawPrintout` and `drawOverlay` both size themselves
+   * from `clientWidth`, which is zero for a detached element.
+   */
+  let hiRes: HTMLCanvasElement | null = null;
+
+  function buildHiRes(): void {
+    if (!opts.renderHiRes) return;
+    dropHiRes();
+    const c = document.createElement("canvas");
+    c.style.cssText =
+      `position:absolute;left:-99999px;top:0;width:${canvas.clientWidth * MAG_ZOOM}px;` +
+      `pointer-events:none;visibility:hidden`;
+    document.body.appendChild(c);
+    opts.renderHiRes(c, MAG_ZOOM);
+    hiRes = c;
+  }
+
+  function dropHiRes(): void {
+    hiRes?.remove();
+    hiRes = null;
+  }
+
+  const tools = attachCalipers(canvas, getScale, () => hiRes);
 
   // Caliper and magnifier both want the pointer, so they are exclusive. A mode
   // you can be in twice is a mode you cannot get out of.
@@ -79,12 +118,25 @@ export function mountTools(opts: ToolsOptions): Tools {
       press(caliper, b === caliper && on);
       press(magnify, b === magnify && on);
       tools.setMode(on ? mode : "off");
-      march.disabled = !pressed(caliper);
-      if (!pressed(caliper)) {
-        press(march, false);
-        tools.setRepeat(false);
-      }
+      if (b === magnify && on) buildHiRes();
+      else dropHiRes();
+      syncMarch();
     });
+  }
+
+  /**
+   * "Step out" repeats a measured span, so it is live only when there is a span
+   * to repeat: the calipers must be on *and* a measurement placed. Enabled on
+   * the mode alone it was clickable with nothing to act on, which reads as the
+   * button being broken rather than as not being applicable yet.
+   */
+  function syncMarch(): void {
+    const usable = pressed(caliper) && tools.hasMeasurement();
+    march.disabled = !usable;
+    if (!usable && pressed(march)) {
+      press(march, false);
+      tools.setRepeat(false);
+    }
   }
 
   march.disabled = true;
@@ -122,11 +174,14 @@ export function mountTools(opts: ToolsOptions): Tools {
     });
   }
 
+  tools.onMeasurementChange(syncMarch);
   mount.appendChild(group);
 
   return {
     redraw() {
       tools.redraw();
+      // The tracing changed, so the enlarged copy is stale.
+      if (hiRes) buildHiRes();
       if (wheel && box && !box.hidden) drawAxisWheel(wheel, { axisDeg: getAxis!() });
     },
   };

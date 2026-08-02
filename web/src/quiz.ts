@@ -78,7 +78,12 @@ let current: Entry | null = null;
 let questions: Question[] = [];
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 2.5;
-let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
+let lastScale: {
+  pxPerMm: number;
+  mmPerSec: number;
+  mmPerMv: number;
+  panels: { x: number; y: number; w: number; h: number }[];
+} = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10, panels: [] };
 let ticket = 0;
 /** The analysed summary for the case on screen, for the post-answer criteria. */
 let lastSummary: any = null;
@@ -193,6 +198,12 @@ const tools = mountTools({
   canvas: $<HTMLCanvasElement>("printout"),
   mount: document.querySelector<HTMLElement>(".panel__toolbar")!,
   getScale: () => lastScale,
+  renderHiRes: (target) =>
+    drawPrintout(target, lastPrintout, {
+      ...DEFAULT_PRINTOUT,
+      mmPerMv: Number($<HTMLSelectElement>("scale").value),
+      columnSeconds: lastColumnSeconds,
+    }),
 });
 
 
