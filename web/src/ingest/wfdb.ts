@@ -147,7 +147,16 @@ function parseHeader(text: string): {
     }
     // Units must be millivolts. Anything else would be wrong by an unknown
     // factor rather than obviously broken, which is the failure to avoid.
-    if (spec.includes("/") && !spec.endsWith("/mV")) {
+    //
+    // Compared case-insensitively, because WFDB's unit field is free text and
+    // PhysioNet's own corpora are not consistent: PTB-XL, Chapman, Ningbo,
+    // Georgia and CPSC write `mV`, while INCART and PTB write `mv`. Requiring
+    // the capital rejected 28 of the 161 Challenge records — a sixth of that
+    // corpus, and with it every INCART case — over a letter case. The check that
+    // matters is still exact: `uV` and `V` lower-case to something other than
+    // `mv` and are still refused, which is the point of having it.
+    const unit = spec.includes("/") ? spec.slice(spec.lastIndexOf("/") + 1) : "";
+    if (spec.includes("/") && unit.toLowerCase() !== "mv") {
       throw new Error(`expected millivolts, got ${spec}`);
     }
 

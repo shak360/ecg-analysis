@@ -1,6 +1,22 @@
 # 0003 — Suggested labels: inferred, explainable, never applied
 
-**Status:** accepted
+**Status:** superseded on 2026-08-01 by the evidence view — see the note below
+
+> **Superseded.** This ADR designs a tool that *suggests* a label and asks the
+> user to accept or reject it. That was never built, and what shipped instead is
+> its deliberate opposite: `web/src/criteria/` shows the published criteria for a
+> label a cardiologist already assigned, and `evaluate.ts` is written so that a
+> verdict cannot exist — it returns `above`/`below`/`atThreshold`/`unmeasurable`
+> and never a boolean, on the reasoning that a boolean would eventually be
+> rendered, and once rendered it is a judgement on someone's reading.
+>
+> Two things here are still live and are not superseded: the ST-suppression
+> reasoning in the "confounders" section, and the principle that an absent
+> suggestion is not reassurance — which `web/src/ui/measurements.ts` still cites
+> directly. Note also that two of the four ST suppressors named below (ventricular
+> pacing, WPW) cannot fire from the current measurement set at all; see
+> `docs/ecg-diagnostic-criteria.md`, "Three corrections to existing repo
+> artifacts".
 **Decided by:** the user
 **Date:** 2026-07-30
 

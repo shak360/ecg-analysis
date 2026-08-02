@@ -85,15 +85,20 @@ export function formatInterval(seconds: number): string {
   if (s < 60) return `${s} s`;
   const min = Math.round(s / 60);
   if (s < 2 * 3600) return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
-  const hours = s / 3600;
+  // Round into the *smaller* unit and then decompose, rather than flooring the
+  // larger unit and rounding the remainder. The latter carries: at 86,399 s the
+  // remainder is 0.99997 of an hour, which rounds to 60, and the function
+  // returned "23 h 60 min". Same shape one branch down — "1 d 24 h" at 86,399 s
+  // into the days range — and both read as plausible until you look twice.
   if (s < 48 * 3600) {
-    const h = Math.floor(hours);
-    return `${h} h ${Math.round((hours - h) * 60)} min`;
+    const totalMin = Math.round(s / 60);
+    return `${Math.floor(totalMin / 60)} h ${totalMin % 60} min`;
   }
   const days = s / 86400;
   if (days < 90) {
-    const d = Math.floor(days);
-    const h = Math.round((days - d) * 24);
+    const totalH = Math.round(s / 3600);
+    const d = Math.floor(totalH / 24);
+    const h = totalH % 24;
     return h ? `${d} d ${h} h` : `${d} d`;
   }
   const months = days / 30.44;

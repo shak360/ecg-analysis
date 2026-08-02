@@ -20,6 +20,8 @@
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
+import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
+import { evidenceHtml } from "./ui/evidence.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -64,6 +66,10 @@ let meta = new Map<string, Statement>();
 let openCode: string | null = null;
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 10;
+/** Full duration in seconds when the record was longer than the shown window. */
+let lastTrimmedFrom: number | null = null;
+/** Leads the chosen criterion row names, washed on the tracing. */
+let markedLeads: string[] = [];
 /** Guards against an older case landing after a newer one. */
 let ticket = 0;
 
@@ -269,7 +275,40 @@ function render(): void {
     ...DEFAULT_PRINTOUT,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     columnSeconds: lastColumnSeconds,
+    emphasiseLeads: markedLeads,
   });
+}
+
+/**
+ * How much of a record the atlas shows and measures.
+ *
+ * Every corpus here is a standard resting ECG at 10 seconds — except INCART,
+ * which is 30-minute ambulatory Holter at 257 Hz: 462,600 samples per lead,
+ * 1,800 times the recording a resting layout is drawn for. Handing that to the
+ * engine does not fail, it simply does not come back; the page sat on
+ * "Loading st_petersburg_incart:I0004…" indefinitely, which is the least
+ * diagnosable way for something to be wrong.
+ *
+ * Ten seconds is not an arbitrary cap, it is what the printout beneath already
+ * claims to be: 25 mm/s across a standard page.
+ */
+const ATLAS_WINDOW_S = 10;
+
+/**
+ * The leading window of a record, and how much was left off.
+ *
+ * The *first* window rather than a chosen one, because any other rule is a
+ * judgement about which part of somebody's Holter is representative, and this
+ * page does not make judgements about tracings. The caller says what it did.
+ */
+function firstWindow(rec: { leads: Map<string, Float32Array>; fsHz: number; nSamples: number }) {
+  const want = Math.round(ATLAS_WINDOW_S * rec.fsHz);
+  if (rec.nSamples <= want) {
+    return { leads: rec.leads, nSamples: rec.nSamples, trimmedFrom: null };
+  }
+  const leads = new Map<string, Float32Array>();
+  for (const [name, samples] of rec.leads) leads.set(name, samples.subarray(0, want));
+  return { leads, nSamples: want, trimmedFrom: rec.nSamples / rec.fsHz };
 }
 
 async function openCase(code: string, e: Entry): Promise<void> {
@@ -285,26 +324,52 @@ async function openCase(code: string, e: Entry): Promise<void> {
     const rec = await fetchAtlasRecord(e.id);
     if (mine !== ticket) return;
 
-    const summary = await engine.analyseSignals(`atlas-${e.id}`, rec.leads, rec.fsHz);
+    const { leads, nSamples, trimmedFrom } = firstWindow(rec);
+
+    // The cardiologist's labels and the published criteria are corpus data. They
+    // do not depend on this tool measuring anything, so they are rendered before
+    // the analysis is attempted — otherwise a record the engine cannot measure
+    // shows a bare error line and hides the very content the page exists for.
+    renderLabels(e);
+    renderEvidence(code, e, null);
+    $("case-placeholder").hidden = true;
+    $("case-panel").hidden = false;
+
+    let summary: any = null;
+    let failure: string | null = null;
+    try {
+      summary = await engine.analyseSignals(`atlas-${e.id}`, leads, rec.fsHz);
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
     if (mine !== ticket) return;
 
     // A digital record has no columns — the whole ten seconds is one window per
     // lead, so the printout draws each row continuously rather than as four
     // 2.5 s panels.
-    lastColumnSeconds = rec.nSamples / rec.fsHz / 4;
+    lastColumnSeconds = nSamples / rec.fsHz / 4;
     lastPrintout = [{
       label: e.id,
       colour: TRACE,
-      leads: rec.leads,
-      rhythm: rec.leads.get("II") ?? null,
+      leads,
+      rhythm: leads.get("II") ?? null,
     }];
+    lastTrimmedFrom = trimmedFrom;
 
-    renderLabels(e);
-    renderReport(summary);
-    $("case-placeholder").hidden = true;
-    $("case-panel").hidden = false;
-    render();
-    await engine.release([`atlas-${e.id}`]);
+    if (summary) {
+      renderEvidence(code, e, summary);
+      renderReport(summary);
+      render();
+      await engine.release([`atlas-${e.id}`]);
+    } else {
+      // Say which half failed. "No lead produced a usable beat" against a blank
+      // page reads as though the record is missing; against the labels and the
+      // criteria it reads as what it is — this tool could not measure a tracing
+      // that is still perfectly readable by eye.
+      $("case-report").textContent =
+        `this tool could not measure this recording: ${failure}\n` +
+        `the labels and criteria above are the corpus's and are unaffected.`;
+    }
   } catch (err) {
     if (mine !== ticket) return;
     $("atlas-status").textContent = err instanceof Error ? err.message : String(err);
@@ -356,6 +421,70 @@ function renderLabels(e: Entry): void {
 }
 
 // deno-lint-ignore no-explicit-any
+/**
+ * The published criteria for the finding that was chosen, beside our numbers.
+ *
+ * Scoped to the *chosen* finding rather than every finding on the record. A case
+ * with six labels would otherwise produce six criterion blocks above the
+ * tracing, and the one the reader asked about would be buried among five they
+ * did not.
+ */
+function renderEvidence(code: string, e: Entry, summary: any): void {
+  const entries = entriesFor(CRITERIA, code);
+  const m = summary?.measurements;
+  const who = { sex: e.sex, age: e.age };
+  const covered = new Set(CRITERIA.flatMap((c) => c.codes));
+
+  markedLeads = [];
+  $("case-evidence").innerHTML = evidenceHtml({
+    findingLabel: meta.get(code)?.description || code,
+    results: m ? entries.map((x) => evaluateEntry(x, m, who)) : [],
+    // Computed, never written into a string: `atlas.ts` already learned that a
+    // hardcoded count drifts and always in the flattering direction.
+    coverage: { covered: [...covered].filter((c) => meta.has(c)).length, total: meta.size },
+  });
+}
+
+/**
+ * Marking is one row at a time.
+ *
+ * A union across several criteria washes most of the page and starts to look
+ * like a composite assessment, which is the one reading this panel must not
+ * invite.
+ */
+$("case-evidence").addEventListener("click", (ev) => {
+  const tab = (ev.target as HTMLElement).closest<HTMLElement>(".evidence__pick__tab");
+  if (tab) {
+    const want = tab.dataset.idx;
+    for (const el of document.querySelectorAll<HTMLElement>(".evidence__pick__tab")) {
+      const on = el === tab;
+      el.classList.toggle("is-on", on);
+      el.setAttribute("aria-selected", String(on));
+    }
+    for (const el of document.querySelectorAll<HTMLElement>(".evidence__entry")) {
+      el.hidden = el.dataset.idx !== want;
+    }
+    // A mark belongs to the row that set it, and that row is now off screen.
+    markedLeads = [];
+    for (const el of document.querySelectorAll(".evidence__row--marked")) {
+      el.classList.remove("evidence__row--marked");
+    }
+    render();
+    return;
+  }
+
+  const row = (ev.target as HTMLElement).closest<HTMLElement>(".evidence__row");
+  if (!row) return;
+  const leads = (row.dataset.leads ?? "").split(",").filter(Boolean);
+  const same = row.classList.contains("evidence__row--marked");
+  for (const el of document.querySelectorAll(".evidence__row--marked")) {
+    el.classList.remove("evidence__row--marked");
+  }
+  markedLeads = same ? [] : leads;
+  if (!same) row.classList.add("evidence__row--marked");
+  render();
+});
+
 function renderReport(summary: any): void {
   const m = summary.measurements ?? {};
   const n = (v: number | null | undefined, unit: string, digits = 0) =>
@@ -370,6 +499,18 @@ function renderReport(summary: any): void {
     `  frontal axis    ${n(m.axis, "°")}`,
     `  leads recovered ${summary.leadNames?.length ?? 0} of 12`,
   ];
+
+  // Say so when the tracing above is a window onto something longer. Measuring
+  // ten seconds of a thirty-minute Holter and reporting the rate without
+  // qualification would present one window as the whole recording.
+  if (lastTrimmedFrom !== null) {
+    lines.push(
+      "",
+      `  showing the first ${ATLAS_WINDOW_S} s of a ` +
+        `${(lastTrimmedFrom / 60).toFixed(0)}-minute recording;`,
+      `  every measurement above is of that window alone`,
+    );
+  }
 
   if (summary.warnings?.length) {
     lines.push("", "warnings:");

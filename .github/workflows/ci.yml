@@ -1,0 +1,101 @@
+# Continuous integration.
+#
+# Two jobs, because they fail for unrelated reasons and a red tick should say
+# which half broke without opening the log.
+#
+# Three things about this repository that CI has to know, all of which were
+# learned the hard way:
+#
+#   1. **The web tests need the WASM module.** `test/end-to-end.test.ts` reads
+#      `web/wasm/ecg_core_bg.wasm` directly, so `npm run wasm` is a prerequisite
+#      of `vitest`, not a parallel concern.
+#   2. **The fixtures are not committed.** `.gitignore` excludes `*.pdf`
+#      anywhere in the tree — a deliberate guard against committing patient
+#      data — which also excludes the synthetic PDFs the pipeline is tested on.
+#      `npm run fixtures` regenerates them.
+#   3. **Node 24 is required, not preferred.** pdf.js calls
+#      `ArrayBuffer.prototype.transferToFixedLength`; below Node 21 the whole
+#      PDF path fails as "No lead produced a usable beat", which reads as a
+#      digitisation bug. `.node-version` pins it and `engines` declares it.
+#
+# `--ignore-scripts` on every install, per decision 0006: lifecycle scripts are
+# npm's main supply-chain vector and this project is built to handle patient
+# data.
+
+name: CI
+
+# Every branch, not just main. Scoping `push` to main meant this file sat in the
+# repository for a day without running once — the work happens on branches, and
+# a check that only fires at merge time tells you about a mistake after it is
+# expensive to have made. `concurrency` below keeps that from piling up runs.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust — tests and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Deny warnings here rather than in `check`, so a warning cannot ride into
+      # main behind a green tick.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+  web:
+    name: Web — typecheck, tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install the Rust toolchain and wasm-pack
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-unknown-unknown
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Both of these are prerequisites of the test run, not extras. See the
+      # header: the suite reads the built .wasm and the generated fixtures.
+      - name: Build the WASM module
+        run: npm run wasm
+
+      - name: Generate the synthetic fixtures
+        run: npm run fixtures
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npx vitest run
+
+      - name: Build
+        run: npx vite build

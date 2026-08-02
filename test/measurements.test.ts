@@ -14,6 +14,7 @@
  * pipeline today, and they are exactly the three whose rendering matters most.
  */
 import { expect, test } from "vitest";
+import { formatInterval } from "../web/src/app/study.ts";
 
 import {
   changeCell,
@@ -404,4 +405,29 @@ test("a lead the reference could not build is reported rather than omitted", () 
   // One row in each of the two per-lead tables, ST and R amplitude.
   expect(v3.length).toBe(2);
   expect(v3[0]).toContain("lead absent from one study");
+});
+
+// --- formatInterval ---------------------------------------------------------
+
+test("formatInterval never carries a full unit into the remainder", () => {
+  // It used to floor the larger unit and round the remainder, which carries:
+  // 86,399 s rendered as "23 h 60 min" and 172,799 s as "47 h 60 min". Both are
+  // arithmetically absurd and both look plausible enough to survive a review.
+  for (const s of [86399, 172799, 3599, 7199, 90000, 86401, 3661]) {
+    const out = formatInterval(s);
+    expect(out, `${s} s`).not.toMatch(/\b60 min\b/);
+    expect(out, `${s} s`).not.toMatch(/\b24 h\b(?! )/);
+  }
+});
+
+test("formatInterval rounds to the nearest minute rather than truncating", () => {
+  expect(formatInterval(86399)).toBe("24 h 0 min");
+  expect(formatInterval(3661)).toBe("1 h 1 min");
+  expect(formatInterval(59)).toBe("59 s");
+});
+
+test("formatInterval carries correctly into days", () => {
+  // The same bug one branch down would have produced "1 d 24 h".
+  expect(formatInterval(48 * 3600 + 86399)).toBe("3 d");
+  expect(formatInterval(48 * 3600)).toBe("2 d");
 });

@@ -75,7 +75,7 @@ Scope note: this document supersedes all eight slice documents. Where a slice co
 
 ## 2. THE CONFIG OBJECT
 
-Single source of truth: `crates/ecg-core/src/config.rs`. The TS mirror `web/src/config.gen.ts` is **generated** from this by `deno task gen-config`; never hand-edit it. Every constant here is referenced by section number in the code that consumes it.
+Single source of truth: `crates/ecg-core/src/config.rs`. There is no TS mirror and no codegen step: decision [0004](decisions/0004-constants-live-in-rust.md) rejected the generated `config.gen.ts` this section used to mandate, and the UI reads what it needs through WASM getters instead. Every constant here is referenced by section number in the code that consumes it.
 
 ```rust
 //! ============================================================================
@@ -647,7 +647,10 @@ Worked check on the shipped fixture (+0.25 mV in V2/V3/V4): A↔A digitization-o
                               "leads":"any 2 of a contiguous grouping"},
      "posterior_equivalent":{"V1_V2":{"r_duration_min":40,"r_over_s_min":1.0,
          "requires":"concordant positive T wave, no conduction defect"}},
-     "source":"UDMI-4 (2018), Table 4"},
+     "source":"UDMI-4 (2018), Table 3"},
+  // NOTE: this grouping is THIS TOOL'S, not a guideline's. The 2018 UDMI defines
+  // contiguity anatomically and publishes no lead-set table; anything shown to a
+  // reader from these groups must be attributed to the tool, not to the UDMI.
   "contiguous_lead_groups": {"anterior":["V1","V2","V3","V4"], "lateral":["I","aVL","V5","V6"],
      "inferior":["II","III","aVF"], "note":"aVR is never part of a contiguous pair."},
   "r_wave_progression": {"normal_transition_zone":["V3","V4"],
@@ -734,7 +737,7 @@ Two structural points: **reciprocal change is a confidence modifier on the STE f
 
 ## 7. BUILD ORDER
 
-Already done and verified, do not rebuild: vector-PDF operator-list extraction, grid/trace classifier and pitch estimator, synthetic 12-lead generator, vector-PDF printout renderer, the +0.25 mV V2/V3/V4 serial fixture, Deno toolchain, vendored pdf.js.
+Already done and verified, do not rebuild: vector-PDF operator-list extraction, grid/trace classifier and pitch estimator, synthetic 12-lead generator, vector-PDF printout renderer, the +0.25 mV V2/V3/V4 serial fixture, the Node/Vite toolchain (Deno was removed by decision 0006), vendored pdf.js.
 
 ### P0 — the vector-PDF measurement path end to end (nothing ships without this)
 

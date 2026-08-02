@@ -34,6 +34,15 @@ export interface PrintoutOptions {
   columnSeconds: number;
   /** Leads to place in the rhythm strips, top to bottom. */
   rhythmLeads: string[];
+  /**
+   * Leads to wash with the accent colour — "the criterion is about these".
+   *
+   * Drawn under the grid, never over the trace, and never in a colour that
+   * carries a judgement: this says *where to look*, not what is there. It is the
+   * whole product for a criterion this tool cannot evaluate, which is most of
+   * them.
+   */
+  emphasiseLeads?: string[];
 }
 
 export const DEFAULT_PRINTOUT: PrintoutOptions = {
@@ -58,12 +67,17 @@ interface Theme {
   coarse: string;
   text: string;
   muted: string;
+  mark: string;
 }
 
 function theme(dark: boolean): Theme {
   return dark
-    ? { bg: "#12151a", fine: "#3a2020", coarse: "#5c2e2e", text: "#e8eaee", muted: "#8a929e" }
-    : { bg: "#fffafa", fine: "#fadddd", coarse: "#f2b8b8", text: "#16191d", muted: "#6b7280" };
+    // `mark` is the accent at low alpha — deliberately not green or red, which
+    // on this page would read as "right" and "wrong".
+    ? { bg: "#12151a", fine: "#3a2020", coarse: "#5c2e2e", text: "#e8eaee", muted: "#8a929e",
+        mark: "rgba(77,163,232,0.13)" }
+    : { bg: "#fffafa", fine: "#fadddd", coarse: "#f2b8b8", text: "#16191d", muted: "#6b7280",
+        mark: "rgba(11,106,184,0.10)" };
 }
 
 /**
@@ -91,9 +105,9 @@ export function drawPrintout(
 
   const plotMm = COLUMNS.length * opts.columnSeconds * opts.mmPerSec;
   const totalMm = labelMm + plotMm + marginMm * 2;
-  const pxPerMm = cssW / totalMm;
-
   const heightMm = marginMm * 2 + rows * rowMm;
+
+  const pxPerMm = cssW / totalMm;
   const cssH = heightMm * pxPerMm;
 
   canvas.width = Math.round(cssW * dpr);
@@ -126,10 +140,29 @@ export function drawPrintout(
     }
     ctx.stroke();
   };
+  const colW = opts.columnSeconds * opts.mmPerSec * pxPerMm;
+
+  // Before the grid, so the paper still reads as one continuous sheet and the
+  // millimetre squares stay legible through the wash.
+  const marked = new Set(opts.emphasiseLeads ?? []);
+  if (marked.size) {
+    ctx.save();
+    ctx.fillStyle = th.mark;
+    for (let r = 0; r < 3; r++) {
+      COLUMNS.forEach((col, c) => {
+        if (!marked.has(col[r]!)) return;
+        ctx.fillRect(x0 + c * colW, y0 + r * rowMm * pxPerMm, colW, rowMm * pxPerMm);
+      });
+    }
+    opts.rhythmLeads.forEach((lead, k) => {
+      if (!marked.has(lead)) return;
+      ctx.fillRect(x0, y0 + (3 + k) * rowMm * pxPerMm, plotW, rowMm * pxPerMm);
+    });
+    ctx.restore();
+  }
+
   grid(1, th.fine, 0.5);
   grid(5, th.coarse, 0.9);
-
-  const colW = opts.columnSeconds * opts.mmPerSec * pxPerMm;
 
   /**
    * Draw one row as a single unbroken stroke across all four columns.

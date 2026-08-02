@@ -79,10 +79,13 @@
     </div>
 
     <!--
-      The tracing and the questions sit side by side so a learner can look from
-      one to the other without scrolling. That is the whole activity; a layout
-      that puts the question below the fold turns reading the ECG into
-      remembering it.
+      The tracing gets the full width and the question sits beneath it.
+      Side-by-side was tried first, on the reasoning that a learner should not
+      have to scroll between the two; but splitting the width made twelve leads
+      narrow enough to hurt, and three stacked questions were taller than the
+      tracing anyway. Showing one question at a time is what actually removes
+      the scrolling — the ECG and the question a learner is answering fit
+      together, and the width goes to the thing being read.
     -->
     <div id="quiz-panel" class="quiz-panes" hidden>
       <section class="panel quiz-panes__ecg" aria-label="Tracing">
@@ -107,8 +110,9 @@
       <section class="panel quiz-panes__ask" aria-label="Questions">
         <div id="questions"></div>
         <div id="reveal" class="findings" hidden></div>
-        <div class="panel__head"><h2>Weakest findings</h2></div>
-        <ul class="study-list" id="weak-list"></ul>
+        <!-- Published criteria, shown only after the answer. Before it, "QRS >=
+             120 ms" beside four options is the answer with a citation on it. -->
+        <div id="reveal-evidence"></div>
       </section>
     </div>
   </main>

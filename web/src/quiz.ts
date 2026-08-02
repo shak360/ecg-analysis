@@ -26,6 +26,8 @@
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
+import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
+import { evidenceHtml } from "./ui/evidence.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -76,6 +78,8 @@ let questions: Question[] = [];
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 2.5;
 let ticket = 0;
+/** The analysed summary for the case on screen, for the post-answer criteria. */
+let lastSummary: any = null;
 
 // ---------------------------------------------------------------------------
 // Progress, kept in this browser
@@ -113,36 +117,6 @@ function renderProgress(): void {
     ? `${right} of ${seen} (${Math.round(100 * right / seen)}%)`
     : "not started";
 
-  const weak = Object.entries(p)
-    .filter(([, r]) => r.seen >= 2 && r.right < r.seen)
-    .sort((a, b) => weakness(b[0], p) - weakness(a[0], p))
-    .slice(0, 8);
-
-  const list = $("weak-list");
-  list.innerHTML = "";
-  if (!weak.length) {
-    const li = document.createElement("li");
-    li.className = "study-list__empty";
-    li.textContent = seen ? "Nothing missed yet." : "Answer a few to see this.";
-    list.appendChild(li);
-    return;
-  }
-  for (const [code, r] of weak) {
-    const s = allStatements.get(code);
-    const li = document.createElement("li");
-    li.className = "study";
-    const body = document.createElement("div");
-    body.className = "study__body";
-    const name = document.createElement("div");
-    name.className = "study__name";
-    name.textContent = s?.description || code;
-    const sub = document.createElement("div");
-    sub.className = "study__when";
-    sub.textContent = `${r.right} of ${r.seen} correct`;
-    body.append(name, sub);
-    li.appendChild(body);
-    list.appendChild(li);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,49 +180,93 @@ function render(): void {
   });
 }
 
+
+/**
+ * Which question is on screen.
+ *
+ * One at a time, rather than all three stacked. Stacking made the column taller
+ * than the tracing, so answering the last question meant scrolling the ECG out
+ * of view — in a exercise whose entire content is looking at the ECG while you
+ * answer. It also let a learner read question three before answering question
+ * one, which gives away more than it sounds: the three prompts are drawn from
+ * the same case's findings, so a later prompt's options narrow the earlier one.
+ */
+let step = 0;
+
 function renderQuestions(): void {
   const el = $("questions");
   el.innerHTML = "";
 
-  questions.forEach((q, qi) => {
-    const block = document.createElement("div");
-    block.className = "findings__item findings__item--equivocal";
+  const q = questions[step];
+  if (!q) return;
 
-    const label = document.createElement("strong");
-    label.className = "findings__label";
-    label.textContent = `Question ${qi + 1} of ${questions.length}`;
-    block.appendChild(label);
+  const block = document.createElement("div");
+  block.className = "findings__item findings__item--equivocal";
 
-    const prompt = document.createElement("div");
-    prompt.textContent = q.prompt;
-    block.appendChild(prompt);
+  const label = document.createElement("strong");
+  label.className = "findings__label";
+  label.textContent = `Question ${step + 1} of ${questions.length}`;
+  block.appendChild(label);
 
-    const opts = document.createElement("div");
-    opts.className = "study__cases";
-    for (const o of q.options) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "btn btn--ghost";
-      b.textContent = o.description || o.id;
-      b.addEventListener("click", () => {
-        if (q.chosen) return;
-        q.chosen = o;
-        record(q);
-        renderQuestions();
-        if (questions.every((x) => x.chosen)) reveal();
-      });
-      if (q.chosen) {
-        // Mark the truth as well as the choice: a learner who guessed wrong
-        // needs to see which one was right, not only that theirs was not.
-        if (o.id === q.answer.id) b.classList.add("btn--right");
-        else if (o.id === q.chosen.id) b.classList.add("btn--wrong");
-        b.disabled = true;
-      }
-      opts.appendChild(b);
+  const prompt = document.createElement("div");
+  prompt.textContent = q.prompt;
+  block.appendChild(prompt);
+
+  const opts = document.createElement("div");
+  opts.className = "study__cases";
+  for (const o of q.options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn--ghost";
+    b.textContent = o.description || o.id;
+    b.addEventListener("click", () => {
+      if (q.chosen) return;
+      q.chosen = o;
+      record(q);
+      renderQuestions();
+    });
+    if (q.chosen) {
+      // Mark the truth as well as the choice: a learner who guessed wrong needs
+      // to see which one was right, not only that theirs was not.
+      if (o.id === q.answer.id) b.classList.add("btn--right");
+      else if (o.id === q.chosen.id) b.classList.add("btn--wrong");
+      b.disabled = true;
     }
-    block.appendChild(opts);
-    el.appendChild(block);
-  });
+    opts.appendChild(b);
+  }
+  block.appendChild(opts);
+
+  // Advance on a click rather than a timer. A timer would decide how long
+  // someone needs to look back at the tracing having just got one wrong, which
+  // is exactly the moment they most want to.
+  if (q.chosen) {
+    const row = document.createElement("div");
+    row.className = "quiz-step";
+
+    const right = q.chosen.id === q.answer.id;
+    const verdict = document.createElement("span");
+    verdict.className = `quiz-step__verdict quiz-step__verdict--${right ? "right" : "wrong"}`;
+    verdict.textContent = right ? "Correct" : "Not this one";
+    row.appendChild(verdict);
+
+    const last = step === questions.length - 1;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "btn";
+    next.textContent = last ? "See the answers" : "Next question";
+    next.addEventListener("click", () => {
+      if (last) {
+        void reveal();
+      } else {
+        step += 1;
+        renderQuestions();
+      }
+    });
+    row.appendChild(next);
+    block.appendChild(row);
+  }
+
+  el.appendChild(block);
 }
 
 function record(q: Question): void {
@@ -319,6 +337,41 @@ async function reveal(): Promise<void> {
   } catch {
     // The numbers are a bonus; the case still taught what it was for.
   }
+  renderRevealEvidence();
+}
+
+/**
+ * The published criteria, after the answer and never before it.
+ *
+ * The whole page rests on the tool's numbers being hidden until the learner has
+ * committed — a QRS duration on screen answers a bundle-branch-block question
+ * before it is asked. Criteria leak the same way and worse: "QRS >= 120 ms"
+ * beside four options is the answer with a citation attached. So this runs from
+ * `reveal()` only.
+ */
+function renderRevealEvidence(): void {
+  const host = $("reveal-evidence");
+  const answered = questions.find((q) => q.chosen);
+  const who = current;
+  const m = lastSummary?.measurements;
+  if (!answered || !who) {
+    host.innerHTML = "";
+    return;
+  }
+  const code = answered.answer.id;
+  const covered = new Set(CRITERIA.flatMap((c) => c.codes));
+  host.innerHTML = evidenceHtml({
+    findingLabel: answered.answer.description || code,
+    results: m
+      ? entriesFor(CRITERIA, code).map((x) =>
+        evaluateEntry(x, m, { sex: who.sex, age: who.age })
+      )
+      : [],
+    coverage: {
+      covered: [...covered].filter((c) => allStatements.has(c)).length,
+      total: allStatements.size,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -337,12 +390,33 @@ function pickEntry(): Entry | null {
   // Anki-ish: weight by how badly the learner does on the statements a record
   // carries, so misses come back sooner. Weighted rather than strictly ordered
   // — always serving the single worst finding would be a drill, not a review.
-  const scored = eligible.map((e) => ({
-    e,
-    w: Math.max(...e.findings.map((s) => weakness(s.id, p))) + Math.random() * 0.35,
-  }));
-  scored.sort((a, b) => b.w - a.w);
-  return scored[Math.floor(Math.random() * Math.min(12, scored.length))]!.e;
+  // Pick the *finding* first, then a case carrying it.
+  //
+  // Drawing a case directly makes every question a prevalence lottery. Sinus
+  // rhythm is on 698 of the 1,046 records and septal hypertrophy on 7, so a
+  // case-first draw asks about sinus rhythm 19.7% of the time and about septal
+  // hypertrophy 0.2% — a hundredfold difference that reflects how common a
+  // finding is in a German hospital's archive, not how much there is to learn
+  // from it. Someone practising for a rare finding would have to sit through
+  // fifty sinus-rhythm cases to meet it once.
+  //
+  // Choosing the finding first makes every finding equally reachable, and
+  // weakness still decides which of them comes up: an unseen or often-missed
+  // finding outranks one already answered correctly.
+  const codes = [...new Set(eligible.flatMap((e) => e.findings.map((s) => s.id)))];
+  const weights = codes.map((c) => weakness(c, p) + 0.08);
+  let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+  let code = codes[codes.length - 1]!;
+  for (let i = 0; i < codes.length; i++) {
+    roll -= weights[i]!;
+    if (roll <= 0) {
+      code = codes[i]!;
+      break;
+    }
+  }
+
+  const carrying = eligible.filter((e) => e.findings.some((s) => s.id === code));
+  return carrying[Math.floor(Math.random() * carrying.length)]!;
 }
 
 async function nextCase(): Promise<void> {
@@ -364,6 +438,8 @@ async function nextCase(): Promise<void> {
     if (mine !== ticket) return;
 
     questions = buildQuestions(e);
+    step = 0;
+    $("reveal-evidence").innerHTML = "";
     if (!questions.length) {
       $("quiz-status").textContent = "That case had nothing askable; try again.";
       return;

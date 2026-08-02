@@ -94,7 +94,14 @@ pub fn read_record(hea: &Path) -> Result<Record, String> {
         }
         // Units must be millivolts; anything else and the numbers would be
         // wrong by an unknown factor rather than obviously broken.
-        if !spec.is_empty() && spec.contains('/') && !spec.ends_with("/mV") {
+        //
+        // Case-insensitive: WFDB's unit field is free text, and PhysioNet's own
+        // corpora disagree — PTB-XL and Chapman write `mV`, INCART and PTB write
+        // `mv`. Insisting on the capital refused a sixth of the Challenge
+        // records over a letter case. `uV` and `V` still fail, which is what the
+        // check is for.
+        let unit = spec.rsplit('/').next().unwrap_or("");
+        if !spec.is_empty() && spec.contains('/') && !unit.eq_ignore_ascii_case("mV") {
             return Err(format!("expected millivolts, got {spec}"));
         }
 

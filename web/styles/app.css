@@ -642,6 +642,12 @@ ol, ul { padding: 0; list-style: none; }
   padding: 16px;
   max-width: 1800px;
   margin: 0 auto;
+  /* `body` is a column flex container, so this is a flex item, and `margin: auto`
+     on a flex item overrides `align-self: stretch` with shrink-to-fit. Without an
+     explicit width the whole column collapsed onto its widest child — at a
+     1440px viewport it rendered 953px wide, centred, with 243px of dead space
+     either side. `.page` on the other pages has carried this line all along. */
+  width: 100%;
 }
 
 .quiz-bar {
@@ -656,33 +662,28 @@ ol, ul { padding: 0; list-style: none; }
 /* Pushed right so the destructive one is not adjacent to "New case". */
 .quiz-bar__actions { display: flex; gap: 8px; margin-left: auto; }
 
+/* One column: the tracing at full width, the question under it.
+   `drawPrintout` scale-locks the canvas to its width in both dimensions, so
+   every pixel given to a side column came out of the grid square as well as the
+   page — a 340px questions pane cost about a fifth of the millimetre scale. */
 .quiz-panes {
-  display: grid;
-  /* The tracing takes the larger share: twelve leads need the width, and the
-     options are short strings. */
-  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 14px;
-  align-items: start;
 }
 .quiz-panes__ecg,
 .quiz-panes__ask { padding: 14px; }
 .quiz-panes__ecg #printout { width: 100%; display: block; }
 
-/* The questions column scrolls independently, so a case with four questions
-   plus the reveal does not push the tracing off screen. */
-.quiz-panes__ask {
-  position: sticky;
-  top: 14px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
-}
+/* Only one question is on screen at a time, so this never needs its own
+   scroller — the height is bounded by the tallest single question. */
+.quiz-panes__ask { min-height: 132px; }
 
-/* Below roughly a laptop, side-by-side stops helping and the tracing gets too
-   narrow to read, so it stacks. */
-@media (max-width: 1100px) {
-  .quiz-panes { grid-template-columns: 1fr; }
-  .quiz-panes__ask { position: static; max-height: none; }
-}
+/* The question's own controls sit on one line under the prompt. */
+.quiz-step { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.quiz-step__verdict { font-size: 12.5px; font-weight: 600; }
+.quiz-step__verdict--right { color: var(--ok); }
+.quiz-step__verdict--wrong { color: var(--error); }
 
 .quiz-placeholder { padding: 40px 16px; }
 
@@ -929,4 +930,118 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
   font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-muted);
   margin-right: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Published criteria beside the cardiologist's label.
+ *
+ * Deliberately flat: no state modifier changes a row's colour or weight. A row
+ * whose measured value lands on the criterion's side and one whose value does
+ * not must look identical, because the difference between them is the judgement
+ * this page refuses to make. The only modifier is `--unmeasured`, which mutes
+ * the whole row — both columns together, so "unmeasured" cannot read as "the
+ * measurement failed on the one that disagreed".
+ * ------------------------------------------------------------------------- */
+.evidence { display: flex; flex-direction: column; gap: 10px; }
+.evidence__head { margin: 0; font-size: 14px; }
+.evidence__intro,
+.evidence__standing { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.evidence__standing { border-top: 1px solid var(--border); padding-top: 8px; }
+
+.evidence__entry {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.evidence__title { margin: 0; font-size: 13px; }
+.evidence__source { margin: 0; font-size: 11px; color: var(--text-faint); }
+.evidence__note {
+  margin: 0; font-size: 11.5px; line-height: 1.45;
+  color: var(--text-muted); background: var(--bg-sunken);
+  border-radius: var(--radius-sm); padding: 7px 9px;
+}
+.evidence__tally { margin: 0; font-size: 11px; color: var(--text-faint); }
+
+.evidence__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr);
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.evidence__where, .evidence__printed { color: var(--text-muted); }
+.evidence__measured { font-variant-numeric: tabular-nums; }
+.evidence__qualifier {
+  grid-column: 1 / -1; font-size: 11px; color: var(--text-faint); line-height: 1.4;
+}
+.evidence__row--unmeasured { color: var(--text-faint); }
+.evidence__row--unmeasured .evidence__where,
+.evidence__row--unmeasured .evidence__printed,
+.evidence__row--unmeasured .evidence__measured { color: var(--text-faint); }
+
+@media (max-width: 900px) {
+  .evidence__row { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* A criterion row is a button; it must not look like one until it is marked. */
+.evidence__row {
+  width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: 0; border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.evidence__row:hover { background: var(--bg-sunken); }
+.evidence__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The marked state is the accent, matching the wash on the tracing. Never
+   `--ok` or `--error`: this says which leads to look at, not whether they agree. */
+.evidence__row--marked { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Folded prose. The rows are what a reader scans; the guideline history is what
+   they open when a row surprises them. Summaries stay visible so the presence of
+   a disagreement is never hidden — only its several hundred words are. */
+.evidence__more,
+.evidence__cite,
+.evidence__standing { font-size: 11.5px; color: var(--text-muted); }
+.evidence__more > summary,
+.evidence__cite > summary,
+.evidence__standing > summary {
+  cursor: pointer; padding: 4px 0; color: var(--text-faint);
+  list-style: none; display: flex; align-items: baseline; gap: 6px;
+}
+.evidence__more > summary::before,
+.evidence__cite > summary::before,
+.evidence__standing > summary::before { content: "▸"; font-size: 9px; }
+.evidence__more[open] > summary::before,
+.evidence__cite[open] > summary::before,
+.evidence__standing[open] > summary::before { content: "▾"; }
+.evidence__more > summary::-webkit-details-marker,
+.evidence__cite > summary::-webkit-details-marker,
+.evidence__standing > summary::-webkit-details-marker { display: none; }
+.evidence__more > p,
+.evidence__cite > p,
+.evidence__standing > p {
+  margin: 0 0 6px 15px; line-height: 1.5; max-width: 92ch;
+}
+.evidence__more > summary { color: var(--accent); }
+.evidence__standing { border-top: 1px solid var(--border); padding-top: 4px; }
+
+/* The measured column is the one the eye tracks down, so give it its own edge. */
+.evidence__measured { text-align: right; }
+.evidence__qualifier { margin-top: 2px; }
+
+/* The definition picker. Every rival is named here, so choosing one to read is
+   never the same as not knowing the others exist. */
+.evidence__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.evidence__pick__count { font-size: 11.5px; color: var(--text-muted); margin-right: 2px; }
+.evidence__pick__tab {
+  font: inherit; font-size: 11.5px; padding: 4px 9px; cursor: pointer;
+  color: var(--text-muted); background: var(--bg-sunken);
+  border: 1px solid var(--border); border-radius: 999px;
+}
+.evidence__pick__tab:hover { border-color: var(--border-strong); }
+.evidence__pick__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.evidence__pick__tab.is-on {
+  color: var(--accent); background: var(--accent-weak);
+  border-color: var(--accent); font-weight: 600;
 }
