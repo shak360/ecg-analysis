@@ -35,6 +35,18 @@ export interface PrintoutOptions {
   /** Leads to place in the rhythm strips, top to bottom. */
   rhythmLeads: string[];
   /**
+   * How the twelve leads are arranged.
+   *
+   * `"3x4"` is the printout a cart emits: four columns of three, each panel a
+   * different 2.5 s window, plus rhythm strips beneath. `"12x1"` gives every
+   * lead the full record as its own strip — twelve simultaneous rhythm strips,
+   * which is how you read a rhythm across all twelve at once and the only way to
+   * see whether an ectopic in V1 is the same beat as the pause in II. It is
+   * taller and shows no more signal; it shows the *same* signal without the
+   * discontinuity every column boundary introduces.
+   */
+  layout?: "3x4" | "12x1";
+  /**
    * Leads to wash with the accent colour — "the criterion is about these".
    *
    * Drawn under the grid, never over the trace, and never in a colour that
@@ -54,6 +66,11 @@ export const DEFAULT_PRINTOUT: PrintoutOptions = {
 };
 
 /** Column-major, exactly as a printout is laid out. */
+/** Reading order for the 12x1 layout: limb leads, then precordial. */
+const LEAD_ORDER: readonly string[] = [
+  "I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6",
+];
+
 const COLUMNS: readonly (readonly string[])[] = [
   ["I", "II", "III"],
   ["aVR", "aVL", "aVF"],
@@ -123,9 +140,21 @@ export function drawPrintout(
   const marginMm = 4;
   const labelMm = 7;
   const rowMm = 26;
-  const rows = 3 + opts.rhythmLeads.length;
+  const twelveByOne = opts.layout === "12x1";
+  // In 12x1 every row is the whole record, so there is one column and it is as
+  // wide as the recording is long. The rhythm strips are redundant there —
+  // every lead is already one — so they are not drawn.
+  const rows = twelveByOne ? LEAD_ORDER.length : 3 + opts.rhythmLeads.length;
 
-  const plotMm = COLUMNS.length * opts.columnSeconds * opts.mmPerSec;
+  const recordS = twelveByOne
+    ? Math.max(
+      ...studies.flatMap((st) => [...st.leads.values()].map((v) => v.length / opts.fsHz)),
+      opts.columnSeconds,
+    )
+    : 0;
+  const plotMm = twelveByOne
+    ? recordS * opts.mmPerSec
+    : COLUMNS.length * opts.columnSeconds * opts.mmPerSec;
   const totalMm = labelMm + plotMm + marginMm * 2;
   const heightMm = marginMm * 2 + rows * rowMm;
 
@@ -209,8 +238,10 @@ export function drawPrintout(
     leadsInRow.forEach((lead, c) => {
       const sig = study.leads.get(lead);
       if (!sig || sig.length === 0) return;
-      const n = Math.min(sig.length, Math.round(opts.columnSeconds * opts.fsHz));
-      const colX = x0 + c * colW;
+      const n = twelveByOne
+        ? sig.length
+        : Math.min(sig.length, Math.round(opts.columnSeconds * opts.fsHz));
+      const colX = twelveByOne ? x0 : x0 + c * colW;
       for (let i = 0; i < n; i++) {
         const px = colX + (i / opts.fsHz) * opts.mmPerSec * pxPerMm;
         const py = baselineY - sig[i]! * opts.mmPerMv * pxPerMm;
@@ -226,15 +257,24 @@ export function drawPrintout(
     void rowIndex;
   };
 
-  // The twelve leads, three rows of four.
-  for (let r = 0; r < 3; r++) {
-    const baselineY = y0 + (r + 0.5) * rowMm * pxPerMm;
-    const leadsInRow = COLUMNS.map((col) => col[r]!);
-    for (const study of studies) drawRow(study, r, leadsInRow, baselineY);
+  if (twelveByOne) {
+    // One lead per row, each the whole record. `drawRow` takes a list because a
+    // 3x4 row is four leads spliced end to end; here the list is one long.
+    LEAD_ORDER.forEach((lead, r) => {
+      const baselineY = y0 + (r + 0.5) * rowMm * pxPerMm;
+      for (const study of studies) drawRow(study, r, [lead], baselineY);
+    });
+  } else {
+    // The twelve leads, three rows of four.
+    for (let r = 0; r < 3; r++) {
+      const baselineY = y0 + (r + 0.5) * rowMm * pxPerMm;
+      const leadsInRow = COLUMNS.map((col) => col[r]!);
+      for (const study of studies) drawRow(study, r, leadsInRow, baselineY);
+    }
   }
 
-  // Rhythm strips, full width.
-  opts.rhythmLeads.forEach((lead, k) => {
+  // Rhythm strips, full width. Redundant in 12x1, where every row already is one.
+  if (!twelveByOne) opts.rhythmLeads.forEach((lead, k) => {
     const baselineY = y0 + (3 + k + 0.5) * rowMm * pxPerMm;
     for (const study of studies) {
       // Lead II uses the recorded rhythm strip where one exists; any other
@@ -279,10 +319,14 @@ export function drawPrintout(
   ctx.globalAlpha = 0.3;
   ctx.setLineDash([2, 3]);
   ctx.beginPath();
-  for (let c = 1; c < COLUMNS.length; c++) {
-    const x = x0 + c * colW;
-    ctx.moveTo(x, y0);
-    ctx.lineTo(x, y0 + 3 * rowMm * pxPerMm);
+  // No column boundaries in 12x1: there are no columns, and drawing them would
+  // suggest a lead change where the signal is continuous.
+  if (!twelveByOne) {
+    for (let c = 1; c < COLUMNS.length; c++) {
+      const x = x0 + c * colW;
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y0 + 3 * rowMm * pxPerMm);
+    }
   }
   ctx.stroke();
   ctx.setLineDash([]);
@@ -291,16 +335,22 @@ export function drawPrintout(
   // Lead labels, at each panel's top-left as a cart prints them.
   ctx.fillStyle = th.text;
   ctx.font = `600 ${Math.max(9, 3 * pxPerMm)}px system-ui, sans-serif`;
-  for (let r = 0; r < 3; r++) {
-    const top = y0 + r * rowMm * pxPerMm;
-    COLUMNS.forEach((col, c) => {
-      ctx.fillText(col[r]!, x0 + c * colW + 3, top + 4 * pxPerMm);
+  if (twelveByOne) {
+    LEAD_ORDER.forEach((lead, r) => {
+      ctx.fillText(lead, x0 + 3, y0 + r * rowMm * pxPerMm + 4 * pxPerMm);
+    });
+  } else {
+    for (let r = 0; r < 3; r++) {
+      const top = y0 + r * rowMm * pxPerMm;
+      COLUMNS.forEach((col, c) => {
+        ctx.fillText(col[r]!, x0 + c * colW + 3, top + 4 * pxPerMm);
+      });
+    }
+    opts.rhythmLeads.forEach((lead, k) => {
+      const top = y0 + (3 + k) * rowMm * pxPerMm;
+      ctx.fillText(lead, x0 + 3, top + 4 * pxPerMm);
     });
   }
-  opts.rhythmLeads.forEach((lead, k) => {
-    const top = y0 + (3 + k) * rowMm * pxPerMm;
-    ctx.fillText(lead, x0 + 3, top + 4 * pxPerMm);
-  });
 
   // Calibration mark and the scale it implies.
   ctx.fillStyle = th.muted;
@@ -312,6 +362,14 @@ export function drawPrintout(
   );
 
   const panels: { x: number; y: number; w: number; h: number }[] = [];
+  if (twelveByOne) {
+    // Every row is one continuous window, so each is a single panel spanning the
+    // full width — a caliper may cross freely within a row and not between them.
+    for (let r = 0; r < rows; r++) {
+      panels.push({ x: x0, y: y0 + r * rowMm * pxPerMm, w: plotW, h: rowMm * pxPerMm });
+    }
+    return { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv, panels };
+  }
   for (let r = 0; r < 3; r++) {
     for (let c = 0; c < COLUMNS.length; c++) {
       panels.push({

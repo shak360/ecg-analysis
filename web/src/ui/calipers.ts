@@ -164,14 +164,19 @@ export function attachCalipers(
       const x1 = box.x + originIn;
       const x2 = x1 + step;
 
-      // Alternating shaded bands when stepping out. The measured span stays
-      // clear and its neighbours are filled, then clear, then filled — the
-      // stripe is legible in the light theme where a hairline was not, and the
-      // alternation is what lets you count intervals rather than just see lines.
+      // Alternating shaded bands when stepping out: every other interval is
+      // filled. The measured span is band 0 and stays clear, the intervals
+      // immediately either side are filled, the next pair clear, and so on — so
+      // the stripe reads as a ruler you can count along rather than a row of
+      // hairlines, and it survives the light theme.
       if (repeat && !live && Math.abs(step) > 6) {
         ctx.fillStyle = band;
         for (let k = -200; k < 200; k++) {
-          if (k === 0 || k % 2 !== 0) continue;
+          // Odd bands only. Skipping *even* k is what leaves the measured span
+          // clear, since band 0 is the span itself; an earlier version skipped
+          // odd k as well and left both neighbours unshaded, which is not an
+          // alternation at all.
+          if (k % 2 === 0) continue;
           const bx = x1 + step * k;
           if (bx + Math.abs(step) < box.x || bx - Math.abs(step) > box.x + box.w) continue;
           ctx.fillRect(Math.min(bx, bx + step), box.y, Math.abs(step), box.h);

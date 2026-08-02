@@ -42,6 +42,17 @@ export interface ToolsOptions {
    * bitmap, which is not worth holding for a tool nobody is using.
    */
   renderHiRes?: (target: HTMLCanvasElement, zoom: number) => void;
+  /**
+   * Repeat the caliper into every panel at the same offset.
+   *
+   * Only Compare wants this. There each panel is one lead's ensemble beat and
+   * the panels are simultaneous, so marking the same instant across all twelve
+   * is the whole question — is the ectopic in V1 the same beat as the pause in
+   * II. On a printout the panels are *sequential* 2.5 s windows, so the same
+   * offset into each is a different moment in the recording, and replicating
+   * there would draw eleven marks that mean nothing.
+   */
+  perLead?: boolean;
 }
 
 export interface Tools {
@@ -108,7 +119,13 @@ export function mountTools(opts: ToolsOptions): Tools {
     hiRes = null;
   }
 
-  const tools = attachCalipers(canvas, getScale, () => hiRes);
+  // The caliper sees panel geometry only where replicating across it is
+  // meaningful; elsewhere it spans the canvas as it always did.
+  const scaleForCaliper = () => {
+    const s = getScale();
+    return opts.perLead ? s : { ...s, panels: undefined };
+  };
+  const tools = attachCalipers(canvas, scaleForCaliper, () => hiRes);
 
   // Caliper and magnifier both want the pointer, so they are exclusive. A mode
   // you can be in twice is a mode you cannot get out of.
