@@ -63,7 +63,9 @@ function rowHtml(r: RowResult): string {
     `<div class="evidence__printed">${esc(r.row.printed)}</div>` +
     `<div class="evidence__measured">${esc(measuredLine(r, unit))}</div>` +
     (r.row.qualifier && r.row.qualifier.toLowerCase() !== "none"
-      ? `<div class="evidence__qualifier">${esc(r.row.qualifier)}</div>`
+      ? `<div class="evidence__qualifier">${esc(
+        r.row.qualifier.length > 150 ? r.row.qualifier.slice(0, 147) + "…" : r.row.qualifier,
+      )}</div>`
       : "") +
     `</button>`;
 }
@@ -72,16 +74,23 @@ function entryHtml(res: EntryResult): string {
   const e = res.entry;
   return `<article class="evidence__entry">` +
     `<h4 class="evidence__title">${esc(e.title)}</h4>` +
-    `<p class="evidence__source">${esc(e.source)}</p>` +
+    `<details class="evidence__cite"><summary>Source</summary>` +
+    `<p>${esc(e.source)}</p></details>` +
+    res.rows.map(rowHtml).join("") +
+    // The prose sits *after* the rows and folded away. It is the most valuable
+    // content here and the least scannable — several hundred words of guideline
+    // history per entry — and leading with it buried the one thing a reader came
+    // for, which is the criterion beside the number. Folded, not dropped: the
+    // summary line states what is inside, so a reader can see there is a
+    // disagreement without having to read it first.
     (e.disagreement
-      ? `<p class="evidence__note"><strong>Published definitions of this finding do not ` +
-        `agree with each other.</strong> ${esc(e.disagreement)}</p>`
+      ? `<details class="evidence__more"><summary>These definitions disagree with ` +
+        `each other — what the sources say</summary><p>${esc(e.disagreement)}</p></details>`
       : "") +
     (e.notComputable
-      ? `<p class="evidence__note">Parts of this definition cannot be evaluated from the ` +
-        `samples at all. ${esc(e.notComputable)}</p>`
+      ? `<details class="evidence__more"><summary>Parts of this definition cannot be ` +
+        `evaluated from the samples</summary><p>${esc(e.notComputable)}</p></details>`
       : "") +
-    res.rows.map(rowHtml).join("") +
     // The denominator, always. "Checked 1 of 6" is the single line that stops a
     // reader mistaking one comparison for an assessment of the whole criterion.
     `<p class="evidence__tally">Checked ${res.checked} of ${res.rows.length} ` +
@@ -93,11 +102,11 @@ function entryHtml(res: EntryResult): string {
 
 /** The standing caveat. Present unconditionally, so its presence says nothing. */
 const FOOTER =
-  `<p class="evidence__standing">Where a measured figure and the recorded label point in ` +
-  `different directions, nothing on this page resolves that. The label was made by a ` +
-  `clinician reading the whole tracing. These figures come from one automated pass over ` +
-  `the samples and have not been validated against a reference standard. Neither is ` +
-  `offered as a check on the other.</p>`;
+  `<details class="evidence__standing"><summary>Where a measured figure and the recorded ` +
+  `label point in different directions, nothing on this page resolves that.</summary>` +
+  `<p>The label was made by a clinician reading the whole tracing. These figures come from ` +
+  `one automated pass over the samples and have not been validated against a reference ` +
+  `standard. Neither is offered as a check on the other.</p></details>`;
 
 export interface EvidenceView {
   /** The finding this is about, as the corpus names it. */

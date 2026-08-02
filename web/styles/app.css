@@ -996,3 +996,36 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 /* The marked state is the accent, matching the wash on the tracing. Never
    `--ok` or `--error`: this says which leads to look at, not whether they agree. */
 .evidence__row--marked { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Folded prose. The rows are what a reader scans; the guideline history is what
+   they open when a row surprises them. Summaries stay visible so the presence of
+   a disagreement is never hidden — only its several hundred words are. */
+.evidence__more,
+.evidence__cite,
+.evidence__standing { font-size: 11.5px; color: var(--text-muted); }
+.evidence__more > summary,
+.evidence__cite > summary,
+.evidence__standing > summary {
+  cursor: pointer; padding: 4px 0; color: var(--text-faint);
+  list-style: none; display: flex; align-items: baseline; gap: 6px;
+}
+.evidence__more > summary::before,
+.evidence__cite > summary::before,
+.evidence__standing > summary::before { content: "▸"; font-size: 9px; }
+.evidence__more[open] > summary::before,
+.evidence__cite[open] > summary::before,
+.evidence__standing[open] > summary::before { content: "▾"; }
+.evidence__more > summary::-webkit-details-marker,
+.evidence__cite > summary::-webkit-details-marker,
+.evidence__standing > summary::-webkit-details-marker { display: none; }
+.evidence__more > p,
+.evidence__cite > p,
+.evidence__standing > p {
+  margin: 0 0 6px 15px; line-height: 1.5; max-width: 92ch;
+}
+.evidence__more > summary { color: var(--accent); }
+.evidence__standing { border-top: 1px solid var(--border); padding-top: 4px; }
+
+/* The measured column is the one the eye tracks down, so give it its own edge. */
+.evidence__measured { text-align: right; }
+.evidence__qualifier { margin-top: 2px; }
