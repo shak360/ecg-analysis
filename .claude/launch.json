@@ -3,10 +3,8 @@
   "configurations": [
     {
       "name": "ecg-dev",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "vite"
-      ],
+      "runtimeExecutable": "./scripts/dev-server.sh",
+      "runtimeArgs": [],
       "port": 8080
     }
   ]
