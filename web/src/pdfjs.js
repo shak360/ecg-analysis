@@ -7,7 +7,7 @@
  * `web/src/` and the bundle's home in `web/dist/`.
  */
 // Must precede the pdf.js import: pdf.js calls a method Node 20 and browsers
-// older than Chrome 114 / Safari 16.4 / Firefox 122 do not have, and does not
+// older than Chrome 114 / Safari 17.4 / Firefox 122 do not have, and does not
 // polyfill it itself. See `compat.ts`. Import order is the load order here, so
 // this line is load-bearing rather than stylistic.
 import "./compat.ts";

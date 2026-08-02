@@ -16,11 +16,15 @@
  * That is a long way from the cause, which is why this file is worth its length.
  *
  * `ArrayBuffer.prototype.transferToFixedLength` shipped in Chrome 114,
- * Safari 16.4, Firefox 122 and Node 21. Without this shim the Compare page is
- * broken on every browser below those — which includes browsers the build
- * target in `vite.config.ts` explicitly claims to support — and the test suite
- * is broken on Node 20. One shim closes both, so the declared support matrix
- * becomes true rather than aspirational.
+ * Safari 17.4, Firefox 122 and Node 21. Without this shim the Compare page is
+ * broken on every browser below those, and the test suite is broken on Node 20.
+ *
+ * It removes that bound and no other. An audit of the rest found three further
+ * constraints, none of them pdf.js's fault and none fixed here: `color-mix()`
+ * in our own stylesheet (Chrome 111), module workers in `engine/client.ts`
+ * (Firefox 114), and a class static block in the vendored worker, which ships
+ * untranspiled (Safari 16.4). `vite.config.ts` now states the resulting floor
+ * instead of the older, wishful one.
  *
  * Imported for side effects only, and installed in every scope that can reach
  * pdf.js: the main thread, our own engine worker, and pdf.js's worker.

@@ -2,7 +2,7 @@
  * pdf.js bundles core-js polyfills for about forty modern APIs — including
  * `Promise.withResolvers` and the whole `Set` method family — but calls
  * `ArrayBuffer.prototype.transferToFixedLength` bare, in `compileFontInfo` and
- * `compileSystemFontInfo` below. That method shipped in Chrome 114, Safari 16.4,
+ * `compileSystemFontInfo` below. That method shipped in Chrome 114, Safari 17.4,
  * Firefox 122 and Node 21, so on anything older the call throws, pdf.js swallows
  * the error inside `getOperatorList`, and the caller receives an empty operator
  * list. For this application that surfaces as "No lead produced a usable beat" —

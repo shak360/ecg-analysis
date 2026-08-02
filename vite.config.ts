@@ -140,7 +140,27 @@ export default defineConfig({
   build: {
     outDir: resolve(root, "dist"),
     emptyOutDir: true,
-    target: ["chrome100", "firefox100", "safari15.4", "edge100"],
+    // Each bound is a verified constraint in code that actually ships, not a
+    // preference. The previous value — chrome100 / firefox100 / safari15.4 /
+    // edge100 — was aspirational: three separate things already violated it, so
+    // the Compare page failed silently on browsers this line promised to serve.
+    //
+    //   chrome111 / edge111  `color-mix()`, seven uses in web/styles/app.css.
+    //                        esbuild passes it through untouched at any target,
+    //                        so the bundler does not rescue it.
+    //   firefox114           `new Worker(url, { type: "module" })` in
+    //                        web/src/engine/client.ts. Chrome had it at 80 and
+    //                        Safari at 15; Firefox is the straggler.
+    //   safari16.4           a class static initialisation block in
+    //                        web/vendor/pdfjs/pdf.worker.mjs. That file is
+    //                        referenced by URL rather than imported, so Vite
+    //                        copies it byte-for-byte and never lowers it —
+    //                        verified: dist's copy is identical to the source
+    //                        and still contains the block.
+    //
+    // A fourth, `transferToFixedLength` (Safari 17.4), would have bound highest
+    // of all; it is shimmed instead. See web/vendor/pdfjs/PATCHES.md.
+    target: ["chrome111", "edge111", "firefox114", "safari16.4"],
     rollupOptions: {
       input: {
         main: resolve(webRoot, "index.html"),

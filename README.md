@@ -98,9 +98,12 @@ reconstructed 12-lead as continuous simultaneous signal.
   `engines` previously said `>=20`, which contradicted the pin and let a shell
   that had not run `fnm use` fail twelve tests with a misleading message.
 
-Browsers: the build targets Chrome 100, Firefox 100, Safari 15.4 and Edge 100,
-and the PDF path holds that line only because of a local patch to the vendored
-pdf.js — see [web/vendor/pdfjs/PATCHES.md](web/vendor/pdfjs/PATCHES.md).
+Browsers: Chrome/Edge 111, Firefox 114, Safari 16.4. Each bound is a verified
+constraint in shipped code — `color-mix()` in the stylesheet, module workers in
+the engine client, and a class static block in the vendored pdf.js worker, which
+Vite copies rather than transpiles. The target previously read Chrome 100 /
+Safari 15.4, which nothing supported. A fourth constraint, Safari 17.4, is
+shimmed away — see [web/vendor/pdfjs/PATCHES.md](web/vendor/pdfjs/PATCHES.md).
 
 ```bash
 brew install rustup wasm-pack fnm

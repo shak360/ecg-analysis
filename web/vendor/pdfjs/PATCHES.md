@@ -20,7 +20,7 @@ pdf.worker.mjs  compileFontInfo()        return buffer.transferToFixedLength(off
 ```
 
 `ArrayBuffer.prototype.transferToFixedLength` shipped in **Chrome 114,
-Safari 16.4, Firefox 122 and Node 21**. Below those it throws — and because both
+Safari 17.4, Firefox 122 and Node 21**. Below those it throws — and because both
 call sites are in *font* compilation, which every ECG printout reaches through
 its lead labels and its `25 mm/s` annotation, the failure is not rare. pdf.js
 catches the error inside `getOperatorList` and returns an empty operator list, so
@@ -41,8 +41,15 @@ export. It failed as `Setting up fake worker failed`. Patching the vendored file
 keeps one code path for every environment.
 
 **Consequence of dropping it.** The test suite fails on Node 20, and the Compare
-page silently produces nothing on every browser below the versions above —
-including browsers `vite.config.ts` explicitly lists as supported
-(`chrome100`, `firefox100`, `safari15.4`, `edge100`).
+page silently produces nothing on every browser below the versions above.
+
+**What it does not fix.** This patch removes the highest bound on the browser
+floor, not the floor itself. Three further constraints remain, none of them
+pdf.js's doing: `color-mix()` in `web/styles/app.css` (Chrome 111), module
+workers in `web/src/engine/client.ts` (Firefox 114), and a class static
+initialisation block in this very file (Safari 16.4) — Vite copies
+`pdf.worker.mjs` byte-for-byte rather than transpiling it, so that block ships
+as written. `vite.config.ts` now declares `chrome111 / edge111 / firefox114 /
+safari16.4`, which is the true floor rather than the one previously claimed.
 
 **Upstream.** Remove once pdf.js polyfills this itself or stops calling it.
