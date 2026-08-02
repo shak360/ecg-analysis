@@ -68,6 +68,8 @@ let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 10;
 /** Full duration in seconds when the record was longer than the shown window. */
 let lastTrimmedFrom: number | null = null;
+/** Leads the chosen criterion row names, washed on the tracing. */
+let markedLeads: string[] = [];
 /** Guards against an older case landing after a newer one. */
 let ticket = 0;
 
@@ -273,6 +275,7 @@ function render(): void {
     ...DEFAULT_PRINTOUT,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     columnSeconds: lastColumnSeconds,
+    emphasiseLeads: markedLeads,
   });
 }
 
@@ -432,6 +435,7 @@ function renderEvidence(code: string, e: Entry, summary: any): void {
   const who = { sex: e.sex, age: e.age };
   const covered = new Set(CRITERIA.flatMap((c) => c.codes));
 
+  markedLeads = [];
   $("case-evidence").innerHTML = evidenceHtml({
     findingLabel: meta.get(code)?.description || code,
     results: m ? entries.map((x) => evaluateEntry(x, m, who)) : [],
@@ -440,6 +444,26 @@ function renderEvidence(code: string, e: Entry, summary: any): void {
     coverage: { covered: [...covered].filter((c) => meta.has(c)).length, total: meta.size },
   });
 }
+
+/**
+ * Marking is one row at a time.
+ *
+ * A union across several criteria washes most of the page and starts to look
+ * like a composite assessment, which is the one reading this panel must not
+ * invite.
+ */
+$("case-evidence").addEventListener("click", (ev) => {
+  const row = (ev.target as HTMLElement).closest<HTMLElement>(".evidence__row");
+  if (!row) return;
+  const leads = (row.dataset.leads ?? "").split(",").filter(Boolean);
+  const same = row.classList.contains("evidence__row--marked");
+  for (const el of document.querySelectorAll(".evidence__row--marked")) {
+    el.classList.remove("evidence__row--marked");
+  }
+  markedLeads = same ? [] : leads;
+  if (!same) row.classList.add("evidence__row--marked");
+  render();
+});
 
 function renderReport(summary: any): void {
   const m = summary.measurements ?? {};

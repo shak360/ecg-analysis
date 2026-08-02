@@ -52,7 +52,12 @@ function measuredLine(r: RowResult, unit: string): string {
 function rowHtml(r: RowResult): string {
   const unit = r.row.check?.unit ?? "";
   const muted = r.relation === "unmeasurable" || r.relation === "demographicsRequired";
-  return `<div class="evidence__row${muted ? " evidence__row--unmeasured" : ""}">` +
+  // A button, not a div: marking is an action, and a learner on a touch screen
+  // or a keyboard has to be able to take it. `data-leads` is what the page reads
+  // back — the row does not know what a canvas is.
+  return `<button type="button" class="evidence__row${muted ? " evidence__row--unmeasured" : ""}" ` +
+    `data-leads="${esc(r.row.marks.join(","))}" ` +
+    `title="Mark the leads this line names">` +
     `<div class="evidence__what">${esc(r.row.quantity)}</div>` +
     `<div class="evidence__where">${esc(r.row.leads)}</div>` +
     `<div class="evidence__printed">${esc(r.row.printed)}</div>` +
@@ -60,7 +65,7 @@ function rowHtml(r: RowResult): string {
     (r.row.qualifier && r.row.qualifier.toLowerCase() !== "none"
       ? `<div class="evidence__qualifier">${esc(r.row.qualifier)}</div>`
       : "") +
-    `</div>`;
+    `</button>`;
 }
 
 function entryHtml(res: EntryResult): string {
