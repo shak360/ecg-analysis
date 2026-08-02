@@ -925,3 +925,56 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
   text-transform: uppercase; color: var(--text-muted);
   margin-right: 2px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Published criteria beside the cardiologist's label.
+ *
+ * Deliberately flat: no state modifier changes a row's colour or weight. A row
+ * whose measured value lands on the criterion's side and one whose value does
+ * not must look identical, because the difference between them is the judgement
+ * this page refuses to make. The only modifier is `--unmeasured`, which mutes
+ * the whole row — both columns together, so "unmeasured" cannot read as "the
+ * measurement failed on the one that disagreed".
+ * ------------------------------------------------------------------------- */
+.evidence { display: flex; flex-direction: column; gap: 10px; }
+.evidence__head { margin: 0; font-size: 14px; }
+.evidence__intro,
+.evidence__standing { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.evidence__standing { border-top: 1px solid var(--border); padding-top: 8px; }
+
+.evidence__entry {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.evidence__title { margin: 0; font-size: 13px; }
+.evidence__source { margin: 0; font-size: 11px; color: var(--text-faint); }
+.evidence__note {
+  margin: 0; font-size: 11.5px; line-height: 1.45;
+  color: var(--text-muted); background: var(--bg-sunken);
+  border-radius: var(--radius-sm); padding: 7px 9px;
+}
+.evidence__tally { margin: 0; font-size: 11px; color: var(--text-faint); }
+
+.evidence__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr);
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.evidence__where, .evidence__printed { color: var(--text-muted); }
+.evidence__measured { font-variant-numeric: tabular-nums; }
+.evidence__qualifier {
+  grid-column: 1 / -1; font-size: 11px; color: var(--text-faint); line-height: 1.4;
+}
+.evidence__row--unmeasured { color: var(--text-faint); }
+.evidence__row--unmeasured .evidence__where,
+.evidence__row--unmeasured .evidence__printed,
+.evidence__row--unmeasured .evidence__measured { color: var(--text-faint); }
+
+@media (max-width: 900px) {
+  .evidence__row { grid-template-columns: 1fr; gap: 2px; }
+}

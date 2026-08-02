@@ -20,6 +20,8 @@
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
+import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
+import { evidenceHtml } from "./ui/evidence.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -337,6 +339,7 @@ async function openCase(code: string, e: Entry): Promise<void> {
     lastTrimmedFrom = trimmedFrom;
 
     renderLabels(e);
+    renderEvidence(code, e, summary);
     renderReport(summary);
     $("case-placeholder").hidden = true;
     $("case-panel").hidden = false;
@@ -393,6 +396,29 @@ function renderLabels(e: Entry): void {
 }
 
 // deno-lint-ignore no-explicit-any
+/**
+ * The published criteria for the finding that was chosen, beside our numbers.
+ *
+ * Scoped to the *chosen* finding rather than every finding on the record. A case
+ * with six labels would otherwise produce six criterion blocks above the
+ * tracing, and the one the reader asked about would be buried among five they
+ * did not.
+ */
+function renderEvidence(code: string, e: Entry, summary: any): void {
+  const entries = entriesFor(CRITERIA, code);
+  const m = summary?.measurements;
+  const who = { sex: e.sex, age: e.age };
+  const covered = new Set(CRITERIA.flatMap((c) => c.codes));
+
+  $("case-evidence").innerHTML = evidenceHtml({
+    findingLabel: meta.get(code)?.description || code,
+    results: m ? entries.map((x) => evaluateEntry(x, m, who)) : [],
+    // Computed, never written into a string: `atlas.ts` already learned that a
+    // hardcoded count drifts and always in the flattering direction.
+    coverage: { covered: [...covered].filter((c) => meta.has(c)).length, total: meta.size },
+  });
+}
+
 function renderReport(summary: any): void {
   const m = summary.measurements ?? {};
   const n = (v: number | null | undefined, unit: string, digits = 0) =>
