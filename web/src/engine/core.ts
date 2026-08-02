@@ -310,8 +310,13 @@ export class EngineCore {
           samples: c.difference_mv,
           traceIndex: k + 1,
           rmsMv: c.rms_difference_mv,
+          implausible: c.align_implausible,
         });
-        worstRms = Math.max(worstRms, c.rms_difference_mv);
+        // A clamped alignment means the two beats were never registered, so its
+        // RMS is the distance between two arbitrarily-placed frames rather than
+        // a change in the patient. Leaving it in `worstRms` would let the one
+        // unusable comparison set the number shown for the whole lead.
+        if (!c.align_implausible) worstRms = Math.max(worstRms, c.rms_difference_mv);
         if (c.morphology_changed) morphologyChanged = true;
       });
 

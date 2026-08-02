@@ -321,6 +321,7 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
         samples: d.samples,
         traceIndex: d.traceIndex,
         rmsMv: d.rmsMv,
+        implausible: d.implausible,
       })),
       rmsDifferenceMv: l.rmsDifferenceMv,
       morphologyChanged: l.morphologyChanged,

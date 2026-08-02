@@ -93,6 +93,15 @@ export interface SnapshotDifference {
   /** Index into `traces`; 0 is always the reference. */
   traceIndex: number;
   rmsMv: number;
+  /**
+   * The alignment search wanted a shift larger than `XSTUDY_CLAMP_MS`, so it was
+   * clamped to zero and these two beats were never registered.
+   *
+   * Per comparison rather than per lead, because a series may hold one study
+   * that aligned and another that did not, and suppressing both would hide a
+   * good result to report a bad one.
+   */
+  implausible: boolean;
 }
 
 export interface SnapshotLead {
