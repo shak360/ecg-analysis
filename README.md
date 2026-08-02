@@ -11,7 +11,7 @@ The site has four parts:
 | **Atlas** (home) | 120 findings across seven categories, each with real examples. Browse by what a cardiologist found. |
 | **Test yourself** | Anki-style multiple choice over the human-validated subset. |
 | **Serial pairs** | 604 before/after pairs from PTB-XL patients, for studying change over time. |
-| **Compare** | Recover tracings from **PDFs, scans and photographs**, register several studies onto a common voltage and time base, and compare them lead by lead. |
+| **Compare** | Recover tracings from **vector PDFs**, register several studies onto a common voltage and time base, and compare them lead by lead. Scans and photographs are not yet supported. |
 
 Comparing serial ECGs is normally done by eye with two printouts side by side. A 1 mm ST shift is
 clinically decisive and easy to miss, and printouts vary in paper speed, gain, and baseline, so naive
@@ -23,10 +23,12 @@ SCP-ECG standard that PTB-XL's labels happen to use.
 
 > **Not a medical device.** This tool assists visual comparison of ECG tracings for research and
 > educational use. Measurements are derived from digitized images and carry uncertainty that depends
-> on source quality. Suggested labels are automated pattern-matching against published criteria — a
-> starting point for your own reading, never a diagnosis. They are applied only when you accept them,
-> they omit conditions this tool cannot assess, and an absent suggestion means nothing. All findings
-> must be verified against the original tracings by a qualified clinician.
+> on source quality. This tool does not suggest, assign or adjudicate a diagnosis. Where it shows
+> published diagnostic criteria beside a label, the label is the reporting cardiologist's and the
+> criteria are quotations — frequently disagreeing with one another — shown for teaching; nothing on
+> the page evaluates the label. A measurement this tool could not make is withheld rather than
+> reported as normal, and an absent number means nothing either way. All findings must be verified
+> against the original tracings by a qualified clinician.
 
 ## Privacy
 

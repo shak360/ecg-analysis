@@ -1,6 +1,18 @@
 # 0005 — ECG explainer: hovering a label highlights the evidence for it
 
-**Status:** accepted
+**Status:** partly superseded on 2026-08-01 — see the note below
+
+> **Partly superseded.** The `EvidenceRegion` / `RegionRole` model below assumes
+> per-lead time windows that the engine cannot currently produce: `qrsOnset`,
+> `qrsOffset` and `anchorIndex` are indices into the *ensemble-beat frame*, not
+> into the recording, and `anchor_index()` returns a constant. So what shipped
+> carries `marks: string[]` — lead names only, no time extent — and the on-canvas
+> marking is lead emphasis rather than shaded regions. One additive
+> `beatAnchors` field on `StudySummary` would unblock the rest.
+>
+> `RegionRole::Against` is superseded outright rather than deferred. This page
+> explains a cardiologist's own label; "this argues against it" is the one thing
+> it may not say.
 **Decided by:** the user
 **Date:** 2026-07-30
 

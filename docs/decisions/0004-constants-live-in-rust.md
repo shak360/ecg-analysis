@@ -1,6 +1,25 @@
 # 0004 — Every constant lives in Rust; the UI reads them through WASM
 
-**Status:** accepted
+**Status:** accepted, amended 2026-08-01 — see the scope note below
+
+> **Scope note.** This ADR says the UI holds no numeric policy of its own, and
+> that remains the rule for anything the engine acts on. `web/src/criteria/`
+> is a deliberate exception, and the distinction is worth stating precisely:
+> those numbers are **quotations of third-party published criteria**, not
+> tunables. The engine never reads them, nothing branches on them, and they exist
+> to be displayed beside a citation. Several are mutually contradictory on
+> purpose — the Cornell product carries three different female offsets because
+> three are in active use — which is not a thing `config.rs` can represent.
+>
+> They are held to the same standard by a different mechanism:
+> `test/criteria-doc.test.ts` diffs every one against
+> `docs/ecg-diagnostic-criteria.md` character for character and asserts each
+> converted value still renders back into its published cell, so a wrong number
+> fails the build rather than reaching a page.
+>
+> `Q_FLOOR_MV` in `quantities.ts` is the one genuine violation: it is this tool's
+> own judgement, not a quotation. It belongs in `config.rs` applied at
+> `measure.rs`, and is left here only because no shipped criterion reads it yet.
 **Decided by:** the user
 **Date:** 2026-07-30
 
