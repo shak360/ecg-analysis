@@ -642,6 +642,12 @@ ol, ul { padding: 0; list-style: none; }
   padding: 16px;
   max-width: 1800px;
   margin: 0 auto;
+  /* `body` is a column flex container, so this is a flex item, and `margin: auto`
+     on a flex item overrides `align-self: stretch` with shrink-to-fit. Without an
+     explicit width the whole column collapsed onto its widest child — at a
+     1440px viewport it rendered 953px wide, centred, with 243px of dead space
+     either side. `.page` on the other pages has carried this line all along. */
+  width: 100%;
 }
 
 .quiz-bar {

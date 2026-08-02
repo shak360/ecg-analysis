@@ -167,52 +167,15 @@ function buildQuestions(e: Entry): Question[] {
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** Pixels the last draw overflowed the viewport by, fed back into the next. */
-let overflowPx = 0;
-
 function render(): void {
   if (!lastPrintout.length) return;
-  const draw = () =>
-    drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
-      ...DEFAULT_PRINTOUT,
-      mmPerMv: Number($<HTMLSelectElement>("scale").value),
-      columnSeconds: lastColumnSeconds,
-      maxHeightPx: tracingBudgetPx(),
-    });
-
-  draw();
-
-  // Measure what actually happened and correct once. The alternative was a
-  // hand-tuned constant for the panel gaps and page padding, which is a number
-  // that is right on the machine it was tuned on and drifts the moment a
-  // stylesheet changes. One feedback pass, never a loop: `overflowPx` only ever
-  // grows toward the real gap, and the floor in `tracingBudgetPx` bounds it.
-  const over = document.documentElement.scrollHeight - globalThis.innerHeight;
-  if (over > 1 && overflowPx < over) {
-    overflowPx += over;
-    draw();
-  }
+  drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
+    ...DEFAULT_PRINTOUT,
+    mmPerMv: Number($<HTMLSelectElement>("scale").value),
+    columnSeconds: lastColumnSeconds,
+  });
 }
 
-/**
- * How tall the tracing may be and still leave the question on screen.
- *
- * The point of this page is looking at the ECG while answering, so a layout
- * that puts one of them below the fold has failed however good each half looks
- * on its own. Measured from what is actually rendered rather than assumed, so
- * the disclaimer growing a line or the browser's chrome changing does not
- * silently push the question off.
- *
- * Floored at 300 px: past that the tracing is too small to read, and scrolling
- * a legible ECG beats not scrolling an illegible one.
- */
-function tracingBudgetPx(): number {
-  const h = (sel: string) =>
-    document.querySelector(sel)?.getBoundingClientRect().height ?? 0;
-  const chrome = h(".topbar") + h(".disclaimer") + h(".quiz-bar") + h(".statusbar") +
-    h(".quiz-panes__ask") + h(".panel__toolbar") + h(".key");
-  return Math.max(300, globalThis.innerHeight - chrome - 24 - overflowPx);
-}
 
 /**
  * Which question is on screen.

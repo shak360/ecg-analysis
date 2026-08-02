@@ -34,19 +34,6 @@ export interface PrintoutOptions {
   columnSeconds: number;
   /** Leads to place in the rhythm strips, top to bottom. */
   rhythmLeads: string[];
-  /**
-   * Ceiling on the drawn height in CSS pixels, or omitted for none.
-   *
-   * The printout is scale-locked to its width in *both* dimensions, so a wide
-   * page makes a tall canvas and the tracing walks off the bottom of the screen.
-   * Where the caller knows how much vertical room it has — the quiz, where the
-   * question must stay visible beside the ECG being read — it can say so.
-   *
-   * Width still binds whenever it is the tighter of the two. The overlay learned
-   * this the hard way once, with a height cap that bound first and drew a 190 px
-   * tracing inside a 374 px cell.
-   */
-  maxHeightPx?: number;
 }
 
 export const DEFAULT_PRINTOUT: PrintoutOptions = {
@@ -95,11 +82,6 @@ export function drawPrintout(
   const th = theme(dark);
 
   const dpr = globalThis.devicePixelRatio || 1;
-  // Clear any width this function set last time before measuring. The stylesheet
-  // sizes the canvas to its container; leaving an inline width in place would
-  // make `clientWidth` report the previous draw's result, and every re-render
-  // would shrink the tracing a little further.
-  canvas.style.width = "";
   const cssW = canvas.clientWidth || 1000;
 
   const marginMm = 4;
@@ -111,25 +93,17 @@ export function drawPrintout(
   const totalMm = labelMm + plotMm + marginMm * 2;
   const heightMm = marginMm * 2 + rows * rowMm;
 
-  // Whichever of the two is tighter. Millimetres on screen stay millimetres
-  // either way; only how many of them fit changes.
-  const pxPerMm = Math.min(
-    cssW / totalMm,
-    opts.maxHeightPx ? opts.maxHeightPx / heightMm : Infinity,
-  );
-
-  const drawnW = totalMm * pxPerMm;
+  const pxPerMm = cssW / totalMm;
   const cssH = heightMm * pxPerMm;
 
-  canvas.width = Math.round(drawnW * dpr);
+  canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
-  canvas.style.width = `${drawnW}px`;
   canvas.style.height = `${cssH}px`;
 
   const ctx = canvas.getContext("2d")!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = th.bg;
-  ctx.fillRect(0, 0, drawnW, cssH);
+  ctx.fillRect(0, 0, cssW, cssH);
 
   const x0 = (marginMm + labelMm) * pxPerMm;
   const y0 = marginMm * pxPerMm;
