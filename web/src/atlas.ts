@@ -22,8 +22,7 @@ import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
-import { attachCalipers } from "./ui/calipers.ts";
-import { drawAxisWheel } from "./ui/axis-wheel.ts";
+import { mountTools } from "./ui/tools.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -285,10 +284,7 @@ function render(): void {
   });
   // The overlay is a sibling layer and cannot see that the tracing was
   // repainted, so it is told.
-  tools?.redraw();
-  if (!$("axis-wheel-box").hidden) {
-    drawAxisWheel($<HTMLCanvasElement>("axis-wheel"), { axisDeg: lastAxis });
-  }
+  tools.redraw();
 }
 
 /**
@@ -468,31 +464,12 @@ function renderEvidence(code: string, e: Entry, summary: any): void {
  * like a composite assessment, which is the one reading this panel must not
  * invite.
  */
-/**
- * The measuring tools.
- *
- * Exclusive by construction: a caliper drag and a magnifier both want the
- * pointer, and a mode you can be in twice is a mode you cannot get out of.
- * The axis wheel is independent — it draws beside the tracing rather than on
- * it — so it toggles on its own.
- */
-const tools = attachCalipers($<HTMLCanvasElement>("printout"), () => lastScale);
-
-for (const [id, mode] of [["tool-caliper", "caliper"], ["tool-magnify", "magnify"]] as const) {
-  $(id).addEventListener("click", () => {
-    const on = $(id).getAttribute("aria-pressed") !== "true";
-    for (const other of ["tool-caliper", "tool-magnify"]) {
-      $(other).setAttribute("aria-pressed", String(other === id && on));
-    }
-    tools.setMode(on ? mode : "off");
-  });
-}
-
-$("tool-axis").addEventListener("click", () => {
-  const on = $("tool-axis").getAttribute("aria-pressed") !== "true";
-  $("tool-axis").setAttribute("aria-pressed", String(on));
-  $("axis-wheel-box").hidden = !on;
-  if (on) drawAxisWheel($<HTMLCanvasElement>("axis-wheel"), { axisDeg: lastAxis });
+/** The measuring tools, mounted onto this page's toolbar. */
+const tools = mountTools({
+  canvas: $<HTMLCanvasElement>("printout"),
+  mount: document.querySelector<HTMLElement>(".panel__toolbar")!,
+  getScale: () => lastScale,
+  getAxis: () => lastAxis,
 });
 
 $("case-evidence").addEventListener("click", (ev) => {

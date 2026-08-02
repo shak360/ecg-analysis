@@ -31,6 +31,9 @@ export interface CaliperScale {
 
 type Mode = "off" | "caliper" | "magnify";
 
+/** Which part of a placed caliper the pointer grabbed. */
+type Grab = "a" | "b" | "body" | null;
+
 interface Point {
   x: number;
   y: number;
@@ -57,6 +60,20 @@ export function attachCalipers(
   let cursor: Point | null = null;
   /** A finished measurement stays until the next one starts or the mode ends. */
   let held: { a: Point; b: Point } | null = null;
+  /**
+   * March the interval out across the rest of the strip.
+   *
+   * This is the manoeuvre the physical instrument exists for. Set the dividers
+   * to one R-R and step them along: if the marks keep landing on R waves the
+   * rhythm is regular, and where they stop landing is where it is not. It is how
+   * a dropped beat, a compensatory pause and a march-out of P waves through
+   * complete block are all read, and none of those is a number the engine can
+   * hand you.
+   */
+  let repeat = false;
+  /** What the current drag is moving, when it is moving a placed caliper. */
+  let grab: Grab = null;
+  let grabFrom: Point | null = null;
 
   const at = (e: PointerEvent): Point => {
     const r = canvas.getBoundingClientRect();
@@ -108,6 +125,31 @@ export function attachCalipers(
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, a.y);
     ctx.stroke();
+
+    // The march-out. Fainter than the jaws so the measurement itself stays the
+    // brightest thing, and stepping outward in both directions because the beat
+    // you want to check is as often before the pair as after it.
+    if (repeat && !live) {
+      const step = b.x - a.x;
+      if (Math.abs(step) > 6) {
+        const h = layer.clientHeight || layer.height;
+        const w = layer.clientWidth || layer.width;
+        ctx.globalAlpha = 0.42;
+        ctx.setLineDash([2, 4]);
+        for (const dir of [1, -1]) {
+          for (let k = 1; k < 200; k++) {
+            const x = (dir > 0 ? b.x : a.x) + dir * step * k;
+            if (x < 0 || x > w) break;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
 
     // The amplitude arm only when the drag has vertical extent worth reading;
     // otherwise every horizontal measurement carries a meaningless 0.00 mV.
@@ -172,22 +214,74 @@ export function attachCalipers(
     }
   }
 
+  /** What a press at `p` would take hold of on the placed caliper, if anything. */
+  function grabAt(p: Point): Grab {
+    if (!held) return null;
+    const near = (x: number) => Math.abs(p.x - x) <= 7;
+    if (near(held.a.x)) return "a";
+    if (near(held.b.x)) return "b";
+    const lo = Math.min(held.a.x, held.b.x);
+    const hi = Math.max(held.a.x, held.b.x);
+    return p.x > lo && p.x < hi ? "body" : null;
+  }
+
   layer.addEventListener("pointerdown", (e) => {
     if (mode !== "caliper") return;
     layer.setPointerCapture(e.pointerId);
-    anchor = at(e);
-    cursor = anchor;
+    const p = at(e);
+
+    // Grab an existing caliper rather than starting a new one. Once a span is
+    // set, sliding it along the strip is the point — you set it to one R-R and
+    // then walk it, and being forced to re-drag from scratch each time loses the
+    // span you were carrying.
+    grab = grabAt(p);
+    if (grab) {
+      grabFrom = p;
+      return;
+    }
+
+    anchor = p;
+    cursor = p;
     held = null;
     render();
   });
 
   layer.addEventListener("pointermove", (e) => {
     if (mode === "off") return;
-    cursor = at(e);
+    const p = at(e);
+
+    if (grab && held && grabFrom) {
+      const dx = p.x - grabFrom.x;
+      const dy = p.y - grabFrom.y;
+      if (grab === "a") held = { a: { x: held.a.x + dx, y: held.a.y + dy }, b: held.b };
+      else if (grab === "b") held = { a: held.a, b: { x: held.b.x + dx, y: held.b.y + dy } };
+      else {
+        held = {
+          a: { x: held.a.x + dx, y: held.a.y + dy },
+          b: { x: held.b.x + dx, y: held.b.y + dy },
+        };
+      }
+      grabFrom = p;
+      render();
+      return;
+    }
+
+    cursor = p;
+    // A jaw under the pointer is grabbable, and saying so with the cursor is
+    // the only hint that a placed caliper can be moved at all.
+    if (mode === "caliper" && held && !anchor) {
+      const g = grabAt(p);
+      layer.style.cursor = g === "body" ? "grab" : g ? "ew-resize" : "crosshair";
+    }
     render();
   });
 
   const finish = (e: PointerEvent) => {
+    if (grab) {
+      grab = null;
+      grabFrom = null;
+      return;
+    }
     if (mode !== "caliper" || !anchor) return;
     const b = at(e);
     // A click without a drag is a miss, not a zero-width measurement.
@@ -215,6 +309,15 @@ export function attachCalipers(
       layer.dataset.mode = next;
       size();
       render();
+    },
+    /** March the placed interval out across the strip. */
+    setRepeat(on: boolean) {
+      repeat = on;
+      render();
+    },
+    /** Whether a measurement is currently placed, for enabling the repeat toggle. */
+    hasMeasurement() {
+      return held !== null;
     },
     /** Call after the tracing is repainted; the overlay cannot detect that. */
     redraw() {

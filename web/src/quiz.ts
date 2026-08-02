@@ -26,6 +26,7 @@
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
+import { mountTools } from "./ui/tools.ts";
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
 
@@ -77,6 +78,7 @@ let current: Entry | null = null;
 let questions: Question[] = [];
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 2.5;
+let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
 let ticket = 0;
 /** The analysed summary for the case on screen, for the post-answer criteria. */
 let lastSummary: any = null;
@@ -173,12 +175,25 @@ function buildQuestions(e: Entry): Question[] {
 
 function render(): void {
   if (!lastPrintout.length) return;
-  drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
+  lastScale = drawPrintout($<HTMLCanvasElement>("printout"), lastPrintout, {
     ...DEFAULT_PRINTOUT,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     columnSeconds: lastColumnSeconds,
   });
+  tools.redraw();
 }
+
+/**
+ * The measuring tools. No axis wheel here: the quiz hides every measurement
+ * until the learner has answered, and a frontal axis on screen gives away an
+ * axis-deviation question exactly the way a QRS duration gives away a bundle
+ * branch block.
+ */
+const tools = mountTools({
+  canvas: $<HTMLCanvasElement>("printout"),
+  mount: document.querySelector<HTMLElement>(".panel__toolbar")!,
+  getScale: () => lastScale,
+});
 
 
 /**
