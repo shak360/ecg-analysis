@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Client-side registration and comparison of serial ECG tracings recovered from PDFs, scans, and photos. Not a medical device.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "wasm": "wasm-pack build crates/ecg-core --release --target web --out-dir ../../web/wasm --out-name ecg_core",
@@ -19,7 +19,8 @@
     "test:web": "vitest run",
     "check": "tsc --noEmit && cargo clippy --workspace --all-targets",
     "postinstall": "echo 'Reminder: install with --ignore-scripts. See docs/decisions/0006-node-toolchain.md'",
-    "fetch:ptbxl": "vite-node tools/fetch-ptbxl.ts"
+    "fetch:ptbxl": "vite-node tools/fetch-ptbxl.ts",
+    "fetch:challenge": "vite-node tools/fetch-challenge2021.ts"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

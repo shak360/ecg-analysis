@@ -367,11 +367,16 @@ ol, ul { padding: 0; list-style: none; }
 .field--inline { flex-direction: row; align-items: center; gap: 6px; }
 .field--inline > span { text-transform: none; letter-spacing: 0; font-size: 12px; }
 
-.field select {
+/* The search box is an `<input class="select">`, so a `.field select` selector
+   misses it and the browser's own control styling shows through — a grey box in
+   a light page and a black one in a dark page. Match on the class instead. */
+.field select,
+.field .select {
   font: inherit; font-size: 12.5px; padding: 5px 8px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--bg-raised); color: var(--text);
 }
+.field .select::placeholder { color: var(--text-faint); }
 .check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted); }
 
 /* --- study cards ---------------------------------------------------------- */
@@ -384,6 +389,41 @@ ol, ul { padding: 0; list-style: none; }
   background: var(--bg-sunken);
 }
 .study--selected { border-color: var(--accent); background: var(--accent-weak); }
+
+/*
+ * An atlas entry is a heading plus however many example cases exist, and some
+ * findings have dozens. As a flex ROW that squeezed the title into a column one
+ * letter wide, so these stack and let the case buttons wrap into a grid.
+ */
+.study--stacked { flex-direction: column; align-items: stretch; gap: 7px; }
+/*
+ * `.study__body` carries `flex: 1` for the original ROW layout, where it takes
+ * the remaining horizontal space beside the checkbox and the remove button.
+ * Turned on its side it takes the remaining VERTICAL space instead, so the body
+ * grew to fill the card and the strip stretched every sibling to match — cards
+ * a thousand pixels tall with their content in the top forty.
+ */
+.study--stacked .study__body { flex: 0 0 auto; }
+.study--stacked .study__cases {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+/* Quiz feedback: the choice AND the truth, since "you were wrong" alone
+   teaches nothing about what was right. */
+.btn--right {
+  border-color: var(--ok, #2f8f5b) !important;
+  background: color-mix(in srgb, var(--ok, #2f8f5b) 18%, transparent) !important;
+  color: var(--text) !important;
+}
+.btn--wrong {
+  border-color: var(--error) !important;
+  background: color-mix(in srgb, var(--error) 15%, transparent) !important;
+  color: var(--text) !important;
+  text-decoration: line-through;
+}
+
+.study--stacked .study__cases .btn {
+  min-width: 30px; padding: 2px 7px; font-size: 11.5px;
+}
 .study--error { border-color: color-mix(in srgb, var(--error) 40%, transparent); }
 
 .study__check { margin-top: 2px; flex: none; }
@@ -422,7 +462,9 @@ ol, ul { padding: 0; list-style: none; }
 
 /* --- comparison view ------------------------------------------------------ */
 
-.panel--view canvas { width: 100%; display: block; }
+/* Any canvas in a panel fills it. Scoping this to .panel--view meant a
+   canvas on any other page silently fell back to the 300px default. */
+.panel canvas, .panel--view canvas { width: 100%; display: block; }
 
 .key { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11.5px; }
 .key span { display: flex; align-items: center; gap: 5px; color: var(--text-muted); }
@@ -455,6 +497,21 @@ ol, ul { padding: 0; list-style: none; }
   padding: 10px 12px;
   margin-bottom: 8px;
 }
+/*
+ * Equivocal: same shape, much less shout.
+ *
+ * Muted border and no fill, so it reads as context rather than as a finding.
+ * The distinction has to survive being skim-read — someone scanning for red
+ * blocks should not stop here, and someone reading should still see it.
+ */
+.findings__item--equivocal {
+  background: var(--bg-sunken);
+  border-color: var(--border);
+  border-left-color: var(--text-muted);
+  color: var(--text-muted);
+}
+.findings__item--equivocal .findings__label { color: var(--text-muted); }
+
 .findings__label {
   display: block;
   font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
@@ -567,4 +624,309 @@ ol, ul { padding: 0; list-style: none; }
 .study__colour::-webkit-color-swatch-wrapper { padding: 2px; }
 .study__colour::-webkit-color-swatch { border: none; border-radius: 3px; }
 
-.panel--view #printout { width: 100%; display: block; }
+.panel--view #printout, .panel--main #printout { width: 100%; display: block; }
+
+
+/* ---------------------------------------------------------------------------
+ * Test-yourself layout
+ *
+ * Controls across the top, then tracing and questions side by side. The pairing
+ * is the point: a learner reads a lead, looks at the options, looks back. A
+ * layout that stacks them turns that into remembering the ECG instead of
+ * reading it.
+ * ------------------------------------------------------------------------- */
+.quiz-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.quiz-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 12px 16px;
+}
+.quiz-bar__group { display: flex; align-items: baseline; gap: 10px; }
+.quiz-bar__title { margin: 0; font-size: 15px; }
+/* Pushed right so the destructive one is not adjacent to "New case". */
+.quiz-bar__actions { display: flex; gap: 8px; margin-left: auto; }
+
+.quiz-panes {
+  display: grid;
+  /* The tracing takes the larger share: twelve leads need the width, and the
+     options are short strings. */
+  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.quiz-panes__ecg,
+.quiz-panes__ask { padding: 14px; }
+.quiz-panes__ecg #printout { width: 100%; display: block; }
+
+/* The questions column scrolls independently, so a case with four questions
+   plus the reveal does not push the tracing off screen. */
+.quiz-panes__ask {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+/* Below roughly a laptop, side-by-side stops helping and the tracing gets too
+   narrow to read, so it stacks. */
+@media (max-width: 1100px) {
+  .quiz-panes { grid-template-columns: 1fr; }
+  .quiz-panes__ask { position: static; max-height: none; }
+}
+
+.quiz-placeholder { padding: 40px 16px; }
+
+
+/* ---------------------------------------------------------------------------
+ * Full-width reading layout
+ *
+ * Controls across the top, tracing below at the full width of the window. A
+ * 320px sidebar costs a fifth of the horizontal space on every page, and
+ * horizontal space is exactly what twelve leads need — at 25 mm/s a ten-second
+ * record is 250 mm of paper, and squeezing that into 600px makes the ST segment
+ * a few pixels wide.
+ * ------------------------------------------------------------------------- */
+.page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  max-width: 1800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.page-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.page-bar__title { margin: 0; font-size: 15px; white-space: nowrap; }
+.page-bar__actions { display: flex; gap: 8px; margin-left: auto; }
+
+/*
+ * The chooser as a horizontal strip. It scrolls sideways rather than wrapping,
+ * so its height stays fixed however many items there are and the tracing below
+ * never moves as you filter.
+ */
+.picker-strip {
+  display: flex;
+  /* Cards size to their own content. The default stretch made every card as
+     tall as the tallest, which turns one long finding name into a row of
+     mostly-empty boxes. */
+  align-items: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  scrollbar-width: thin;
+}
+.picker-strip .study {
+  flex: 0 0 auto;
+  min-width: 190px;
+  max-width: 260px;
+}
+.picker-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 8px 2px; }
+
+/* ---------------------------------------------------------------------------
+ * The category fan, and the finding chips it opens.
+ *
+ * The atlas has 120 findings, which is not a list anyone reads across. They sit
+ * in seven categories, so the categories get the persistent row and the findings
+ * appear only under the chosen one.
+ *
+ * The cards overlap by a third so the row stays one glance wide. Each card's
+ * text is left-aligned into the strip its right-hand neighbour cannot cover —
+ * an overlapping card that hides its own label would be decoration.
+ * ------------------------------------------------------------------------- */
+.panel--fan { display: flex; flex-direction: column; gap: 10px; }
+
+.fan {
+  display: flex;
+  align-items: flex-start;
+  /* Room above for the lift and below for the shadow, so neither is clipped by
+     the horizontal scroller. */
+  padding: 10px 2px 14px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.fan__card {
+  --overlap: 38px;
+  flex: 0 0 auto;
+  width: 186px;
+  min-height: 92px;
+  margin-left: calc(-1 * var(--overlap));
+  /* Later cards sit on top of earlier ones, so the overlap always falls on a
+     card's right edge and never on its label. */
+  z-index: var(--i);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: -3px 0 10px rgb(0 0 0 / 0.10);
+  cursor: pointer;
+  transition: transform 160ms ease, margin 160ms ease, box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+.fan__card:first-child { margin-left: 0; }
+
+.fan__card:hover:not(:disabled),
+.fan__card:focus-visible {
+  transform: translateY(-5px);
+  z-index: 15;
+  border-color: var(--border-strong);
+}
+.fan__card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.fan__card--open {
+  transform: translateY(-9px);
+  /* Above every sibling, and pushing the next card clear, so the chosen card is
+     the one thing in the row shown whole. */
+  z-index: 20;
+  margin-right: var(--overlap);
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.16);
+}
+.fan__card--empty { opacity: 0.45; cursor: default; box-shadow: none; }
+
+.fan__label { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.fan__count { font-size: 11.5px; color: var(--text-muted); }
+.fan__card--open .fan__count { color: var(--accent); }
+.fan__blurb {
+  margin-top: auto;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-faint);
+  /* Hidden while the card is tucked behind its neighbour, because there is no
+     room to read it there. The card keeps its height either way, so revealing
+     it moves nothing. */
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.fan__card--open .fan__blurb,
+.fan__card:hover:not(:disabled) .fan__blurb { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fan__card, .fan__blurb { transition: none; }
+}
+
+/* The findings of the open category: one wrapped row of chips, with the chosen
+   chip's cases directly beneath it. */
+.chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chip-strip__item { display: flex; flex-direction: column; gap: 5px; }
+.chip-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 4px 2px; }
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--border-strong); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip--open {
+  color: var(--accent);
+  background: var(--accent-weak);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.chip__n { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.chip--open .chip__n { color: var(--accent); }
+
+.chip__cases { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.chip__cases .btn { padding: 2px 8px; font-size: 12px; }
+.chip__more { font-size: 11px; color: var(--text-faint); }
+
+.page-main { display: flex; flex-direction: column; gap: 12px; }
+.page-main canvas { width: 100%; display: block; }
+
+
+/* Screen-reader-only headings, for panels whose title is obvious visually. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/*
+ * The timeline strip.
+ *
+ * Studies run left to right in acquisition order, which is what they are: one
+ * patient along a time axis. The connector makes the axis visible, so the
+ * "+9.7 months after previous" labels read as intervals on it rather than as
+ * unrelated captions.
+ */
+.picker-strip--timeline { align-items: stretch; }
+.picker-strip--timeline .study { position: relative; }
+.picker-strip--timeline .study + .study::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* Whole-page drop target. */
+body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+
+/*
+ * Controls that belong to the tracing, docked to the tracing.
+ *
+ * The distinction is what a control *does*. Paper speed and assumed gain are
+ * claims about the source recording and re-analyse every study, so they sit in
+ * the page bar with the other data controls. Display gain, view mode, and the
+ * difference and spread toggles only change what is drawn — putting them at the
+ * top of the page implied they were of the same kind, and implied a re-analysis
+ * that never happens.
+ */
+.panel__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.panel__toolbar .field--inline { margin: 0; }
+.panel__toolbar__label {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin-right: 2px;
+}

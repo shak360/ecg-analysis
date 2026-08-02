@@ -16,9 +16,24 @@
  * Nothing fetched here is committed: `data/` is gitignored. This is public,
  * de-identified data — the gitignore rule is about size and licence, not PHI.
  *
- * Usage:  npm run fetch:ptbxl [-- --unchanged 300]
+ * Two selections, because the site asks two different questions of this corpus.
+ *
+ *   --unchanged N   serial pairs, for validating change detection
+ *   --reindex       rebuild the atlas index from every human-validated record
+ *                   already on disk, with no network at all
+ *   --atlas N       N human-validated records per statement, for the teaching
+ *                   atlas: one browsable example set across all 71 SCP
+ *                   statements rather than the eight conduction ones
+ *
+ * The atlas selection takes only `validated_by_human` records. For a training
+ * set an unreviewed label is noise you can average out; in a teaching atlas a
+ * mislabelled anterior infarct is a person learning the wrong thing, so the
+ * 5,743 unvalidated records are left out entirely.
+ *
+ * Usage:  npm run fetch:ptbxl [-- --unchanged 300] [-- --atlas 6]
+ *         npm run fetch:ptbxl -- --reindex
  */
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const BASE = "https://physionet.org/files/ptb-xl/1.0.3";
@@ -94,9 +109,26 @@ function recordPath(ecgId: number): string {
 }
 
 const args = process.argv.slice(2);
-const unchangedWanted = Number(
-  args[args.indexOf("--unchanged") + 1] ?? 200,
-);
+
+/**
+ * Read a numeric flag, or fall back.
+ *
+ * `args[args.indexOf(flag) + 1]` looks harmless and is not: when the flag is
+ * absent `indexOf` gives -1, so it reads `args[0]` — some *other* flag — and
+ * `Number("--atlas")` is NaN, which `??` does not catch because NaN is not
+ * nullish. That silently made the control count NaN and wrote a serial index
+ * with no controls in it.
+ */
+function numArg(flag: string, fallback: number): number {
+  const i = args.indexOf(flag);
+  if (i < 0) return fallback;
+  const v = Number(args[i + 1]);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+const unchangedWanted = numArg("--unchanged", 200);
+const atlasPer = args.includes("--atlas") ? numArg("--atlas", 6) : 0;
+const reindexOnly = args.includes("--reindex");
 
 await mkdir(OUT, { recursive: true });
 
@@ -117,6 +149,151 @@ const rows: Row[] = lines.slice(1).map((l) => {
   const f = splitCsv(l);
   return Object.fromEntries(header.map((h, i) => [h, f[i] ?? ""])) as unknown as Row;
 });
+
+// ---------------------------------------------------------------------------
+// Atlas selection
+// ---------------------------------------------------------------------------
+
+interface Statement {
+  code: string;
+  description: string;
+  category: string;
+  diagnosticClass: string;
+  isDiagnostic: boolean;
+  isForm: boolean;
+  isRhythm: boolean;
+}
+
+async function readStatements(): Promise<Map<string, Statement>> {
+  const text = await readFile(`${OUT}scp_statements.csv`, "utf8");
+  const lines = text.split("\n").filter((l) => l.trim());
+  const head = splitCsv(lines[0]!);
+  const out = new Map<string, Statement>();
+  for (const line of lines.slice(1)) {
+    const f = splitCsv(line);
+    const get = (name: string) => f[head.indexOf(name)] ?? "";
+    // The code is the unnamed first column.
+    const code = f[0]!;
+    if (!code) continue;
+    out.set(code, {
+      code,
+      description: get("description"),
+      category: get("Statement Category"),
+      diagnosticClass: get("diagnostic_class"),
+      isDiagnostic: get("diagnostic") === "1.0",
+      isForm: get("form") === "1.0",
+      isRhythm: get("rhythm") === "1.0",
+    });
+  }
+  return out;
+}
+
+if (atlasPer > 0 || reindexOnly) {
+  const statements = await readStatements();
+
+  // Human-validated only. See the header: an unreviewed label is tolerable in a
+  // training set and not in a teaching one.
+  const usable = rows.filter((r) => (r as unknown as Record<string, string>).validated_by_human === "True");
+
+  const wanted = new Set<number>();
+  let got = 0;
+
+  if (reindexOnly) {
+    // Everything already on disk that meets the atlas standard, whichever
+    // selection fetched it. The serial-pair fetch pulls records by *pair*
+    // structure and the atlas fetch pulls them by *statement*, so the two sets
+    // barely overlap: the pairs left 722 human-validated records sitting in
+    // records500/ that no atlas index mentioned. Downloading more before
+    // indexing what we hold would have been the wrong order of work.
+    const onDisk = (await readdir(`${OUT}records500`).catch(() => []))
+      .filter((f) => f.endsWith(".hea"))
+      .map((f) => Number(f.slice(0, 5)));
+    const validated = new Set(usable.map((r) => Number(r.ecg_id)));
+    for (const id of onDisk) if (validated.has(id)) wanted.add(id);
+    console.log(
+      `reindex: ${onDisk.length} records on disk, ${wanted.size} human-validated`,
+    );
+  } else {
+    const chosenByCode = new Map<string, Row[]>();
+    for (const r of usable) {
+      for (const code of scpCodes(r.scp_codes)) {
+        if (!statements.has(code)) continue;
+        const list = chosenByCode.get(code) ?? [];
+        if (list.length >= atlasPer) continue;
+        list.push(r);
+        chosenByCode.set(code, list);
+      }
+    }
+    for (const list of chosenByCode.values()) {
+      for (const r of list) wanted.add(Number(r.ecg_id));
+    }
+
+    console.log(
+      `atlas: ${chosenByCode.size} statements covered, ${wanted.size} records ` +
+        `(~${(wanted.size * 120_600 / 1e6).toFixed(0)} MB), from ${usable.length} human-validated`,
+    );
+
+    await mkdir(`${OUT}records500`, { recursive: true });
+    for (const id of [...wanted].sort((a, b) => a - b)) {
+      const rel = recordPath(id);
+      const flat = rel.split("/").pop()!;
+      for (const ext of [".hea", ".dat"]) {
+        const dest = `${OUT}records500/${flat}${ext}`;
+        try {
+          await stat(dest);
+          continue;
+        } catch { /* not yet fetched */ }
+        await download(`${rel}${ext}`, dest);
+        got++;
+      }
+      if (got && got % 200 === 0) console.log(`  ${got} files …`);
+    }
+  }
+
+  // One entry per record, carrying every statement on it. A record usually has
+  // several, and an atlas that showed only the first would teach that an ECG
+  // has one finding.
+  //
+  // Emitted in the shared AtlasCase shape so this index and the Challenge one
+  // concatenate. `provenance` is the field that keeps the merge honest: PTB-XL
+  // is the only corpus that records whether a human reviewed the label, and
+  // only its cases may claim it.
+  const byId = new Map(usable.map((r) => [Number(r.ecg_id), r]));
+  const entries = [...wanted].sort((a, b) => a - b).map((id) => {
+    const r = byId.get(id)!;
+    const raw = r as unknown as Record<string, string>;
+    // 300 is PTB-XL's sentinel for "over 89", not an age.
+    const age = raw.age === "300.0" ? null : Number(raw.age);
+    return {
+      id: `ptbxl:${id}`,
+      source: "ptbxl",
+      sourceLabel: "PTB-XL (Germany)",
+      provenance: "human-validated" as const,
+      age: Number.isFinite(age) ? age : null,
+      sex: raw.sex === "1" ? "F" as const : raw.sex === "0" ? "M" as const : null,
+      report: raw.report ?? "",
+      findings: [...scpCodes(r.scp_codes)]
+        .filter((c) => statements.has(c))
+        .map((c) => {
+          const s = statements.get(c)!;
+          return {
+            id: c,
+            description: s.description,
+            kind: (s.isRhythm ? "rhythm" : s.isForm && !s.isDiagnostic ? "form" : "diagnostic") as
+              "diagnostic" | "form" | "rhythm",
+            diagnosticClass: s.diagnosticClass,
+            sourceCode: c,
+          };
+        }),
+    };
+  });
+
+  await writeFile(`${OUT}atlas.json`, JSON.stringify(entries, null, 1));
+  console.log(`done: ${got} files fetched; atlas index: data/ptbxl/atlas.json`);
+  // Each selection writes its own index; running both in one invocation would
+  // rewrite the other's, which is how the control set was lost once already.
+  process.exit(0);
+}
 
 const byPatient = new Map<string, Row[]>();
 for (const r of rows) {

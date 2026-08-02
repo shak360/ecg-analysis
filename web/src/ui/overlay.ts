@@ -32,6 +32,8 @@ export interface OverlayDifference {
   /** Index into `traces`, so the difference is drawn in its study's colour. */
   traceIndex: number;
   rmsMv: number;
+  /** Alignment was clamped; these two beats were never registered. Not drawn. */
+  implausible?: boolean;
 }
 
 export interface OverlayLead {
@@ -46,6 +48,58 @@ export interface OverlayLead {
   morphologyChanged?: boolean;
   /** No usable ensemble for this lead. */
   unavailable?: boolean;
+}
+
+/** What a panel may draw and say about its differences. */
+export interface PanelAnnotations {
+  /** The differences that were actually registered, and so may be drawn. */
+  drawable: OverlayDifference[];
+  /** The Δrms to print, or `null` to print none. */
+  rmsMv: number | null;
+  /** Right-aligned footer warnings, in order of severity. */
+  warnings: string[];
+}
+
+/**
+ * Decide what a panel is entitled to show.
+ *
+ * Separated from the drawing so it can be tested without a canvas, for the same
+ * reason `measurements.ts` returns a string: this is the part that can be wrong
+ * in a way nobody sees. Every judgement here is about withholding something.
+ *
+ * A clamped alignment did not register its two beats — the shift the search
+ * wanted exceeded `XSTUDY_CLAMP_MS`, so it was zeroed. Subtracting one
+ * arbitrarily-placed frame from another still produces a difference trace that
+ * looks exactly like a real one, and that is the whole problem: nothing about
+ * its shape says the registration failed. So it is not drawn, and its RMS is not
+ * quoted.
+ */
+export function panelAnnotations(lead: OverlayLead): PanelAnnotations {
+  const all = lead.differences ?? [];
+  const drawable = all.filter((d) => !d.implausible);
+  const suppressed = all.length - drawable.length;
+
+  const warnings: string[] = [];
+  if (suppressed) {
+    warnings.push(
+      all.length === 1
+        ? "alignment clamped — no difference shown"
+        : `alignment clamped on ${suppressed} of ${all.length} — not shown`,
+    );
+  }
+  if (lead.morphologyChanged) warnings.push("morphology differs");
+
+  return {
+    drawable,
+    // With every comparison clamped the engine leaves this at 0, and
+    // "Δrms 0.000 mV" beside an empty lane reads as "no change" — the most
+    // confident statement available, made from the case where nothing could be
+    // compared at all.
+    rmsMv: drawable.length && lead.rmsDifferenceMv !== undefined
+      ? lead.rmsDifferenceMv
+      : null,
+    warnings,
+  };
 }
 
 export interface OverlayOptions {
@@ -180,9 +234,20 @@ export function drawOverlay(
   const diffMm = opts.showDifference ? 12 : 0;
   const totalMm = beatMm + diffMm;
 
+  // Width should decide the size; the height cap is only a backstop.
+  //
+  // A beat panel is about 40 mm wide (0.8 s at 50 mm/s) and 42 mm tall, so it is
+  // nearly square — filling the available width genuinely requires the matching
+  // height, and on a wide window three rows will not fit the viewport. The old
+  // 200 px cap resolved that by shrinking the tracing: at a 1538 px canvas the
+  // cells are 374 px wide and it drew 190 px of them, so widening the window
+  // bought empty gutter rather than a bigger ECG.
+  //
+  // A readable tracing that needs one scroll beats a small one that fits, so the
+  // ceiling is set high enough that width binds at any ordinary desktop size.
   const pxPerMm = Math.min(
     cellW / (seconds * opts.mmPerSec),
-    (opts.maxPanelHeightPx ?? 200) / totalMm,
+    (opts.maxPanelHeightPx ?? 420) / totalMm,
   );
   const panelW = Math.min(cellW, seconds * opts.mmPerSec * pxPerMm);
   const panelH = totalMm * pxPerMm;
@@ -319,8 +384,10 @@ function drawPanel(
     ctx.stroke();
   });
 
+  const { drawable, rmsMv, warnings } = panelAnnotations(lead);
+
   // The difference lane, beneath and visually separated.
-  if (opts.showDifference && lead.differences?.length) {
+  if (opts.showDifference && drawable.length) {
     ctx.strokeStyle = th.gridCoarse;
     ctx.globalAlpha = 0.8;
     ctx.beginPath();
@@ -331,14 +398,11 @@ function drawPanel(
 
     const dY = (mv: number) => diffZeroY - mv * opts.mmPerMv * pxPerMm;
     ctx.lineWidth = 1.2;
-    for (const diff of lead.differences) {
+    for (const diff of drawable) {
       // A single comparison gets the dedicated difference colour; a series is
       // drawn in each study's own colour, so a trace above and its difference
       // below are visibly the same study.
-      // A single comparison gets the dedicated difference colour; a series is
-      // drawn in each study's own colour, so a trace above and its difference
-      // below are visibly the same study.
-      ctx.strokeStyle = lead.differences.length === 1
+      ctx.strokeStyle = drawable.length === 1
         ? th.diff
         : (lead.traces[diff.traceIndex]?.colour ?? th.diff);
       ctx.beginPath();
@@ -361,17 +425,21 @@ function drawPanel(
   ctx.font = "11px ui-monospace, monospace";
   ctx.fillStyle = th.muted;
   const bits: string[] = [];
-  if (lead.rmsDifferenceMv !== undefined) {
-    bits.push(`Δrms ${lead.rmsDifferenceMv.toFixed(3)} mV`);
-  }
+  if (rmsMv !== null) bits.push(`Δrms ${rmsMv.toFixed(3)} mV`);
   const n = lead.traces.map((t) => t.beatsUsed).join("/");
   if (n) bits.push(`n ${n}`);
   if (bits.length) ctx.fillText(bits.join("   "), x + 6, y + h - 5);
 
-  if (lead.morphologyChanged) {
+  // Right-aligned on the footer line, beside the other per-panel numbers.
+  // These used to be drawn at y + 28, which is the middle of the trace — the one
+  // place a warning must not go, since it obscures the signal it is warning
+  // about.
+  if (warnings.length) {
     ctx.fillStyle = "#c2410c";
     ctx.font = "600 10px system-ui, sans-serif";
-    ctx.fillText("QRS morphology differs — not aligned", x + 6, y + 28);
+    ctx.textAlign = "right";
+    ctx.fillText(warnings.join(" · "), x + w - 6, y + h - 5);
+    ctx.textAlign = "left";
   }
 
   ctx.strokeStyle = th.gridCoarse;

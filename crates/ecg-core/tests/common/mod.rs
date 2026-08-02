@@ -133,6 +133,26 @@ pub fn read_by_id(ecg_id: u32) -> Result<Record, String> {
     read_record(&corpus_dir().join("records500").join(format!("{name}.hea")))
 }
 
+/// Every record present in the local corpus, by ecg_id.
+///
+/// Reads the directory rather than an index, so it covers whatever has been
+/// fetched — serial pairs, atlas cases, or both.
+pub fn all_record_ids() -> Vec<u32> {
+    let dir = corpus_dir().join("records500");
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<u32> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let stem = name.strip_suffix(".hea")?;
+            stem.strip_suffix("_hr")?.parse::<u32>().ok()
+        })
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// One serial pair from the fetch tool's index.
 #[derive(Debug, Clone)]
 pub struct Pair {

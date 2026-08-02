@@ -132,7 +132,8 @@ fn conduction_change_detection_against_cardiologist_labels() {
     #[derive(Default)]
     struct Tally {
         n: usize,
-        flagged: usize,
+        changed: usize,
+        equivocal: usize,
         unmeasurable: usize,
         deltas: Vec<f64>,
     }
@@ -158,14 +159,20 @@ fn conduction_change_detection_against_cardiologist_labels() {
             (Some(da), Some(db)) => t.deltas.push(db - da),
             _ => t.unmeasurable += 1,
         }
-        if !ecg_core::serial_findings(&sa, &sb).is_empty() {
-            t.flagged += 1;
+        // Split by band. "Flagged" collapsing both would hide the entire point
+        // of having three: a run where every hit is equivocal is a very
+        // different result from one where they are all changes.
+        let json = ecg_core::serial_findings_json(&sa, &sb);
+        if json.contains("\"level\":\"changed\"") {
+            t.changed += 1;
+        } else if json.contains("\"level\":\"equivocal\"") {
+            t.equivocal += 1;
         }
     }
 
     println!(
-        "\n{:<18} {:>5} {:>9} {:>7} {:>8} {:>8} {:>8}",
-        "group", "n", "flagged", "unmeas", "p50", "p75", "p90"
+        "\n{:<18} {:>5} {:>9} {:>11} {:>7} {:>7} {:>7} {:>7}",
+        "group", "n", "changed", "equivocal", "unmeas", "p50", "p75", "p90"
     );
     for (name, t) in &g {
         let mut abs: Vec<f64> = t.deltas.iter().map(|d| d.abs()).collect();
@@ -174,9 +181,10 @@ fn conduction_change_detection_against_cardiologist_labels() {
             if abs.is_empty() { f64::NAN } else { abs[((abs.len() - 1) as f64 * f) as usize] }
         };
         println!(
-            "{name:<18} {:>5} {:>8.0}% {:>6.0}% {:>8.0} {:>8.0} {:>8.0}",
+            "{name:<18} {:>5} {:>8.0}% {:>10.0}% {:>6.0}% {:>7.0} {:>7.0} {:>7.0}",
             t.n,
-            100.0 * t.flagged as f64 / t.n.max(1) as f64,
+            100.0 * t.changed as f64 / t.n.max(1) as f64,
+            100.0 * t.equivocal as f64 / t.n.max(1) as f64,
             100.0 * t.unmeasurable as f64 / t.n.max(1) as f64,
             q(0.50), q(0.75), q(0.90)
         );
@@ -215,5 +223,106 @@ fn diagnose_lead_loss() {
         println!("engine leads: {:?}", s.lead_names());
         println!("hr {:.1}  onset {}  offset {}", s.hr_bpm(), s.qrs_onset(), s.qrs_offset());
         for w in s.warnings().iter().take(8) { println!("  warn: {w}"); }
+    }
+}
+
+/// How often, and how badly, is QT wrong?
+///
+/// Found while validating the corpus browser: one record reported QT = 656 ms
+/// at 102 bpm, where the whole RR interval is 588 ms. A QT longer than its own
+/// cardiac cycle is impossible, not merely unusual, and QTc computed from it
+/// would read as life-threatening on a patient who is not.
+///
+/// The question this answers is which fix is right. If it is rare and confined
+/// to tachycardia, a plausibility refusal is the fix. If it is common, the
+/// tangent-method T offset needs rebuilding, and a clamp would only hide it.
+#[test]
+#[ignore = "needs `npm run fetch:ptbxl`"]
+fn survey_qt_plausibility() {
+    if !corpus_available() {
+        eprintln!("corpus not fetched; skipping");
+        return;
+    }
+
+    let mut ratios: Vec<(f64, f64, f64)> = Vec::new(); // (qt_ms, rr_ms, hr)
+    let (mut n, mut no_qt) = (0, 0);
+
+    for id in common::all_record_ids() {
+        let Ok(rec) = read_by_id(id) else { continue };
+        let Some(s) = build_study(&rec) else { continue };
+        n += 1;
+
+        let hr = s.hr_bpm();
+        if !hr.is_finite() || hr <= 0.0 {
+            continue;
+        }
+        let rr_ms = 60_000.0 / hr;
+
+        let m: serde_json_lite::Value = serde_json_lite::parse(&s.measurements_json());
+        let Some(qt) = m.number("qt") else {
+            no_qt += 1;
+            continue;
+        };
+        ratios.push((qt, rr_ms, hr));
+    }
+
+    ratios.sort_by(|a, b| (a.0 / a.1).partial_cmp(&(b.0 / b.1)).unwrap());
+    let frac = |f: f64| ratios[((ratios.len() - 1) as f64 * f) as usize];
+
+    let impossible: Vec<_> = ratios.iter().filter(|(qt, rr, _)| qt > rr).collect();
+    let very_long: Vec<_> = ratios.iter().filter(|(qt, _, _)| *qt > 600.0).collect();
+
+    println!("records analysed        {n}");
+    println!("QT unmeasurable         {no_qt}");
+    println!("QT measured             {}", ratios.len());
+    println!(
+        "QT/RR ratio             p5 {:.2}  p50 {:.2}  p95 {:.2}  max {:.2}",
+        { let r = frac(0.05); r.0 / r.1 },
+        { let r = frac(0.50); r.0 / r.1 },
+        { let r = frac(0.95); r.0 / r.1 },
+        { let r = ratios[ratios.len() - 1]; r.0 / r.1 },
+    );
+    println!(
+        "QT longer than its RR   {} ({:.1}%)",
+        impossible.len(),
+        100.0 * impossible.len() as f64 / ratios.len().max(1) as f64
+    );
+    println!(
+        "QT over 600 ms          {} ({:.1}%)",
+        very_long.len(),
+        100.0 * very_long.len() as f64 / ratios.len().max(1) as f64
+    );
+
+    // Is it a tachycardia problem, as the single observed case suggested?
+    let by_rate = |lo: f64, hi: f64| {
+        let sub: Vec<_> = ratios.iter().filter(|(_, _, hr)| *hr >= lo && *hr < hi).collect();
+        let bad = sub.iter().filter(|(qt, rr, _)| qt > rr).count();
+        (sub.len(), bad)
+    };
+    println!("\nby rate:");
+    for (lo, hi) in [(0.0, 60.0), (60.0, 80.0), (80.0, 100.0), (100.0, 300.0)] {
+        let (tot, bad) = by_rate(lo, hi);
+        if tot == 0 { continue }
+        println!(
+            "  {lo:>3.0}-{hi:<3.0} bpm  n={tot:<5} impossible {bad:<4} ({:.1}%)",
+            100.0 * bad as f64 / tot as f64
+        );
+    }
+}
+
+/// The smallest JSON reader that serves this survey, rather than a dependency.
+mod serde_json_lite {
+    pub struct Value(String);
+    pub fn parse(s: &str) -> Value {
+        Value(s.to_string())
+    }
+    impl Value {
+        /// Read a top-level numeric field. Returns None for `null`.
+        pub fn number(&self, key: &str) -> Option<f64> {
+            let at = self.0.find(&format!("\"{key}\":"))?;
+            let rest = &self.0[at + key.len() + 3..];
+            let end = rest.find([',', '}'])?;
+            rest[..end].trim().parse().ok()
+        }
     }
 }

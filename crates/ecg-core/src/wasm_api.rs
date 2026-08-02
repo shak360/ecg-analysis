@@ -59,6 +59,13 @@ struct Built {
     n_used: Vec<u32>,
     /// Leads whose ensemble is display-only, per `EnsembleBeat::measurable`.
     display_only: Vec<String>,
+    /// Parallel to `names`: whether this panel's baseline was established.
+    ///
+    /// `Detrended::MorphologyOnly` means no beat gave a flat enough PQ segment,
+    /// so there is no isoelectric line. Every ST amplitude is a height above
+    /// that line, so without it there is no ST to report — only a height above
+    /// zero, and zero is wherever the trace happened to sit.
+    baselined: Vec<bool>,
 }
 
 impl Built {
@@ -88,6 +95,7 @@ fn build_pass(
         sigmas: Vec::new(),
         n_used: Vec::new(),
         display_only: Vec::new(),
+        baselined: Vec::new(),
     };
 
     for p in panels {
@@ -96,15 +104,20 @@ fn build_pass(
         // The measurement baseline comes from PQ anchors on the original signal,
         // never from the throwaway pass-1 median cascade.
         let prov = ProvisionalSignal::new(p.sig.clone(), FS);
-        let measurement = match detrend(&prov, &onsets) {
-            Detrended::Measurable(m) => m.samples().to_vec(),
-            Detrended::MorphologyOnly { v_mv, .. } => v_mv,
+        // Both variants yield samples to draw; only one yields samples to
+        // measure. Unwrapping them into the same `Vec<f32>` discarded that,
+        // which is the distinction `Detrended` exists to make unrepresentable —
+        // so the flag travels alongside rather than being thrown away here.
+        let (measurement, baselined) = match detrend(&prov, &onsets) {
+            Detrended::Measurable(m) => (m.samples().to_vec(), true),
+            Detrended::MorphologyOnly { v_mv, .. } => (v_mv, false),
         };
 
         let Ok(eb) = ensemble(&measurement, FS, &p.anchors, provenance, sigma_prov) else {
             continue;
         };
         out.names.push(p.name.clone());
+        out.baselined.push(baselined);
         // The conditioned continuous panel, kept so the printout view can draw
         // the recording as it ran rather than an ensemble beat.
         out.signals.push(measurement);
@@ -357,7 +370,8 @@ impl StudyBuilder {
             ));
         }
 
-        let Built { names, signals, offsets, beats, sigmas, n_used, display_only } = built;
+        let Built { names, signals, offsets, beats, sigmas, n_used, display_only, baselined } =
+            built;
 
         // A single-beat lead is not a slightly noisier lead. Its beat-to-beat
         // spread is unestimable, so the gate excludes it from every serial
@@ -382,6 +396,7 @@ impl StudyBuilder {
             beats,
             sigmas,
             n_used,
+            baselined,
             hr_bpm,
             qrs_onset: f.qrs_onset.map(|v| v as i32).unwrap_or(-1),
             qrs_offset: f.qrs_offset.map(|v| v as i32).unwrap_or(-1),
@@ -419,6 +434,12 @@ pub struct StudyAnalysis {
     beats: Vec<Vec<f32>>,
     sigmas: Vec<Vec<f32>>,
     n_used: Vec<u32>,
+    /// Parallel to `names`: whether that lead's baseline was established.
+    ///
+    /// Carried onto the analysis rather than consumed in `build_pass`, because
+    /// the measurement happens later and this is the fact that decides whether
+    /// an ST amplitude exists at all.
+    baselined: Vec<bool>,
     hr_bpm: f64,
     qrs_onset: i32,
     qrs_offset: i32,
@@ -624,6 +645,7 @@ impl StudyAnalysis {
             hr,
             self.gain.relative_sigma(),
             &self.n_used,
+            &self.baselined,
         )
     }
 
@@ -706,6 +728,8 @@ fn optd(v: Option<f64>) -> String {
 /// because it changes how all of them are to be read — when ventricular
 /// conduction changes, ST and T differences carry the new activation sequence as
 /// well as any change in repolarisation, and the two cannot be separated.
+/// The findings as plain sentences, for callers that only need to know whether
+/// there are any. `serial_findings_json` carries the level too.
 #[wasm_bindgen]
 pub fn serial_findings(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> Vec<String> {
     use crate::serial::findings::{qrs_duration_ms, serial_findings as findings};
@@ -716,6 +740,34 @@ pub fn serial_findings(reference: &StudyAnalysis, comparison: &StudyAnalysis) ->
     .iter()
     .map(|f| f.message())
     .collect()
+}
+
+/// Emitted as JSON because a finding carries a level as well as a sentence, and
+/// the caller must be able to style an equivocal one differently. Handing the UI
+/// bare strings would leave it inferring the level by reading the prose, which
+/// is how an equivocal finding ends up rendered in the same red as a confirmed
+/// one.
+#[wasm_bindgen]
+pub fn serial_findings_json(reference: &StudyAnalysis, comparison: &StudyAnalysis) -> String {
+    use crate::serial::findings::{qrs_duration_ms, serial_findings as findings, Conduction, SerialFinding};
+    let rows: Vec<String> = findings(
+        qrs_duration_ms(reference.qrs_onset, reference.qrs_offset, FS),
+        qrs_duration_ms(comparison.qrs_onset, comparison.qrs_offset, FS),
+    )
+    .iter()
+    .map(|f| {
+        let level = match *f {
+            SerialFinding::ConductionChanged { confidence, .. } => match confidence {
+                Conduction::Changed => "changed",
+                Conduction::Equivocal => "equivocal",
+            },
+        };
+        // The message is prose and may contain quotes or backslashes.
+        let text = f.message().replace('\\', "\\\\").replace('"', "\\\"");
+        format!(r#"{{"level":"{level}","text":"{text}"}}"#)
+    })
+    .collect();
+    format!("[{}]", rows.join(","))
 }
 
 /// The screens that apply to a pair rather than to one study.

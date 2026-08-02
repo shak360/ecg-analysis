@@ -1,3 +1,40 @@
+/* --- ecg-analysis vendor patch: transferToFixedLength ---------------------------
+ * pdf.js bundles core-js polyfills for about forty modern APIs — including
+ * `Promise.withResolvers` and the whole `Set` method family — but calls
+ * `ArrayBuffer.prototype.transferToFixedLength` bare, in `compileFontInfo` and
+ * `compileSystemFontInfo` below. That method shipped in Chrome 114, Safari 17.4,
+ * Firefox 122 and Node 21, so on anything older the call throws, pdf.js swallows
+ * the error inside `getOperatorList`, and the caller receives an empty operator
+ * list. For this application that surfaces as "No lead produced a usable beat" —
+ * a digitisation error message for a missing method.
+ *
+ * The shim has to live in this file. It is only ever called from the worker, and
+ * a worker has its own global scope, so `web/src/compat.ts` on the main thread
+ * cannot reach it. Kept identical to that module; `test/compat.test.ts` pins the
+ * semantics and asserts this patch is still present and still ahead of both call
+ * sites, so re-vendoring pdf.js without re-applying it fails the suite rather
+ * than silently breaking old browsers.
+ *
+ * Applies to pdf.js 6.2.108. Remove when upstream polyfills it or drops the call.
+ */
+if (typeof ArrayBuffer.prototype.transferToFixedLength !== "function") {
+  Object.defineProperty(ArrayBuffer.prototype, "transferToFixedLength", {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value: function transferToFixedLength(newLength) {
+      const len = newLength === undefined ? this.byteLength : Math.trunc(newLength);
+      if (!(len >= 0)) throw new RangeError("transferToFixedLength: invalid length");
+      const src = new Uint8Array(this, 0, Math.min(len, this.byteLength));
+      const out = new ArrayBuffer(len);
+      new Uint8Array(out).set(src);
+      structuredClone(this, { transfer: [this] });
+      return out;
+    },
+  });
+}
+/* --- end vendor patch --------------------------------------------------- */
+
 /**
  * @licstart The following is the entire license notice for the
  * JavaScript code in this page

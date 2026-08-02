@@ -19,7 +19,7 @@ pub mod serial;
 mod wasm_api;
 
 pub use wasm_api::{
-    analyze_strip, compare_studies, serial_findings, significant_st_leads, st_verdicts_json,
+    analyze_strip, compare_studies, serial_findings, serial_findings_json, significant_st_leads, st_verdicts_json,
     LeadComparison, StripAnalysis, StudyAnalysis, StudyBuilder,
 };
 

@@ -93,6 +93,15 @@ export interface SnapshotDifference {
   /** Index into `traces`; 0 is always the reference. */
   traceIndex: number;
   rmsMv: number;
+  /**
+   * The alignment search wanted a shift larger than `XSTUDY_CLAMP_MS`, so it was
+   * clamped to zero and these two beats were never registered.
+   *
+   * Per comparison rather than per lead, because a series may hold one study
+   * that aligned and another that did not, and suppressing both would hide a
+   * good result to report a bad one.
+   */
+  implausible: boolean;
 }
 
 export interface SnapshotLead {
@@ -191,6 +200,19 @@ export interface PairBlocker {
 }
 
 /**
+ * A study-level finding, with how firmly it can be asserted.
+ *
+ * `equivocal` exists because the QRS-duration distributions of changed and
+ * unchanged pairs genuinely overlap; see `config::QRS_DURATION_EQUIVOCAL_MS`.
+ * The UI must render the two differently — an equivocal item in the same colour
+ * as a confirmed one asserts something the engine deliberately did not.
+ */
+export interface SerialFinding {
+  level: "changed" | "equivocal";
+  text: string;
+}
+
+/**
  * The result of one comparison, in draw order.
  *
  * `studyIds[0]` is the reference; `verdictSets[k]` compares `studyIds[k + 1]`
@@ -213,7 +235,7 @@ export interface ComparisonSnapshot {
    * well as any change in repolarisation, so every number below is conditional
    * on it.
    */
-  findingSets: string[][];
+  findingSets: SerialFinding[][];
   anchorIndex: number;
   columnSeconds: number;
   /**
@@ -235,6 +257,15 @@ export interface ComparisonSnapshot {
 
 export type Request =
   | { kind: "analyse"; id: string; studyId: string; bytes: Uint8Array; assumptions: Assumptions }
+  // Already-digital recordings: WFDB corpora, cart exports. Millivolts go
+  // straight in, so there is no grid, no calibration pulse and no columns.
+  | {
+    kind: "analyseSignals";
+    id: string;
+    studyId: string;
+    leads: Map<string, Float32Array>;
+    fsHz: number;
+  }
   | { kind: "compare"; id: string; studyIds: string[] }
   | { kind: "release"; id: string; studyIds: string[] };
 

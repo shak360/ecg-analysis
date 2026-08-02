@@ -9,7 +9,7 @@
  * be added — these are patient tracings.
  */
 import { createEngine } from "./engine/client.ts";
-import type { ComparisonSnapshot } from "./engine/protocol.ts";
+import type { ComparisonSnapshot, SerialFinding } from "./engine/protocol.ts";
 import { measurementsHtml } from "./ui/measurements.ts";
 import {
   analyse,
@@ -107,10 +107,24 @@ function renderStudies(): void {
   const list = $("study-list");
   list.innerHTML = "";
 
+  // Say how they are ordered, not how we wish they were. `placeOnTimeline` can
+  // only sort studies whose filename carries a timestamp; the rest keep load
+  // order. Claiming "oldest first" over an unsorted strip would put a timeline
+  // reading on an arbitrary one, which is the same error as reporting a
+  // measurement we did not make.
+  const dated = studies.filter((s) => s.acquiredAt).length;
+  $("study-count").textContent = !studies.length
+    ? ""
+    : dated === studies.length
+    ? `${studies.length} loaded · oldest first`
+    : dated === 0
+    ? `${studies.length} loaded · load order, no dates in filenames`
+    : `${studies.length} loaded · ${dated} dated first, then load order`;
+
   if (studies.length === 0) {
     const li = document.createElement("li");
-    li.className = "study-list__empty";
-    li.textContent = "No studies loaded yet.";
+    li.className = "picker-strip__empty";
+    li.textContent = "No studies loaded yet — add or drop ECG PDFs.";
     list.appendChild(li);
     $("clear-all").hidden = true;
     return;
@@ -119,7 +133,7 @@ function renderStudies(): void {
 
   studies.forEach((s, i) => {
     const li = document.createElement("li");
-    li.className = "study";
+    li.className = "study study--stacked";
     if (selected.has(s.id)) li.classList.add("study--selected");
     if (s.error) li.classList.add("study--error");
 
@@ -307,6 +321,7 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
         samples: d.samples,
         traceIndex: d.traceIndex,
         rmsMv: d.rmsMv,
+        implausible: d.implausible,
       })),
       rmsDifferenceMv: l.rmsDifferenceMv,
       morphologyChanged: l.morphologyChanged,
@@ -381,7 +396,7 @@ function paintComparison(snapshot: ComparisonSnapshot): void {
  * change in repolarisation, and the two cannot be separated — so it has to be
  * read first, not discovered afterwards in a column.
  */
-function renderFindings(studies: Study[], findingSets: string[][]): void {
+function renderFindings(studies: Study[], findingSets: SerialFinding[][]): void {
   const el = $("serial-findings");
   el.innerHTML = "";
 
@@ -392,18 +407,24 @@ function renderFindings(studies: Study[], findingSets: string[][]): void {
   findingSets.forEach((findings, k) => {
     // findingSets[k] compares studies[k + 1] against the reference.
     const subject = studies[k + 1];
-    for (const text of findings) {
+    for (const finding of findings) {
+      const equivocal = finding.level === "equivocal";
       const item = document.createElement("div");
-      item.className = "findings__item";
+      // Equivocal findings get their own, quieter treatment. Rendering them in
+      // the same warning colour as a confirmed change would assert something
+      // the engine deliberately declined to assert, and the reader cannot be
+      // expected to recover the distinction from the prose alone.
+      item.className = equivocal ? "findings__item findings__item--equivocal" : "findings__item";
 
       const label = document.createElement("strong");
       label.className = "findings__label";
+      const kind = equivocal ? "Conduction \u2014 equivocal" : "Conduction change";
       label.textContent = studies.length > 2 && subject
-        ? `Conduction change \u00b7 ${subject.fileName}`
-        : "Conduction change";
+        ? `${kind} \u00b7 ${subject.fileName}`
+        : kind;
       item.appendChild(label);
 
-      item.appendChild(document.createTextNode(text));
+      item.appendChild(document.createTextNode(finding.text));
       el.appendChild(item);
     }
   });
@@ -448,34 +469,33 @@ function render(): void {
 // ---------------------------------------------------------------------------
 
 function wireIngest(): void {
-  const zone = $("dropzone");
+  const button = $("dropzone");
   const input = $<HTMLInputElement>("file-input");
 
-  zone.addEventListener("click", () => input.click());
-  zone.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      input.click();
-    }
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    if (input.files?.length) void accept(input.files);
   });
+
+  // The drop target is the whole page now that the studies live in a strip
+  // rather than a panel-sized well. Aiming at a small target was never the
+  // point, and a page-wide target is what people try first anyway.
+  const body = document.body;
   for (const type of ["dragenter", "dragover"]) {
-    zone.addEventListener(type, (e) => {
+    body.addEventListener(type, (e) => {
       e.preventDefault();
-      zone.classList.add("dropzone--active");
+      body.classList.add("dropzone--active");
     });
   }
   for (const type of ["dragleave", "drop"]) {
-    zone.addEventListener(type, (e) => {
+    body.addEventListener(type, (e) => {
       e.preventDefault();
-      zone.classList.remove("dropzone--active");
+      body.classList.remove("dropzone--active");
     });
   }
-  zone.addEventListener("drop", (e) => {
+  body.addEventListener("drop", (e) => {
     const files = (e as DragEvent).dataTransfer?.files;
     if (files?.length) void accept(files);
-  });
-  input.addEventListener("change", () => {
-    if (input.files?.length) void accept(input.files);
   });
 
   $("clear-all").addEventListener("click", () => {

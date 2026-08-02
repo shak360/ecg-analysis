@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Serial ECG — registration &amp; comparison</title>
-  <meta name="description" content="Client-side registration and comparison of serial ECG tracings. No data leaves this device.">
+  <title>ECG Atlas — browse 1,207 labelled ECGs by finding</title>
+  <meta name="description" content="A teaching atlas of labelled 12-lead ECGs, browsable by diagnostic, morphological and rhythm findings.">
   <link rel="stylesheet" href="./styles/app.css">
 </head>
 <body>
@@ -18,143 +18,119 @@
               stroke-linejoin="round" stroke-linecap="round"/>
       </svg>
       <div>
-        <h1>Serial ECG</h1>
-        <p class="topbar__sub">Registration &amp; comparison over time</p>
+        <h1>ECG Atlas</h1>
+        <p class="topbar__sub">Browse by finding</p>
       </div>
     </div>
 
     <nav class="nav" aria-label="Main">
-      <a class="nav__link nav__link--current" href="./index.html" aria-current="page">Compare</a>
-      <a class="nav__link" href="./try.html">Single strip</a>
-      <a class="nav__link" href="./dev.html">Extraction</a>
+      <a class="nav__link nav__link--current" href="./index.html" aria-current="page">Atlas</a>
+      <a class="nav__link" href="./quiz.html">Test yourself</a>
+      <a class="nav__link" href="./ptbxl.html">Serial pairs</a>
+      <a class="nav__link" href="./compare.html">Compare</a>
     </nav>
 
     <div class="topbar__right">
-      <p class="badge badge--privacy" title="Files are read in this browser and parsed in-page. There is no upload path in this application.">
-        Runs entirely on this device
+      <p class="badge badge--privacy" title="Served from your own machine. PTB-XL is open, de-identified data under CC BY 4.0.">
+        Local corpus
       </p>
       <button type="button" class="btn btn--ghost" id="theme-toggle">Theme</button>
     </div>
   </header>
 
   <div class="disclaimer" role="note">
-    <strong>Not a medical device.</strong>
-    This tool assists visual comparison of ECG tracings for research and educational use. It currently
-    reports measurements with their
-    uncertainty. Gain is read from the calibration pulse where one is printed, and assumed otherwise
-    &mdash; the table says which. A change is flagged only when it exceeds both the detection limit of
-    that pair and the clinical threshold. All findings must be verified against the original tracings
-    by a qualified clinician.
+    <strong>For learning.</strong> Every tracing is a real, de-identified ECG, and every
+    label is the original cardiologist's, not this tool's. Sources are
+    <strong>PTB-XL</strong> (Wagner et al. 2020) and the
+    <strong>PhysioNet/CinC Challenge 2021</strong> set — Chapman-Shaoxing, Ningbo, Georgia,
+    CPSC, INCART and PTB — all CC BY 4.0 via PhysioNet.
+    <strong>Label review differs by source</strong>, and each case says which it is:
+    PTB-XL records whether a human validated the label and only those are taken, while the
+    others are shown as published. Findings are shown as recorded; this page does not
+    interpret.
   </div>
 
-  <main id="main" class="layout">
-    <section class="panel panel--studies" aria-labelledby="studies-heading">
-      <div class="panel__head">
-        <h2 id="studies-heading" class="panel__title">Studies</h2>
-        <button type="button" class="btn btn--ghost btn--sm" id="clear-all" hidden>Clear all</button>
+  <main id="main" class="page">
+    <section class="panel page-bar" aria-labelledby="browse-h">
+      <div class="page-bar__group">
+        <h2 id="browse-h" class="page-bar__title">Findings</h2>
+        <span class="panel__count" id="record-count"></span>
       </div>
 
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-describedby="dropzone-help">
-        <svg viewBox="0 0 24 24" class="dropzone__icon" aria-hidden="true" focusable="false">
-          <path d="M12 16V4m0 0L7 9m5-5 5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
-                fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <p class="dropzone__title">Drop ECGs here</p>
-        <p class="dropzone__hint" id="dropzone-help">Vector PDF &middot; or click to browse</p>
-        <input type="file" id="file-input" multiple hidden
-               accept="application/pdf,.pdf">
-      </div>
+      <label class="field field--inline">
+        <span class="field__label">Kind</span>
+        <select id="filter-kind" class="select">
+          <option value="all">Any</option>
+          <option value="diagnostic">Diagnostic</option>
+          <option value="form">Morphology</option>
+          <option value="rhythm">Rhythm</option>
+        </select>
+      </label>
 
-      <ol class="study-list" id="study-list" aria-live="polite"></ol>
+      <label class="field field--inline">
+        <span class="field__label">Corpus</span>
+        <select id="filter-source" class="select">
+          <option value="all">Any</option>
+        </select>
+      </label>
 
-      <div class="assume">
-        <h3 class="assume__title">Assumed calibration</h3>
-        <p class="assume__note">
-          Not yet read from the tracing. Changing either re-analyses every study.
-        </p>
-        <div class="assume__row">
-          <label class="field">
-            <span>Paper speed</span>
-            <select id="speed">
-              <option value="25" selected>25 mm/s</option>
-              <option value="50">50 mm/s</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Gain</span>
-            <select id="gain">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-        </div>
+      <label class="field field--inline">
+        <span class="field__label">Search</span>
+        <input id="search" class="select" type="search" placeholder="anterior, block, fibrillation">
+      </label>
+
+      <div class="page-bar__actions">
       </div>
     </section>
 
-    <section class="panel panel--view" aria-labelledby="view-heading">
-      <div class="panel__head">
-        <h2 id="view-heading" class="panel__title">Comparison</h2>
-        <div class="view-controls">
-          <label class="field field--inline">
-            <span>Display</span>
-            <select id="scale">
-              <option value="5">5 mm/mV</option>
-              <option value="10" selected>10 mm/mV</option>
-              <option value="20">20 mm/mV</option>
-            </select>
-          </label>
-          <label class="field field--inline">
-            <span>View</span>
-            <select id="view">
-              <option value="beats" selected>Beats (3&times;4)</option>
-              <option value="printout">Full ECG</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="show-diff" checked> difference</label>
-          <label class="check"><input type="checkbox" id="show-sigma" checked> spread</label>
-        </div>
-      </div>
-
-      <div class="placeholder" id="view-placeholder">
-        <p>Load two or more ECGs to compare them.</p>
-        <p class="placeholder__sub">
-          Each study is registered onto a common voltage and time base before overlay, so
-          differences in paper speed, gain, and baseline do not masquerade as clinical change.
-        </p>
-      </div>
-
-      <div id="view-panel" hidden>
-        <canvas id="overlay"></canvas>
-        <canvas id="printout" hidden></canvas>
-        <div class="key" id="beat-key">
-          <span>shaded band = beat-to-beat spread</span>
-          <span>dashed line = alignment anchor (R peak)</span>
-          <span>lower lane = difference from the reference</span>
-          <span>trace colours are set per study, on the left</span>
-        </div>
-        <!--
-          Study-level findings sit above the measurements, not among them. A
-          change in ventricular conduction is the condition under which every
-          number below it should be read with suspicion, so it must not be
-          something the reader scrolls past.
-        -->
-        <div id="serial-findings" class="findings" hidden></div>
-        <div id="measurements" class="measurements"></div>
-        <pre id="report" class="report"></pre>
-      </div>
+    <!--
+      Two tiers, because 120 findings in one row is not a list anyone reads.
+      The seven categories are always visible; a category's findings appear only
+      once it is chosen. The cards overlap so the row stays one glance wide,
+      and each card's label sits at its left edge — the part no neighbour covers.
+    -->
+    <section class="panel panel--fan" aria-label="Choose a category">
+      <div class="fan" id="class-fan" role="tablist" aria-label="Finding categories"></div>
+      <ul class="chip-strip" id="finding-list" role="tabpanel" aria-live="polite"></ul>
     </section>
+
+    <div id="case-placeholder" class="placeholder">
+      <p>Pick a finding, then a case.</p>
+      <p class="placeholder__sub" id="atlas-status"></p>
+    </div>
+
+    <div id="case-panel" class="page-main" hidden>
+      <div id="case-labels" class="findings"></div>
+      <section class="panel">
+        <div class="panel__toolbar">
+          <span class="panel__toolbar__label">Display</span>
+          <label class="field field--inline">
+          <span class="field__label">Gain</span>
+          <select id="scale" class="select">
+            <option value="5">5 mm/mV</option>
+            <option value="10" selected>10 mm/mV</option>
+            <option value="20">20 mm/mV</option>
+          </select>
+        </label>
+        </div>
+
+        <canvas id="printout"></canvas>
+        <div class="key">
+          <span>25 mm/s · standard 3×4 with rhythm strips</span>
+          <span>drawn from the recorded samples, not a photograph</span>
+        </div>
+      </section>
+      <pre id="case-report" class="report"></pre>
+    </div>
   </main>
 
   <footer class="statusbar">
-    <span id="engine-status" class="statusbar__item">Starting engine&hellip;</span>
-    <span class="statusbar__spacer"></span>
+    <span id="engine-status" class="statusbar__item">Starting engine…</span>
     <span class="statusbar__item statusbar__item--muted">
-      Not a medical device &middot; verify against the original tracings
+      Not a medical device · labels are PTB-XL's, measurements are this tool's
     </span>
   </footer>
 
-  <script type="module" src="./src/main.ts"></script>
+  <script type="module" src="./src/atlas.ts"></script>
 </body>
 </html>

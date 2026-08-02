@@ -67,6 +67,8 @@ pub struct StudyMeasurements {
     pub qtc_bazett_ms: Option<f64>,
     /// Frontal-plane QRS axis in degrees, from net areas in I and aVF.
     pub axis_deg: Option<f32>,
+    /// Why QT is absent, when it is.
+    pub qt_note: Option<&'static str>,
     pub leads: Vec<LeadMeasurements>,
 }
 
@@ -236,12 +238,20 @@ pub fn measure_lead(
 /// entry is measured as though it had no beats, which costs it its uncertainty
 /// and therefore its verdict — the safe direction for a mismatch that should
 /// not happen.
+///
+/// `baselined[i]` says whether that lead's detrend established an isoelectric
+/// level. Where it did not, no ST value is emitted: every ST amplitude is a
+/// height above the isoelectric line, and without one the number would be a
+/// height above zero — with zero wherever the trace happened to sit. A missing
+/// entry is treated as *not* baselined, so a caller that forgets loses ST rather
+/// than gaining an unfounded one.
 pub fn measure_study(
     leads: &[(String, Vec<f32>, Vec<f32>)],
     fid: &GlobalFiducials,
     hr_bpm: Option<f64>,
     gain_relative_sigma: Option<f32>,
     n_used: &[u32],
+    baselined: &[bool],
 ) -> StudyMeasurements {
     let mut s = StudyMeasurements {
         hr_bpm,
@@ -249,6 +259,27 @@ pub fn measure_study(
         qt_ms: fid.qt_ms(FS),
         ..Default::default()
     };
+
+    // Refuse a QT that will not fit inside its own cardiac cycle.
+    //
+    // Repolarisation finishes before the next depolarisation begins, so QT < RR
+    // is not a convention but arithmetic. A value above it means the T-offset
+    // walk left the T wave — at short RR the T and the following P crowd, and
+    // the walk terminates on the next beat instead.
+    //
+    // This is a REFUSAL, not a correction, and it is deliberately not silent:
+    // surveyed over 1,184 real PTB-XL records, 11.0% of QT values exceed their
+    // own RR, and above 100 bpm it is 70.7%. That is a systematic failure of the
+    // T-offset estimator, tracked separately. Refusing keeps a fabricated QTc
+    // off the screen; it does not fix the estimator, and pretending otherwise by
+    // clamping to a plausible-looking number would hide the problem behind
+    // numbers that no longer look wrong.
+    if let (Some(qt), Some(hr)) = (s.qt_ms, hr_bpm) {
+        if hr > 0.0 && qt >= 60_000.0 / hr {
+            s.qt_ms = None;
+            s.qt_note = Some("QT exceeded the RR interval — T offset not established");
+        }
+    }
 
     // QTc. Fridericia is the default because Bazett over-corrects at tachycardia
     // and under-corrects at bradycardia, which manufactures a QTc change between
@@ -263,7 +294,20 @@ pub fn measure_study(
 
     for (i, (name, beat, sigma)) in leads.iter().enumerate() {
         let n = n_used.get(i).copied().unwrap_or(0);
-        s.leads.push(measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma, n));
+        let mut m = measure_lead(name, beat, sigma, fid, hr_bpm, gain_relative_sigma, n);
+        if !baselined.get(i).copied().unwrap_or(false) {
+            // Morphology survives; the amplitudes do not. Cleared here rather
+            // than never computed because `measure_lead` has one exit for every
+            // other refusal and threading an eighth argument through it to reach
+            // the same result would buy nothing.
+            m.st_j_mv = None;
+            m.st_j60_mv = None;
+            m.st_slope_mv_s = None;
+            m.sigma_ens_mv = None;
+            m.sigma_gain_mv = None;
+            m.st_note = Some("baseline not established — no isoelectric anchor");
+        }
+        s.leads.push(m);
     }
 
     // Frontal axis from net QRS *area* in I and aVF. Area is far steadier than
@@ -295,6 +339,25 @@ pub fn measure_study(
 
 #[cfg(test)]
 mod tests {
+
+    /// A QT that will not fit in its own cardiac cycle is refused, not printed.
+    ///
+    /// Surveyed on 1,184 real PTB-XL records this fires on 11% overall and 71%
+    /// above 100 bpm, so it is guarding a systematic estimator failure rather
+    /// than a rare glitch.
+    #[test]
+    fn a_qt_longer_than_its_rr_is_refused() {
+        // 150 bpm: RR is 400 ms, so a 420 ms QT is impossible.
+        let fast = measure_study(&[], &fid(88, 125, 300), Some(150.0), Some(0.02), &[], &[]);
+        assert_eq!(fast.qt_ms, None, "an impossible QT must not be reported");
+        assert!(fast.qt_note.is_some(), "and it must say why");
+        assert_eq!(fast.qtc_fridericia_ms, None, "no QTc may be derived from it");
+
+        // 60 bpm: RR is 1000 ms, and the same 420 ms QT is entirely ordinary.
+        let slow = measure_study(&[], &fid(88, 125, 300), Some(60.0), Some(0.02), &[], &[]);
+        assert!(slow.qt_ms.is_some(), "a plausible QT must survive: {:?}", slow.qt_note);
+        assert!(slow.qtc_fridericia_ms.is_some());
+    }
     use super::*;
     use crate::config::FRAME_N;
     use crate::fiducial::r_index;
@@ -377,7 +440,7 @@ mod tests {
     #[test]
     fn fridericia_and_bazett_diverge_with_rate_as_expected() {
         let mk = |hr: f64| {
-            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[])
+            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[], &[])
         };
         let slow = mk(60.0);
         let fast = mk(100.0);
@@ -402,12 +465,12 @@ mod tests {
             ]
         };
         // Equal positive areas in I and aVF put the axis at +45 degrees.
-        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
+        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
         let ax = s.axis_deg.expect("no axis");
         assert!((ax - 45.0).abs() < 5.0, "axis {ax} should be near +45");
 
         // Positive I, negative aVF is left axis deviation.
-        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4]);
+        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
         assert!(s2.axis_deg.unwrap() < -30.0, "expected left axis deviation");
     }
 

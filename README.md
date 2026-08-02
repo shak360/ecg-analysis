@@ -1,13 +1,25 @@
-# Serial ECG — registration & comparison
+# ECG Atlas
 
-Client-side tooling to recover per-lead tracings from ECG **PDFs, scans, and photographs**, register
-several studies from the same patient onto a common voltage and time base, and compare them lead by
-lead to surface **change over time** — new ST elevation, evolving T-wave inversion, new Q waves, QRS
-widening, axis shift.
+A browsable library of **1,207 real, de-identified ECGs** labelled by the cardiologists who read
+them, drawn from seven open corpora, plus the measurement tooling to interrogate them. Everything
+runs in the browser.
+
+The site has four parts:
+
+| Page | What it is |
+| --- | --- |
+| **Atlas** (home) | 120 findings across seven categories, each with real examples. Browse by what a cardiologist found. |
+| **Test yourself** | Anki-style multiple choice over the human-validated subset. |
+| **Serial pairs** | 604 before/after pairs from PTB-XL patients, for studying change over time. |
+| **Compare** | Recover tracings from **PDFs, scans and photographs**, register several studies onto a common voltage and time base, and compare them lead by lead. |
 
 Comparing serial ECGs is normally done by eye with two printouts side by side. A 1 mm ST shift is
 clinically decisive and easy to miss, and printouts vary in paper speed, gain, and baseline, so naive
 overlay is meaningless. Registration is what makes the comparison valid.
+
+The name is deliberately plain. It is **not** related to the EU
+[OpenECG network](https://cinc.org/archives/2002/pdf/285.pdf) (2002–2006), which promoted the
+SCP-ECG standard that PTB-XL's labels happen to use.
 
 > **Not a medical device.** This tool assists visual comparison of ECG tracings for research and
 > educational use. Measurements are derived from digitized images and carry uncertainty that depends
@@ -80,8 +92,18 @@ reconstructed 12-lead as continuous simultaneous signal.
 
 - [Rust](https://rustup.rs) with the `wasm32-unknown-unknown` target, and
   [`wasm-pack`](https://rustwasm.github.io/wasm-pack/)
-- Node 24, pinned in `.node-version` (see
-  [docs/decisions/0006-node-toolchain.md](docs/decisions/0006-node-toolchain.md))
+- Node 24, pinned in `.node-version` and now also declared in `package.json`
+  `engines` (see
+  [docs/decisions/0006-node-toolchain.md](docs/decisions/0006-node-toolchain.md)).
+  `engines` previously said `>=20`, which contradicted the pin and let a shell
+  that had not run `fnm use` fail twelve tests with a misleading message.
+
+Browsers: Chrome/Edge 111, Firefox 114, Safari 16.4. Each bound is a verified
+constraint in shipped code — `color-mix()` in the stylesheet, module workers in
+the engine client, and a class static block in the vendored pdf.js worker, which
+Vite copies rather than transpiles. The target previously read Chrome 100 /
+Safari 15.4, which nothing supported. A fourth constraint, Safari 17.4, is
+shimmed away — see [web/vendor/pdfjs/PATCHES.md](web/vendor/pdfjs/PATCHES.md).
 
 ```bash
 brew install rustup wasm-pack fnm

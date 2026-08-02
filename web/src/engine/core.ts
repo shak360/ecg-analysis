@@ -11,7 +11,7 @@
  */
 import init, {
   compare_studies,
-  serial_findings,
+  serial_findings_json,
   st_verdicts_json,
   StudyBuilder,
 } from "../../wasm/ecg_core.js";
@@ -28,6 +28,7 @@ import type {
   SnapshotDifference,
   SnapshotLead,
   SnapshotPrintout,
+  SerialFinding,
   SnapshotTrace,
   StudySummary,
 } from "./protocol.ts";
@@ -169,6 +170,90 @@ export class EngineCore {
   }
 
   /**
+   * Analyse an already-digital recording: leads in millivolts, no printout.
+   *
+   * This is the path for WFDB corpora and cart exports, and it differs from
+   * `analyse` in what it does *not* have to do. There is no grid to detect and
+   * no calibration pulse to measure, because the millivolts are the ones the
+   * cart recorded. There are also no columns: every lead ran at once, for the
+   * full length, so each goes in at offset zero.
+   *
+   * That last point is why this path is worth having beyond the corpus browser.
+   * It separates "is the measurement path right" from "is the digitisation
+   * right", which are otherwise only ever testable together.
+   */
+  async analyseSignals(
+    studyId: string,
+    leads: Map<string, Float32Array>,
+    fsHz: number,
+    rhythmLead = "II",
+  ): Promise<StudySummary> {
+    await this.ready();
+    this.release([studyId]);
+
+    if (leads.size === 0) throw new IngestError("no leads in this recording");
+
+    const n = Math.max(...[...leads.values()].map((v) => v.length));
+    const t = new Float64Array(n);
+    for (let i = 0; i < n; i++) t[i] = i / fsHz;
+
+    const warnings: string[] = [];
+    const builder = new StudyBuilder();
+    for (const [name, v] of leads) {
+      builder.add_lead(name, t.subarray(0, v.length), v, 0);
+    }
+
+    // The rhythm strip is the timing authority. Here it is simply one of the
+    // leads at full length — lead II by convention, since that is what a cart
+    // prints and what the rest of the pipeline expects.
+    const rhythm = leads.get(rhythmLead) ?? leads.values().next().value;
+    if (rhythm) {
+      builder.set_rhythm(t.subarray(0, rhythm.length), rhythm);
+    } else {
+      warnings.push("No rhythm lead — rate and beat timing unavailable.");
+    }
+
+    const analysis = builder.analyze(true);
+    warnings.push(...(analysis.warnings as string[]));
+
+    // The millivolt scale is established, not assumed: it came off the cart's
+    // own converter. The residual is ADC quantisation, which at PTB-XL's
+    // 1 uV/LSB is a tenth of a percent of a 1 mV deflection — small, but not
+    // claimed as zero, because a stated exact-zero uncertainty is a claim no
+    // measurement can support.
+    analysis.set_gain(true, 0.001);
+
+    if (analysis.lead_names.length === 0) {
+      throw new IngestError("No lead produced a usable beat in this recording.");
+    }
+
+    // A digital record has no columns; the whole thing is one window.
+    this.#studies.set(studyId, { analysis, columnSeconds: n / fsHz });
+
+    return {
+      leadNames: Array.from(analysis.lead_names as string[]),
+      hrBpm: analysis.hr_bpm,
+      qrsOnset: analysis.qrs_onset,
+      qrsOffset: analysis.qrs_offset,
+      tOffset: analysis.t_offset,
+      anchorIndex: analysis.anchor_index,
+      frameLen: analysis.frame_len,
+      onsetShiftMs: analysis.onset_shift_ms,
+      columnSeconds: n / fsHz,
+      identityPassed: null,
+      calibration: {
+        mmPerMv: 10,
+        source: "pulse",
+        pulseCount: 0,
+        rowSpread: null,
+        relativeUncertainty: 0.001,
+      },
+      warnings,
+      measurements: JSON.parse(analysis.measurements_json()) as Measures,
+    };
+  }
+
+  /**
    * Register every study after the first against the first, and snapshot it.
    *
    * Comparing each study to the index rather than to its predecessor is what
@@ -225,8 +310,13 @@ export class EngineCore {
           samples: c.difference_mv,
           traceIndex: k + 1,
           rmsMv: c.rms_difference_mv,
+          implausible: c.align_implausible,
         });
-        worstRms = Math.max(worstRms, c.rms_difference_mv);
+        // A clamped alignment means the two beats were never registered, so its
+        // RMS is the distance between two arbitrarily-placed frames rather than
+        // a change in the patient. Leaving it in `worstRms` would let the one
+        // unusable comparison set the number shown for the whole lead.
+        if (!c.align_implausible) worstRms = Math.max(worstRms, c.rms_difference_mv);
         if (c.morphology_changed) morphologyChanged = true;
       });
 
@@ -246,7 +336,9 @@ export class EngineCore {
     // Study-level findings, one list per comparison. Computed here rather than
     // in the UI because they read the global fiducials, which never leave the
     // engine.
-    const findingSets: string[][] = rest.map((h) => Array.from(serial_findings(ref, h)));
+    const findingSets: SerialFinding[][] = rest.map(
+      (h) => JSON.parse(serial_findings_json(ref, h)) as SerialFinding[],
+    );
 
     // The five-state verdict, per lead and per comparison, plus the pair-level
     // preconditions the gate could not satisfy.
