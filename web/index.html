@@ -100,7 +100,6 @@
     </div>
 
     <div id="case-panel" class="page-main" hidden>
-      <div id="case-labels" class="findings"></div>
       <section class="panel">
         <div class="panel__toolbar">
           <span class="panel__toolbar__label">Display</span>
@@ -112,35 +111,15 @@
             <option value="20">20 mm/mV</option>
           </select>
         </label>
-          <!-- Tools, not settings: each is exclusive with the others, so they
-               are buttons with a pressed state rather than checkboxes. -->
-          <span class="tool-group" role="group" aria-label="Measuring tools">
-            <button type="button" class="btn btn--ghost" id="tool-caliper"
-                    aria-pressed="false" title="Drag across the tracing to measure an interval">Calipers</button>
-            <button type="button" class="btn btn--ghost" id="tool-magnify"
-                    aria-pressed="false" title="Magnify the tracing under the pointer">Magnify</button>
-            <button type="button" class="btn btn--ghost" id="tool-axis"
-                    aria-pressed="false" title="Show the mean QRS axis on the hexaxial circle">Axis</button>
-          </span>
         </div>
 
-        <div class="tracing">
-          <canvas id="printout"></canvas>
-        </div>
-        <div id="axis-wheel-box" class="axis-box" hidden>
-          <canvas id="axis-wheel"></canvas>
-          <p class="axis-box__note">
-            Mean QRS axis on the hexaxial reference circle. The shaded sector is
-            −30° to +90°, the range this atlas's criteria treat as normal; other
-            sources use 0° to +90° or −30° to +100°. Derived from the limb-lead
-            amplitudes of the ensemble beat, not measured directly.
-          </p>
-        </div>
+        <canvas id="printout"></canvas>
         <div class="key">
           <span>25 mm/s · standard 3×4 with rhythm strips</span>
           <span>drawn from the recorded samples, not a photograph</span>
         </div>
       </section>
+      <div id="case-labels" class="findings"></div>
       <!-- Below the tracing, full width. Not beside it: the printout is
            scale-locked to its width in both dimensions, so a side column would
            cost the millimetre scale as well as the page. Not above it either —

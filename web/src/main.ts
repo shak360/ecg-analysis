@@ -8,6 +8,7 @@
  * parsed in-process; there is no upload path in this code, and none should ever
  * be added — these are patient tracings.
  */
+import { mountTools } from "./ui/tools.ts";
 import { createEngine } from "./engine/client.ts";
 import type { ComparisonSnapshot, SerialFinding } from "./engine/protocol.ts";
 import { measurementsHtml } from "./ui/measurements.ts";
@@ -38,6 +39,7 @@ const engine = createEngine();
 let studies: Study[] = [];
 const selected = new Set<string>();
 let lastLeads: OverlayLead[] = [];
+let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
 let lastAnchor = DEFAULT_OVERLAY.anchorIndex;
 
 /**
@@ -453,7 +455,7 @@ function render(): void {
   }
 
   if (!lastLeads.length) return;
-  drawOverlay($<HTMLCanvasElement>("overlay"), lastLeads, {
+  ({ scale: lastScale } = drawOverlay($<HTMLCanvasElement>("overlay"), lastLeads, {
     ...DEFAULT_OVERLAY,
     anchorIndex: lastAnchor,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
@@ -461,7 +463,8 @@ function render(): void {
     showSigma: $<HTMLInputElement>("show-sigma").checked,
     arrangement: "standard",
     columns: 4,
-  });
+  }));
+  tools.redraw();
 }
 
 // ---------------------------------------------------------------------------
@@ -587,3 +590,10 @@ observeCanvases();
 wireTheme();
 renderStudies();
 void boot();
+
+/** The measuring tools, on the same toolbar as the display controls. */
+const tools = mountTools({
+  canvas: $<HTMLCanvasElement>("overlay"),
+  mount: document.querySelector<HTMLElement>(".panel__toolbar, .view-controls")!,
+  getScale: () => lastScale,
+});

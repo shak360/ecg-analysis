@@ -204,11 +204,24 @@ interface PanelBox {
  * Returns the panel boxes so the caller can hit-test for hover and crosshair
  * without recomputing the layout.
  */
+/**
+ * The panel boxes, plus the scale the overlay was drawn at.
+ *
+ * The scale is returned for the same reason `drawPrintout` returns one: a
+ * caliper that re-derives pixels-per-millimetre from the canvas width keeps a
+ * second copy of a calculation, and the two drift until the readout disagrees
+ * with the grid under it.
+ */
+export interface OverlayResult {
+  panels: Map<string, PanelBox>;
+  scale: { pxPerMm: number; mmPerSec: number; mmPerMv: number };
+}
+
 export function drawOverlay(
   canvas: HTMLCanvasElement,
   leads: OverlayLead[],
   opts: OverlayOptions = DEFAULT_OVERLAY,
-): Map<string, PanelBox> {
+): OverlayResult {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
     document.documentElement.dataset.theme !== "light";
   const th = theme(dark);
@@ -278,7 +291,7 @@ export function drawOverlay(
     drawPanel(ctx, lead, { x, y, w: panelW, h: panelH, zeroY, diffZeroY }, pxPerMm, opts, th);
   });
 
-  return boxes;
+  return { panels: boxes, scale: { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv } };
 }
 
 function drawPanel(

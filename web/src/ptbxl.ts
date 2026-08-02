@@ -16,6 +16,7 @@
  * path right" from "is the digitisation right", which the PDF path can only ever
  * test together.
  */
+import { mountTools } from "./ui/tools.ts";
 import { createEngine } from "./engine/client.ts";
 import type { ComparisonSnapshot, SerialFinding } from "./engine/protocol.ts";
 import { fetchPairs, fetchRecord, type SerialPair } from "./ingest/wfdb.ts";
@@ -72,6 +73,7 @@ let lastLeads: OverlayLead[] = [];
 let lastAnchor = DEFAULT_OVERLAY.anchorIndex;
 /** Guards against an older comparison landing after a newer one. */
 let ticket = 0;
+let lastScale = { pxPerMm: 1, mmPerSec: 25, mmPerMv: 10 };
 
 // ---------------------------------------------------------------------------
 // The list
@@ -157,7 +159,7 @@ function renderList(): void {
 
 function render(): void {
   if (!lastLeads.length) return;
-  drawOverlay($<HTMLCanvasElement>("overlay"), lastLeads, {
+  ({ scale: lastScale } = drawOverlay($<HTMLCanvasElement>("overlay"), lastLeads, {
     ...DEFAULT_OVERLAY,
     anchorIndex: lastAnchor,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
@@ -165,7 +167,8 @@ function render(): void {
     showSigma: $<HTMLInputElement>("show-sigma").checked,
     arrangement: "standard",
     columns: 4,
-  });
+  }));
+  tools.redraw();
 }
 
 async function show(p: SerialPair): Promise<void> {
@@ -386,3 +389,10 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+/** The measuring tools, on the same toolbar as the display controls. */
+const tools = mountTools({
+  canvas: $<HTMLCanvasElement>("overlay"),
+  mount: document.querySelector<HTMLElement>(".panel__toolbar, .view-controls")!,
+  getScale: () => lastScale,
+});
