@@ -38,9 +38,25 @@ test("the table is not empty, so the tests below are not vacuous", () => {
   expect(docRows.length).toBeGreaterThan(allRows.length);
 });
 
+/** The document rows belonging to one entry, scoped to its own `###` block. */
+function docRowsFor(title: string): string[][] {
+  const at = DOC.indexOf(`### ${title}`);
+  if (at < 0) return [];
+  const end = DOC.indexOf("\n### ", at + 1);
+  return (end < 0 ? DOC.slice(at) : DOC.slice(at, end)).split("\n")
+    .filter((l) => l.startsWith("|") && !l.includes("---"))
+    .map((l) => l.replace(/^\||\|$/g, "").split("|").map((c) => c.trim()))
+    .filter((c) => c.length === 4 && c[0] !== "quantity");
+}
+
 test("every quantity, leads, threshold and qualifier is the document's own cell", () => {
+  // Scoped to the entry's own block. Matching across the whole document found
+  // the *first* row with the same quantity and threshold, which for the
+  // conduction section is a different entry with a different lead set — the
+  // test failed on data that was correct.
   for (const { entry, row } of allRows) {
-    const match = docRows.find((c) => c[2] === row.printed && c[0] === row.quantity);
+    const match = docRowsFor(entry.title)
+      .find((c) => c[2] === row.printed && c[0] === row.quantity);
     expect(match, `${entry.title}\n  no document row matches: ${row.printed}`)
       .toBeDefined();
     expect(match![1]).toBe(row.leads);
