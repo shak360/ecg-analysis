@@ -1068,3 +1068,12 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 }
 .axis-box { display: flex; align-items: center; gap: 14px; padding: 10px 2px 0; flex-wrap: wrap; }
 .axis-box__note { margin: 0; font-size: 11.5px; color: var(--text-muted); max-width: 52ch; line-height: 1.45; }
+
+/* The gloss sits under the original report and is visibly secondary to it: the
+   cardiologist wrote one of these and this tool wrote the other. */
+.cal-note--gloss {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  color: var(--text-muted);
+  font-style: normal;
+}

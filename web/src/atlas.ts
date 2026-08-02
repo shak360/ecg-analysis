@@ -23,6 +23,7 @@ import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printou
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
 import { mountTools } from "./ui/tools.ts";
+import { glossReport, looksGerman } from "./ui/report-gloss.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -427,6 +428,33 @@ function renderLabels(e: Entry): void {
     rep.className = "cal-note";
     rep.textContent = `Cardiologist's report: ${e.report}`;
     item.appendChild(rep);
+
+    // 636 of the 1,046 reports here are German — PTB-XL is a German hospital's
+    // archive — so for most cases the one line written by the person who
+    // actually read the tracing is unusable to a reader without German.
+    //
+    // The original stays above, always. This is a term-by-term gloss, and it is
+    // labelled as one: word order is the German, compounds it was never taught
+    // are left alone, and negation is not resolved. A reader can work with that;
+    // what they could not work with is a fluent sentence containing a term this
+    // tool invented.
+    if (looksGerman(e.report)) {
+      const { text, unknown } = glossReport(e.report);
+      const gl = document.createElement("div");
+      gl.className = "cal-note cal-note--gloss";
+      gl.textContent = `Term-by-term gloss (not a translation; German word order kept): ${text}`;
+      item.appendChild(gl);
+
+      if (unknown.length) {
+        const un = document.createElement("div");
+        un.className = "study__when";
+        // Named rather than silently passed through, so a reader can see where
+        // the gloss has nothing to offer instead of assuming those words were
+        // already English.
+        un.textContent = `Not in this tool's glossary, left in German: ${unknown.join(", ")}`;
+        item.appendChild(un);
+      }
+    }
   }
 
   el.appendChild(item);
