@@ -17,8 +17,7 @@ use crate::beats::detect::{detect_qrs, Beat, BeatClass};
 use crate::beats::ensemble::{ensemble, Provenance};
 use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
 use crate::config::{
-    CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV,
-};
+    CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV, ST_J_WIN_MS};
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
 use crate::dsp::median_filter::provisional_detrend;
 use crate::dsp::resample::{
@@ -45,6 +44,8 @@ struct PreparedPanel {
     name: String,
     time_offset_s: f64,
     sig: Vec<f32>,
+    /// Which samples of `sig` are backed by source vertices; see `Conditioned`.
+    valid: Vec<bool>,
     /// R-peak sample positions within this panel, edge-excluded beats already dropped.
     anchors: Vec<usize>,
 }
@@ -59,6 +60,14 @@ struct Built {
     n_used: Vec<u32>,
     /// Leads whose ensemble is display-only, per `EnsembleBeat::measurable`.
     display_only: Vec<String>,
+    /// Parallel to `names`: per frame sample, the fraction of contributing beats
+    /// whose sample there was backed by a source vertex rather than interpolated.
+    ///
+    /// Computed here because this is the only place that holds both the anchors
+    /// and the validity mask — `ensemble()` consumes the anchors and
+    /// `StudyAnalysis` never sees them, which is why coverage was unmeasurable
+    /// for as long as it was.
+    coverage: Vec<Vec<f32>>,
     /// Parallel to `names`: whether this panel's baseline was established.
     ///
     /// `Detrended::MorphologyOnly` means no beat gave a flat enough PQ segment,
@@ -95,6 +104,7 @@ fn build_pass(
         sigmas: Vec::new(),
         n_used: Vec::new(),
         display_only: Vec::new(),
+        coverage: Vec::new(),
         baselined: Vec::new(),
     };
 
@@ -118,6 +128,39 @@ fn build_pass(
         };
         out.names.push(p.name.clone());
         out.baselined.push(baselined);
+
+        // Per frame sample, how much of it came from real samples. Only the
+        // beats the ensemble actually kept count: averaging in a frame that was
+        // excluded would report coverage for data no measurement used.
+        let f0 = (FRAME_T0_S * FS).round() as isize;
+        let mut cov = vec![0.0f32; FRAME_LEN];
+        // Kept = every anchor the ensemble did not exclude. Derived rather than
+        // returned, so `EnsembleBeat` keeps its current shape.
+        let dropped: std::collections::HashSet<usize> =
+            eb.excluded.iter().map(|(i, _)| *i).collect();
+        let kept: Vec<usize> = p
+            .anchors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !dropped.contains(i))
+            .map(|(_, &a)| a)
+            .collect();
+        for &a in &kept {
+            for (k, c) in cov.iter_mut().enumerate() {
+                let idx = a as isize + f0 + k as isize;
+                let ok = idx >= 0
+                    && (idx as usize) < p.valid.len()
+                    && p.valid[idx as usize];
+                if ok {
+                    *c += 1.0;
+                }
+            }
+        }
+        let n = kept.len().max(1) as f32;
+        for c in cov.iter_mut() {
+            *c /= n;
+        }
+        out.coverage.push(cov);
         // The conditioned continuous panel, kept so the printout view can draw
         // the recording as it ran rather than an ensemble beat.
         out.signals.push(measurement);
@@ -138,7 +181,19 @@ fn build_pass(
 }
 
 /// Condition irregular vertices onto the canonical grid.
-fn condition(vertices: &[Vertex], max_slope: f32) -> Option<Vec<f32>> {
+/// One lead, conditioned onto the uniform grid, with which samples are real.
+///
+/// `valid[i]` is false where the output sample was interpolated across a gap in
+/// the source rather than backed by a vertex. Dropping this — which the pipeline
+/// did until now — is what left `CoverageEvidence::NotMeasured` on every lead and
+/// froze the verdict gate: an ST level computed entirely from interpolated
+/// pixels was indistinguishable from one read off real samples.
+struct Conditioned {
+    v_mv: Vec<f32>,
+    valid: Vec<bool>,
+}
+
+fn condition(vertices: &[Vertex], max_slope: f32) -> Option<Conditioned> {
     if vertices.len() < 4 {
         return None;
     }
@@ -157,7 +212,26 @@ fn condition(vertices: &[Vertex], max_slope: f32) -> Option<Vec<f32>> {
     if uniform.is_empty() {
         return None;
     }
-    Some(resample(&uniform, FS).v_mv)
+    let v_mv = resample(&uniform, FS).v_mv;
+
+    // A sample is real when it lands within half a source column of a column
+    // that actually had vertices in it. `column_envelope` emits nothing for an
+    // empty column, so the gaps are exactly the times it skipped.
+    let half = 0.5 / f_int;
+    let t0 = cols.first().map(|c| c.t_s).unwrap_or(0.0);
+    let mut valid = Vec::with_capacity(v_mv.len());
+    let mut k = 0usize;
+    for i in 0..v_mv.len() {
+        let t = t0 + i as f64 / FS;
+        while k + 1 < cols.len() && cols[k + 1].t_s <= t {
+            k += 1;
+        }
+        let near = (cols[k].t_s - t).abs() <= half
+            || cols.get(k + 1).is_some_and(|c| (c.t_s - t).abs() <= half);
+        valid.push(near);
+    }
+
+    Some(Conditioned { v_mv, valid })
 }
 
 /// Accumulates one study's leads before analysis.
@@ -203,7 +277,7 @@ impl StudyBuilder {
         // full beat to reconcile a panel's timing against the strip's.
         let (strip_beats, hr_bpm) = match &strip {
             Some(s) => {
-                let prov = provisional_detrend(s, FS, None, None);
+                let prov = provisional_detrend(&s.v_mv, FS, None, None);
                 let det = detect_qrs(&prov, FS);
                 (
                     det.beats
@@ -227,7 +301,9 @@ impl StudyBuilder {
         let mut edge_excluded: Vec<(String, usize, usize)> = Vec::new();
 
         for lead in self.leads.iter() {
-            let Some(sig) = condition(&lead.vertices, 100.0) else { continue };
+            let Some(cond) = condition(&lead.vertices, 100.0) else { continue };
+            let sig = cond.v_mv;
+            let valid = cond.valid;
             let duration_s = sig.len() as f64 / FS;
 
             // Beats the strip says fall inside this panel, in panel-local time.
@@ -308,6 +384,7 @@ impl StudyBuilder {
                 name: lead.name.clone(),
                 time_offset_s: lead.time_offset_s,
                 sig,
+                valid,
                 anchors,
             });
         }
@@ -370,7 +447,7 @@ impl StudyBuilder {
             ));
         }
 
-        let Built { names, signals, offsets, beats, sigmas, n_used, display_only, baselined } =
+        let Built { names, signals, offsets, beats, sigmas, n_used, display_only, baselined, coverage } =
             built;
 
         // A single-beat lead is not a slightly noisier lead. Its beat-to-beat
@@ -391,8 +468,9 @@ impl StudyBuilder {
         StudyAnalysis {
             names,
             signals,
+            coverage,
             offsets,
-            rhythm: strip.clone().unwrap_or_default(),
+            rhythm: strip.map(|s| s.v_mv).unwrap_or_default(),
             beats,
             sigmas,
             n_used,
@@ -429,6 +507,9 @@ pub struct StudyAnalysis {
     signals: Vec<Vec<f32>>,
     /// Where each panel's window starts within the record, seconds.
     offsets: Vec<f64>,
+    /// Parallel to `names`: per frame sample, the fraction of contributing beats
+    /// backed by real samples. See `Built::coverage`.
+    coverage: Vec<Vec<f32>>,
     /// The conditioned rhythm strip.
     rhythm: Vec<f32>,
     beats: Vec<Vec<f32>>,
@@ -665,6 +746,29 @@ impl StudyAnalysis {
     /// The fields are `pub`, so a test can supply a hole and exercise the gate
     /// beyond it without a test-only constructor. Production code must not: an
     /// overwrite here is a claim that something was measured.
+    /// The fraction of one lead's ST window backed by real samples.
+    ///
+    /// The window is the same `ST_J_WIN_MS` that `measure` averages `st_j_mv`
+    /// over, taken from the same global QRS offset, so the coverage figure
+    /// describes exactly the samples the ST level was computed from and not a
+    /// nearby stretch of signal.
+    fn coverage_st(&self, lead: usize) -> CoverageEvidence {
+        let Ok(off) = self.fiducials().qrs_offset else {
+            return CoverageEvidence::NotMeasured;
+        };
+        let Some(cov) = self.coverage.get(lead) else {
+            return CoverageEvidence::NotMeasured;
+        };
+        let lo = off + (ST_J_WIN_MS.0 / 1000.0 * FS).round() as usize;
+        let hi = off + (ST_J_WIN_MS.1 / 1000.0 * FS).round() as usize;
+        let hi = hi.min(cov.len());
+        if lo >= hi {
+            return CoverageEvidence::NotMeasured;
+        }
+        let mean = cov[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
+        CoverageEvidence::Measured(mean)
+    }
+
     pub fn evidence(&self) -> StudyEvidence {
         let m = self.measure();
         StudyEvidence {
@@ -701,12 +805,15 @@ impl StudyAnalysis {
                     var_indep_mv2: l.sigma_ens_mv.map(|s| s * s),
                     sigma_gain_mv: l.sigma_gain_mv,
                     n_beats: self.n_used.get(i).copied().unwrap_or(0),
-                    // The resample validity mask is dropped in `condition`
-                    // before it can be carried through the ensemble, so the
-                    // fraction of the ST window backed by real samples is not
-                    // measured. Assuming 1.0 would let an ST level computed
-                    // entirely from interpolated pixels read as a measured one.
-                    coverage_st: CoverageEvidence::NotMeasured,
+                    // Measured now: the validity mask survives `condition` and
+                    // is averaged over the beats the ensemble kept, so this is
+                    // the fraction of *this lead's* ST window that came from
+                    // source vertices rather than interpolation across a gap.
+                    // Where the fiducial search found no QRS offset there is no
+                    // ST window to measure, and the honest answer is still
+                    // `NotMeasured` rather than a number for a window nobody
+                    // located.
+                    coverage_st: self.coverage_st(i),
                 })
                 .collect(),
         }
@@ -1211,12 +1318,21 @@ mod tests {
         assert_eq!(e.swap, SwapEvidence::NotDetermined);
         // 4. The identity residuals live in TypeScript at another normalisation.
         assert_eq!(e.identity, IdentityEvidence::NotChecked);
-        // 5. The resample validity mask is dropped before the ensemble, so
-        //    ST-window coverage is unmeasured in every lead.
+        // ST-window coverage was the fifth hole and is now closed: the validity
+        // mask survives `condition`, is averaged over the beats the ensemble
+        // kept, and is read over the same window `st_j_mv` is. A lead may still
+        // report `NotMeasured` when no QRS offset was found — there is no ST
+        // window to cover in that case — but it may no longer report it because
+        // nobody looked.
         assert!(
-            e.leads.iter().all(|l| l.coverage_st == CoverageEvidence::NotMeasured),
-            "a lead reported measured ST-window coverage"
+            e.leads.iter().any(|l| matches!(l.coverage_st, CoverageEvidence::Measured(_))),
+            "no lead reported measured ST-window coverage"
         );
+        for l in &e.leads {
+            if let CoverageEvidence::Measured(f) = l.coverage_st {
+                assert!((0.0..=1.0).contains(&f), "{} coverage {f} out of range", l.lead);
+            }
+        }
 
         // And the two things that are *not* holes, so that a regression in
         // either shows up here rather than as a silently narrower band.
@@ -1266,10 +1382,18 @@ mod tests {
         }
         // The comparison never had `set_gain` called on it, so the pair is
         // blocked on a gain nobody recorded as well as on the standing holes.
-        for code in ["GainNotRecorded", "CoverageUnmeasured", "IdentityUnchecked"] {
+        // `CoverageUnmeasured` is deliberately absent now: coverage is measured,
+        // so the pair is blocked on the holes that genuinely remain.
+        for code in ["GainNotRecorded", "IdentityUnchecked"] {
             assert!(json.contains(code), "missing blocker {code} in {json}");
         }
-        // And the sentences are prose for a reader, not variant names.
-        assert!(json.contains("can be confirmed or excluded"), "{json}");
+        // And the sentences are prose for a reader, not variant names. The
+        // sentence checked here used to be the coverage refusal's; that refusal
+        // no longer fires, which is the point of this change, so the assertion
+        // moves to one that does.
+        assert!(
+            json.contains("the leads they are labelled as"),
+            "blocker sentences read as variant names: {json}"
+        );
     }
 }

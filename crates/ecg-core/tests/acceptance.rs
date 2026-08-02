@@ -437,12 +437,16 @@ fn the_gate_refuses_every_lead_while_the_evidence_it_needs_is_unmeasured() {
     assert_eq!(verdicts.len(), 12, "all twelve leads must be reported");
     for v in &verdicts {
         match (&v.digitization, &v.with_bio) {
+            // ST-window coverage is measured now, so the refusal has moved on
+            // to the next unevidenced precondition rather than disappearing.
+            // This assertion is deliberately still a refusal: closing one hole
+            // must not be mistaken for the gate opening.
             (
-                Verdict::Unmeasurable { reason: Refusal::CoverageUnmeasured },
-                Verdict::Unmeasurable { reason: Refusal::CoverageUnmeasured },
+                Verdict::Unmeasurable { reason: Refusal::IdentityUnchecked },
+                Verdict::Unmeasurable { reason: Refusal::IdentityUnchecked },
             ) => {}
             other => panic!(
-                "{}: expected both bands to refuse for unmeasured ST-window coverage, got {other:?}",
+                "{}: expected both bands to refuse because lead identity is unchecked, got {other:?}",
                 v.lead
             ),
         }
