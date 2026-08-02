@@ -1045,3 +1045,26 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
   color: var(--accent); background: var(--accent-weak);
   border-color: var(--accent); font-weight: 600;
 }
+
+/* The caliper/magnifier layer sits exactly over the tracing canvas. Pointer
+   events pass straight through until a tool is on, so the page behaves normally
+   the rest of the time. */
+/* One selector, deliberately. The first version of this also matched
+   `.panel canvas + .caliper-layer`, which is more specific than
+   `.caliper-layer--on` and so kept `pointer-events: none` in force even with a
+   tool selected — the layer looked right and could not be used. Synthetic
+   events dispatched straight at the element still worked, which is why the
+   first test passed; a real pointer went through it to the canvas below. */
+.caliper-layer { position: absolute; left: 0; top: 0; pointer-events: none; }
+.caliper-layer--on { pointer-events: auto; }
+.caliper-layer[data-mode="caliper"] { cursor: crosshair; }
+.caliper-layer[data-mode="magnify"] { cursor: zoom-in; }
+/* The canvas needs a positioned ancestor for the overlay to land on it. */
+.tracing { position: relative; display: block; }
+
+.tool-group { display: inline-flex; gap: 4px; margin-left: auto; }
+.tool-group .btn[aria-pressed="true"] {
+  color: var(--accent); background: var(--accent-weak); border-color: var(--accent);
+}
+.axis-box { display: flex; align-items: center; gap: 14px; padding: 10px 2px 0; flex-wrap: wrap; }
+.axis-box__note { margin: 0; font-size: 11.5px; color: var(--text-muted); max-width: 52ch; line-height: 1.45; }
