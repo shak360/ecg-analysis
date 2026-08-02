@@ -36,10 +36,11 @@
  *     guideline's citation.
  */
 
+import { CONDUCTION } from "./conduction.ts";
 import { HYPERTROPHY } from "./hypertrophy.ts";
 import type { CriterionEntry } from "./types.ts";
 
-export const CRITERIA: readonly CriterionEntry[] = [...HYPERTROPHY];
+export const CRITERIA: readonly CriterionEntry[] = [...CONDUCTION, ...HYPERTROPHY];
 
 /** Atlas finding ids that have at least one entry. */
 export const COVERED_CODES: ReadonlySet<string> = new Set(

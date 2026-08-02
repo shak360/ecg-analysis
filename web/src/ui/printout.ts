@@ -86,11 +86,24 @@ function theme(dark: boolean): Theme {
  * Geometry is in true millimetres: 25 mm/s and 10 mm/mV by default, so the
  * familiar "one small square is 40 ms and 0.1 mV" reading holds.
  */
+/**
+ * What a caliper needs to turn pixels back into milliseconds and millivolts.
+ *
+ * Returned rather than recomputed by the caller: the scale is derived from the
+ * canvas's own width, and a second copy of that derivation is exactly the kind
+ * of duplicate that drifts until the grid and the readout disagree.
+ */
+export interface PrintoutScale {
+  pxPerMm: number;
+  mmPerSec: number;
+  mmPerMv: number;
+}
+
 export function drawPrintout(
   canvas: HTMLCanvasElement,
   studies: PrintoutStudy[],
   opts: PrintoutOptions = DEFAULT_PRINTOUT,
-): void {
+): PrintoutScale {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
     document.documentElement.dataset.theme !== "light";
   const th = theme(dark);
@@ -288,4 +301,6 @@ export function drawPrintout(
     x0,
     y0 + plotH + 3.2 * pxPerMm,
   );
+
+  return { pxPerMm, mmPerSec: opts.mmPerSec, mmPerMv: opts.mmPerMv };
 }
