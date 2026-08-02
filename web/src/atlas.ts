@@ -323,7 +323,22 @@ async function openCase(code: string, e: Entry): Promise<void> {
 
     const { leads, nSamples, trimmedFrom } = firstWindow(rec);
 
-    const summary = await engine.analyseSignals(`atlas-${e.id}`, leads, rec.fsHz);
+    // The cardiologist's labels and the published criteria are corpus data. They
+    // do not depend on this tool measuring anything, so they are rendered before
+    // the analysis is attempted — otherwise a record the engine cannot measure
+    // shows a bare error line and hides the very content the page exists for.
+    renderLabels(e);
+    renderEvidence(code, e, null);
+    $("case-placeholder").hidden = true;
+    $("case-panel").hidden = false;
+
+    let summary: any = null;
+    let failure: string | null = null;
+    try {
+      summary = await engine.analyseSignals(`atlas-${e.id}`, leads, rec.fsHz);
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
     if (mine !== ticket) return;
 
     // A digital record has no columns — the whole ten seconds is one window per
@@ -338,13 +353,20 @@ async function openCase(code: string, e: Entry): Promise<void> {
     }];
     lastTrimmedFrom = trimmedFrom;
 
-    renderLabels(e);
-    renderEvidence(code, e, summary);
-    renderReport(summary);
-    $("case-placeholder").hidden = true;
-    $("case-panel").hidden = false;
-    render();
-    await engine.release([`atlas-${e.id}`]);
+    if (summary) {
+      renderEvidence(code, e, summary);
+      renderReport(summary);
+      render();
+      await engine.release([`atlas-${e.id}`]);
+    } else {
+      // Say which half failed. "No lead produced a usable beat" against a blank
+      // page reads as though the record is missing; against the labels and the
+      // criteria it reads as what it is — this tool could not measure a tracing
+      // that is still perfectly readable by eye.
+      $("case-report").textContent =
+        `this tool could not measure this recording: ${failure}\n` +
+        `the labels and criteria above are the corpus's and are unaffected.`;
+    }
   } catch (err) {
     if (mine !== ticket) return;
     $("atlas-status").textContent = err instanceof Error ? err.message : String(err);

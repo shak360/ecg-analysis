@@ -26,6 +26,8 @@
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
+import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
+import { evidenceHtml } from "./ui/evidence.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -76,6 +78,8 @@ let questions: Question[] = [];
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 2.5;
 let ticket = 0;
+/** The analysed summary for the case on screen, for the post-answer criteria. */
+let lastSummary: any = null;
 
 // ---------------------------------------------------------------------------
 // Progress, kept in this browser
@@ -333,6 +337,41 @@ async function reveal(): Promise<void> {
   } catch {
     // The numbers are a bonus; the case still taught what it was for.
   }
+  renderRevealEvidence();
+}
+
+/**
+ * The published criteria, after the answer and never before it.
+ *
+ * The whole page rests on the tool's numbers being hidden until the learner has
+ * committed — a QRS duration on screen answers a bundle-branch-block question
+ * before it is asked. Criteria leak the same way and worse: "QRS >= 120 ms"
+ * beside four options is the answer with a citation attached. So this runs from
+ * `reveal()` only.
+ */
+function renderRevealEvidence(): void {
+  const host = $("reveal-evidence");
+  const answered = questions.find((q) => q.chosen);
+  const who = current;
+  const m = lastSummary?.measurements;
+  if (!answered || !who) {
+    host.innerHTML = "";
+    return;
+  }
+  const code = answered.answer.id;
+  const covered = new Set(CRITERIA.flatMap((c) => c.codes));
+  host.innerHTML = evidenceHtml({
+    findingLabel: answered.answer.description || code,
+    results: m
+      ? entriesFor(CRITERIA, code).map((x) =>
+        evaluateEntry(x, m, { sex: who.sex, age: who.age })
+      )
+      : [],
+    coverage: {
+      covered: [...covered].filter((c) => allStatements.has(c)).length,
+      total: allStatements.size,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +418,7 @@ async function nextCase(): Promise<void> {
 
     questions = buildQuestions(e);
     step = 0;
+    $("reveal-evidence").innerHTML = "";
     if (!questions.length) {
       $("quiz-status").textContent = "That case had nothing askable; try again.";
       return;
