@@ -390,12 +390,33 @@ function pickEntry(): Entry | null {
   // Anki-ish: weight by how badly the learner does on the statements a record
   // carries, so misses come back sooner. Weighted rather than strictly ordered
   // — always serving the single worst finding would be a drill, not a review.
-  const scored = eligible.map((e) => ({
-    e,
-    w: Math.max(...e.findings.map((s) => weakness(s.id, p))) + Math.random() * 0.35,
-  }));
-  scored.sort((a, b) => b.w - a.w);
-  return scored[Math.floor(Math.random() * Math.min(12, scored.length))]!.e;
+  // Pick the *finding* first, then a case carrying it.
+  //
+  // Drawing a case directly makes every question a prevalence lottery. Sinus
+  // rhythm is on 698 of the 1,046 records and septal hypertrophy on 7, so a
+  // case-first draw asks about sinus rhythm 19.7% of the time and about septal
+  // hypertrophy 0.2% — a hundredfold difference that reflects how common a
+  // finding is in a German hospital's archive, not how much there is to learn
+  // from it. Someone practising for a rare finding would have to sit through
+  // fifty sinus-rhythm cases to meet it once.
+  //
+  // Choosing the finding first makes every finding equally reachable, and
+  // weakness still decides which of them comes up: an unseen or often-missed
+  // finding outranks one already answered correctly.
+  const codes = [...new Set(eligible.flatMap((e) => e.findings.map((s) => s.id)))];
+  const weights = codes.map((c) => weakness(c, p) + 0.08);
+  let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+  let code = codes[codes.length - 1]!;
+  for (let i = 0; i < codes.length; i++) {
+    roll -= weights[i]!;
+    if (roll <= 0) {
+      code = codes[i]!;
+      break;
+    }
+  }
+
+  const carrying = eligible.filter((e) => e.findings.some((s) => s.id === code));
+  return carrying[Math.floor(Math.random() * carrying.length)]!;
 }
 
 async function nextCase(): Promise<void> {
