@@ -115,6 +115,23 @@ fnm install && fnm use
 npm ci --ignore-scripts   # lifecycle scripts are npm's main supply-chain vector
 ```
 
+### The corpus is not in this repository
+
+`data/` is gitignored, so **a fresh clone has none of the 1,207 ECGs** and the
+atlas, the quiz and the serial-pairs browser will all come up empty. That is
+deliberate — it is 461 MB, and the gitignore rule that excludes it is the same
+one that stops a real patient PDF being committed by accident. Fetch it:
+
+```bash
+npm run fetch:ptbxl -- --atlas 6     # PTB-XL, human-validated, ~40 min
+npm run fetch:ptbxl -- --reindex     # index everything already on disk
+npm run fetch:challenge -- --atlas 4 # the other six corpora
+```
+
+Everything is CC BY 4.0 from PhysioNet and needs no login. `Compare` and the
+developer harnesses work without any of it — they run on the synthetic fixtures
+from `npm run fixtures`.
+
 ## Usage
 
 ```bash
