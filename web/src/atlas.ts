@@ -453,6 +453,26 @@ function renderEvidence(code: string, e: Entry, summary: any): void {
  * invite.
  */
 $("case-evidence").addEventListener("click", (ev) => {
+  const tab = (ev.target as HTMLElement).closest<HTMLElement>(".evidence__pick__tab");
+  if (tab) {
+    const want = tab.dataset.idx;
+    for (const el of document.querySelectorAll<HTMLElement>(".evidence__pick__tab")) {
+      const on = el === tab;
+      el.classList.toggle("is-on", on);
+      el.setAttribute("aria-selected", String(on));
+    }
+    for (const el of document.querySelectorAll<HTMLElement>(".evidence__entry")) {
+      el.hidden = el.dataset.idx !== want;
+    }
+    // A mark belongs to the row that set it, and that row is now off screen.
+    markedLeads = [];
+    for (const el of document.querySelectorAll(".evidence__row--marked")) {
+      el.classList.remove("evidence__row--marked");
+    }
+    render();
+    return;
+  }
+
   const row = (ev.target as HTMLElement).closest<HTMLElement>(".evidence__row");
   if (!row) return;
   const leads = (row.dataset.leads ?? "").split(",").filter(Boolean);

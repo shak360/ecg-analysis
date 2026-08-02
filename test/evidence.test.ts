@@ -98,7 +98,10 @@ test("an unmeasurable row is shown, not hidden, and both its columns are muted",
   // let "unmeasured" read as "the measurement failed on the one that disagreed".
   const html = render(measures([]));
   expect(html).toContain("evidence__row--unmeasured");
-  expect(html).not.toContain("hidden");
+  // Scoped to the row. Entries are switched with `hidden` by the definition
+  // picker, which is a different thing from concealing a criterion line.
+  const rowMarkup = /<button type="button" class="evidence__row[^>]*>/.exec(html)![0];
+  expect(rowMarkup).not.toContain("hidden");
   expect(html).toContain("not established on this recording");
 });
 

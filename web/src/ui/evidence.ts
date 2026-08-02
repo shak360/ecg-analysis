@@ -70,9 +70,9 @@ function rowHtml(r: RowResult): string {
     `</button>`;
 }
 
-function entryHtml(res: EntryResult): string {
+function entryHtml(res: EntryResult, i: number): string {
   const e = res.entry;
-  return `<article class="evidence__entry">` +
+  return `<article class="evidence__entry" data-idx="${i}"${i === 0 ? "" : " hidden"}>` +
     `<h4 class="evidence__title">${esc(e.title)}</h4>` +
     `<details class="evidence__cite"><summary>Source</summary>` +
     `<p>${esc(e.source)}</p></details>` +
@@ -116,6 +116,13 @@ export interface EvidenceView {
   coverage: { covered: number; total: number };
 }
 
+/** The bit of a title that distinguishes one definition from its rivals. */
+function shortName(e: CriterionEntry): string {
+  const tail = e.title.split("—").slice(1).join("—").trim() || e.title;
+  const short = tail.replace(/\s*\(.*?\)\s*/g, " ").trim();
+  return `${short.length > 44 ? short.slice(0, 42) + "…" : short} · ${e.year}`;
+}
+
 export function evidenceHtml(v: EvidenceView): string {
   const head = `<h3 class="evidence__head">What published criteria say about ` +
     `${esc(v.findingLabel)}</h3>` +
@@ -132,7 +139,30 @@ export function evidenceHtml(v: EvidenceView): string {
       `cardiologist recorded it.</p>${FOOTER}</section>`;
   }
 
-  return `<section class="evidence">${head}` +
+  // One definition on screen, all of them named in the picker.
+  //
+  // The source document is explicit that a teaching tool must not present one
+  // criterion as *the* definition of a finding — for LBBB it records a cohort
+  // where 100% met ESC 2013 and 12% met ESC 2021. So the rivals are one click
+  // away, never a scroll away and never absent: the picker lists every one by
+  // name and year, so a reader sees there are five before choosing to read one.
+  //
+  // The default is the earliest, which is the reference standard the later ones
+  // were written against. Not "the most popular" — the sources do not rank
+  // themselves, and picking a winner is the judgement being avoided.
+  const picker = v.results.length > 1
+    ? `<div class="evidence__pick" role="tablist">` +
+      `<span class="evidence__pick__count">${v.results.length} published definitions, ` +
+      `which do not agree:</span>` +
+      v.results.map((r, i) =>
+        `<button type="button" class="evidence__pick__tab${i === 0 ? " is-on" : ""}" ` +
+        `data-idx="${i}" role="tab" aria-selected="${i === 0}">` +
+        `${esc(shortName(r.entry))}</button>`
+      ).join("") +
+      `</div>`
+    : "";
+
+  return `<section class="evidence">${head}${picker}` +
     v.results.map(entryHtml).join("") + FOOTER + `</section>`;
 }
 

@@ -1029,3 +1029,19 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 /* The measured column is the one the eye tracks down, so give it its own edge. */
 .evidence__measured { text-align: right; }
 .evidence__qualifier { margin-top: 2px; }
+
+/* The definition picker. Every rival is named here, so choosing one to read is
+   never the same as not knowing the others exist. */
+.evidence__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.evidence__pick__count { font-size: 11.5px; color: var(--text-muted); margin-right: 2px; }
+.evidence__pick__tab {
+  font: inherit; font-size: 11.5px; padding: 4px 9px; cursor: pointer;
+  color: var(--text-muted); background: var(--bg-sunken);
+  border: 1px solid var(--border); border-radius: 999px;
+}
+.evidence__pick__tab:hover { border-color: var(--border-strong); }
+.evidence__pick__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.evidence__pick__tab.is-on {
+  color: var(--accent); background: var(--accent-weak);
+  border-color: var(--accent); font-weight: 600;
+}
