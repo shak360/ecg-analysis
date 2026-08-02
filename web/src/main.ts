@@ -601,4 +601,7 @@ const tools = mountTools({
   canvas: $<HTMLCanvasElement>("overlay"),
   mount: document.querySelector<HTMLElement>(".panel__toolbar, .view-controls")!,
   getScale: () => lastScale,
+  // Compare's panels are one lead each, all showing the same instants, so a
+  // span set in one lead is worth marking in all of them.
+  perLead: true,
 });

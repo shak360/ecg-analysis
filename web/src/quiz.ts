@@ -184,6 +184,7 @@ function render(): void {
     ...DEFAULT_PRINTOUT,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     columnSeconds: lastColumnSeconds,
+    layout: $<HTMLSelectElement>("layout").value as "3x4" | "12x1",
   });
   tools.redraw();
 }
@@ -203,6 +204,7 @@ const tools = mountTools({
       ...DEFAULT_PRINTOUT,
       mmPerMv: Number($<HTMLSelectElement>("scale").value),
       columnSeconds: lastColumnSeconds,
+    layout: $<HTMLSelectElement>("layout").value as "3x4" | "12x1",
     }),
 });
 
@@ -503,6 +505,7 @@ async function nextCase(): Promise<void> {
 $("next-case").addEventListener("click", () => void nextCase());
 $("filter-kind").addEventListener("change", () => void nextCase());
 $("scale").addEventListener("change", render);
+$("layout").addEventListener("change", render);
 globalThis.addEventListener("resize", render);
 $("reset-score").addEventListener("click", () => {
   saveProgress({});

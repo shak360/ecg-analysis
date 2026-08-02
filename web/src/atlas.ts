@@ -286,6 +286,7 @@ function render(): void {
     ...DEFAULT_PRINTOUT,
     mmPerMv: Number($<HTMLSelectElement>("scale").value),
     columnSeconds: lastColumnSeconds,
+    layout: $<HTMLSelectElement>("layout").value as "3x4" | "12x1",
     emphasiseLeads: markedLeads,
   });
   // The overlay is a sibling layer and cannot see that the tracing was
@@ -511,6 +512,7 @@ const tools = mountTools({
       ...DEFAULT_PRINTOUT,
       mmPerMv: Number($<HTMLSelectElement>("scale").value),
       columnSeconds: lastColumnSeconds,
+    layout: $<HTMLSelectElement>("layout").value as "3x4" | "12x1",
       emphasiseLeads: markedLeads,
     }),
 });
@@ -613,6 +615,7 @@ for (const id of ["filter-kind", "filter-source"]) {
 }
 $("search").addEventListener("input", refresh);
 $("scale").addEventListener("change", render);
+$("layout").addEventListener("change", render);
 globalThis.addEventListener("resize", render);
 $("theme-toggle").addEventListener("click", () => {
   const root = document.documentElement;
