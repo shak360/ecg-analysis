@@ -558,7 +558,7 @@ export function measurementsHtml(view: MeasurementsView): string {
   const threshold = `${view.clinicalThresholdMv.toFixed(d)} mV`;
 
   return `
-    <div class="cal-note">${calRows}</div>
+    <div class="note">${calRows}</div>
     ${blockerBlock}
     <table class="mtable">
       <caption>Global measurements</caption>

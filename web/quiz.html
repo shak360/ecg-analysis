@@ -46,14 +46,14 @@
     sooner.
   </div>
 
-  <main id="main" class="quiz-layout">
+  <main id="main" class="page">
     <!--
       Controls span the full width above everything. They govern both panes, so
       putting them in a sidebar beside one of them implied they belonged to it.
     -->
-    <section class="panel quiz-bar" aria-labelledby="score-h">
-      <div class="quiz-bar__group">
-        <h2 id="score-h" class="quiz-bar__title">Progress</h2>
+    <section class="panel page-bar" aria-labelledby="score-h">
+      <div class="page-bar__group">
+        <h2 id="score-h" class="page-bar__title">Progress</h2>
         <span class="panel__count" id="score-line"></span>
       </div>
 
@@ -67,7 +67,7 @@
         </select>
       </label>
 
-      <div class="quiz-bar__actions">
+      <div class="page-bar__actions">
         <button type="button" class="btn" id="next-case">New case</button>
         <button type="button" class="btn btn--ghost" id="reset-score">Reset progress</button>
       </div>
@@ -92,13 +92,20 @@
         <div class="panel__toolbar">
           <span class="panel__toolbar__label">Display</span>
           <label class="field field--inline">
-        <span class="field__label">Gain</span>
-        <select id="scale" class="select">
-          <option value="5">5 mm/mV</option>
-          <option value="10" selected>10 mm/mV</option>
-          <option value="20">20 mm/mV</option>
-        </select>
-      </label>
+            <span class="field__label">Gain</span>
+            <select id="scale" class="select">
+              <option value="5">5 mm/mV</option>
+              <option value="10" selected>10 mm/mV</option>
+              <option value="20">20 mm/mV</option>
+            </select>
+          </label>
+          <label class="field field--inline">
+            <span class="field__label">Layout</span>
+            <select id="layout" class="select">
+              <option value="3x4" selected>3×4 + rhythm</option>
+              <option value="12x1">12×1 strips</option>
+            </select>
+          </label>
         </div>
         <canvas id="printout"></canvas>
         <div class="key">

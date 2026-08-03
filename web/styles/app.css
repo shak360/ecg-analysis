@@ -11,13 +11,20 @@
 
   --bg:            #f6f7f9;
   --bg-raised:     #ffffff;
-  --bg-sunken:     #eceef1;
+  --bg-sunken:     #f2f4f6;
   --border:        #d8dce2;
   --border-strong: #b9c0c9;
 
+  /* Three text levels, and all three clear WCAG AA (4.5:1) on every surface
+     they are drawn on — asserted in `test/contrast.test.ts`, because failing
+     contrast does not look broken, it looks like small grey text, which is what
+     it was meant to look like. `--text-faint` sat at 2.85:1 on sunken for the
+     life of this file. Darkening it alone would have collapsed it into
+     `--text-muted`, so `--bg-sunken` lightened by the same argument and the
+     third level survives. */
   --text:          #16191d;
   --text-muted:    #5c646f;
-  --text-faint:    #868e99;
+  --text-faint:    #667085;
 
   --accent:        #0b6ab8;
   --accent-weak:   #e4f0fa;
@@ -28,7 +35,32 @@
 
   --radius:     10px;
   --radius-sm:  6px;
+  /* Fully round at every height a pill is used at, so one value covers what
+     were three (100px, 999px, 999px). */
+  --radius-pill: 999px;
   --shadow:     0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  /* Sideways, not down: the fan's cards overlap leftward, so the shadow has to
+     fall on the covering card's left edge to separate it from the one beneath.
+     `--shadow` is vertical and would flatten the fan into a strip. */
+  --shadow-fan: -3px 0 10px rgb(0 0 0 / 10%);
+
+  /* A 4 px spacing ramp and a type ramp, both sized to values already in this
+     file. Rules migrate to them as they are edited, never in bulk: a rule whose
+     literal is not on the ramp keeps its literal, because moving 3 px to 4 px
+     across 120 declarations is a large diff that shifts layouts which are
+     currently correct, for nothing a reader would see. */
+  --s-1:  4px;
+  --s-2:  8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  --fs-eyebrow: 10.5px;  /* uppercase field labels and panel titles */
+  --fs-xs:      11px;    /* counts, tallies, sources */
+  --fs-sm:      11.5px;  /* notes and secondary prose */
+  --fs-base:    12.5px;  /* controls, chips, body of the chrome */
+  --fs-lg:      14px;    /* section headings */
 
   --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -44,7 +76,7 @@
 
     --text:          #e8eaee;
     --text-muted:    #a2aab6;
-    --text-faint:    #767e8a;
+    --text-faint:    #818997;
 
     --accent:        #4da3e8;
     --accent-weak:   #16283a;
@@ -66,7 +98,7 @@
 
   --text:          #e8eaee;
   --text-muted:    #a2aab6;
-  --text-faint:    #767e8a;
+  --text-faint:    #818997;
 
   --accent:        #4da3e8;
   --accent-weak:   #16283a;
@@ -146,11 +178,13 @@ ol, ul { padding: 0; list-style: none; }
 
 .topbar__right { display: flex; align-items: center; gap: 10px; }
 
+/* Not the pill above: a badge is a label, never a control, so it has no hover,
+   no focus ring and no chosen state. It shares the radius and nothing else. */
 .badge {
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-weight: 550;
-  padding: 4px 9px;
-  border-radius: 100px;
+  padding: var(--s-1) 9px;
+  border-radius: var(--radius-pill);
   border: 1px solid transparent;
 }
 
@@ -189,29 +223,22 @@ ol, ul { padding: 0; list-style: none; }
 
 /* --- layout --------------------------------------------------------------- */
 
-.layout {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
-  gap: 16px;
-  padding: 16px 20px;
-  align-items: start;
-  min-height: 0;
-}
-
-@media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
-}
-
-.panel {
+/* The raised surface, shared by everything that reads as a card. `.panel` and
+   `.fan__card` differ only in their shadow, and that difference is deliberate —
+   see `--shadow-fan`. `.evidence__entry` is not in this list on purpose: it sits
+   *inside* a panel, so giving it a fill and a shadow would draw a raised card on
+   a raised card. */
+.panel,
+.fan__card {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+.panel {
   box-shadow: var(--shadow);
   padding: 14px;
 }
-
-.panel--view { min-height: 420px; display: flex; flex-direction: column; }
 
 .panel__title {
   font-size: 12px;
@@ -219,72 +246,20 @@ ol, ul { padding: 0; list-style: none; }
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-bottom: 12px;
+  /* `margin-top` because this is an `<h3>` on the two engine pages, where the
+     UA's 1em would otherwise open a gap the class does not admit to. */
+  margin: 0 0 var(--s-3);
 }
 
-/* --- dropzone ------------------------------------------------------------- */
+/* The drop target used to be a bordered `.dropzone` panel with an icon, a title
+   and a hint. It is now `<button class="btn" id="dropzone">`, so every rule that
+   matched the *class* had been styling nothing — including a `:focus-visible`
+   rule. The button's ring comes from `.btn:focus-visible`; the only survivor
+   here is the whole-page state, which is set on `<body>` and lives further
+   down as `body.dropzone--active`. */
 
-.dropzone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 24px 16px;
-  text-align: center;
-  border: 1.5px dashed var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--bg-sunken);
-  cursor: pointer;
-  transition: border-color 120ms, background 120ms;
-}
-.dropzone:hover,
-.dropzone:focus-visible {
-  border-color: var(--accent);
-  background: var(--accent-weak);
-  outline: none;
-}
-.dropzone--active {
-  border-color: var(--accent);
-  border-style: solid;
-  background: var(--accent-weak);
-}
-
-.dropzone__icon { width: 26px; height: 26px; color: var(--text-faint); margin-bottom: 2px; }
-.dropzone__title { font-weight: 600; }
-.dropzone__hint { font-size: 12px; color: var(--text-muted); }
-
-/* --- study list ----------------------------------------------------------- */
-
-.study-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-
-.study-list__empty {
-  font-size: 13px;
-  color: var(--text-faint);
-  padding: 8px 2px;
-}
-
-.study-list__item {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-}
-
-.study-list__name {
-  font-size: 13px;
-  font-weight: 550;
-  overflow-wrap: anywhere;
-}
-
-.study-list__meta {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  font-family: var(--mono);
-}
+/* (`study-list` is an id on a `.picker-strip`, not a class; its BEM rules were
+   left behind when the sidebar became the timeline strip.) */
 
 /* --- placeholder ---------------------------------------------------------- */
 
@@ -346,26 +321,41 @@ ol, ul { padding: 0; list-style: none; }
 .nav__link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav__link--current { color: var(--accent); background: var(--accent-weak); font-weight: 550; }
 
-@media (max-width: 820px) { .nav { display: none; } }
+/* Below the width where brand, nav and badges fit on one line, the nav wraps to
+   its own row rather than disappearing.
+   
+   It used to be `display: none` with nothing in its place, which left the quiz,
+   serial pairs and Compare unreachable from the atlas on a phone — three of the
+   four pages, gone, on the device someone is most likely to photograph an ECG
+   with. Four short links wrap comfortably; a hamburger would add JavaScript
+   state, focus trapping and an `aria-expanded` contract to every page for no
+   gain at this count. */
+@media (max-width: 820px) {
+  .topbar { flex-wrap: wrap; }
+  .nav {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+}
 
 /* --- panel head ----------------------------------------------------------- */
 
-.panel__head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
-}
-.panel__head .panel__title { margin-bottom: 0; }
-.btn--sm { font-size: 12px; padding: 4px 9px; }
-
-.view-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-
+/* The label is matched by its class, not by being the first span in the box.
+   `.field > span` styled it positionally and held only while the markup order
+   did; all 15 labels already carry `field__label`, so the class is what selects
+   them now and moving one below its control changes nothing. */
 .field { display: flex; flex-direction: column; gap: 3px; }
-.field > span {
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+.field__label {
+  font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: .05em;
   color: var(--text-muted); font-weight: 600;
 }
 .field--inline { flex-direction: row; align-items: center; gap: 6px; }
-.field--inline > span { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.field--inline .field__label { text-transform: none; letter-spacing: 0; font-size: var(--fs-sm); }
 
 /* The search box is an `<input class="select">`, so a `.field select` selector
    misses it and the browser's own control styling shows through — a grey box in
@@ -378,6 +368,13 @@ ol, ul { padding: 0; list-style: none; }
 }
 .field .select::placeholder { color: var(--text-faint); }
 .check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted); }
+
+/* A sentence, not a label. This one carried `field__label` while sitting
+   outside any `.field`, so it was unstyled for as long as that class was
+   matched positionally and turned into an uppercase eyebrow the moment the
+   class started meaning something. An eyebrow names a control; this is telling
+   you something. */
+.hint { font-size: 12px; color: var(--text-muted); }
 
 /* --- study cards ---------------------------------------------------------- */
 
@@ -447,24 +444,12 @@ ol, ul { padding: 0; list-style: none; }
 }
 .study__remove:hover { color: var(--error); border-color: var(--border); }
 
-/* --- assumed calibration -------------------------------------------------- */
-
-.assume {
-  margin-top: 14px; padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-.assume__title {
-  font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--text-muted); font-weight: 650; margin-bottom: 4px;
-}
-.assume__note { font-size: 11.5px; color: var(--text-faint); line-height: 1.45; margin-bottom: 8px; }
-.assume__row { display: flex; gap: 12px; flex-wrap: wrap; }
-
 /* --- comparison view ------------------------------------------------------ */
 
-/* Any canvas in a panel fills it. Scoping this to .panel--view meant a
-   canvas on any other page silently fell back to the 300px default. */
-.panel canvas, .panel--view canvas { width: 100%; display: block; }
+/* Any canvas in a panel fills it. Scoping this to a `.panel--view` modifier
+   meant a canvas on any other page silently fell back to the 300 px default;
+   the modifier is gone now and this is unconditional. */
+.panel canvas { width: 100%; display: block; }
 
 .key { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11.5px; }
 .key span { display: flex; align-items: center; gap: 5px; color: var(--text-muted); }
@@ -522,12 +507,16 @@ ol, ul { padding: 0; list-style: none; }
 
 .measurements { margin-top: 14px; }
 
-.cal-note {
-  font-size: 11.5px; line-height: 1.5; color: var(--text-muted);
+/* One aside. This was `.cal-note` (a calibration note that grew to carry the
+   cardiologist's report and its gloss) and `.evidence__note`, which were the
+   same sunken box at two paddings under two names — and the second was not a
+   child of `.evidence` in any structural sense, only in its spelling. */
+.note {
+  font-size: var(--fs-sm); line-height: 1.5; color: var(--text-muted);
   background: var(--bg-sunken); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 8px 10px; margin-bottom: 12px;
+  border-radius: var(--radius-sm); padding: var(--s-2) 10px; margin: 0 0 var(--s-3);
 }
-.cal-note strong { color: var(--text); font-weight: 550; }
+.note strong { color: var(--text); font-weight: 550; }
 
 .mtable {
   width: 100%; border-collapse: collapse; margin-bottom: 14px;
@@ -624,7 +613,7 @@ ol, ul { padding: 0; list-style: none; }
 .study__colour::-webkit-color-swatch-wrapper { padding: 2px; }
 .study__colour::-webkit-color-swatch { border: none; border-radius: 3px; }
 
-.panel--view #printout, .panel--main #printout { width: 100%; display: block; }
+.panel #printout { width: 100%; display: block; }
 
 
 /* ---------------------------------------------------------------------------
@@ -635,32 +624,7 @@ ol, ul { padding: 0; list-style: none; }
  * layout that stacks them turns that into remembering the ECG instead of
  * reading it.
  * ------------------------------------------------------------------------- */
-.quiz-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
-  max-width: 1800px;
-  margin: 0 auto;
-  /* `body` is a column flex container, so this is a flex item, and `margin: auto`
-     on a flex item overrides `align-self: stretch` with shrink-to-fit. Without an
-     explicit width the whole column collapsed onto its widest child — at a
-     1440px viewport it rendered 953px wide, centred, with 243px of dead space
-     either side. `.page` on the other pages has carried this line all along. */
-  width: 100%;
-}
-
-.quiz-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 18px;
-  padding: 12px 16px;
-}
-.quiz-bar__group { display: flex; align-items: baseline; gap: 10px; }
-.quiz-bar__title { margin: 0; font-size: 15px; }
-/* Pushed right so the destructive one is not adjacent to "New case". */
-.quiz-bar__actions { display: flex; gap: 8px; margin-left: auto; }
+.page-bar__group { display: flex; align-items: baseline; gap: 10px; }
 
 /* One column: the tracing at full width, the question under it.
    `drawPrintout` scale-locks the canvas to its width in both dimensions, so
@@ -697,6 +661,14 @@ ol, ul { padding: 0; list-style: none; }
  * record is 250 mm of paper, and squeezing that into 600px makes the ST segment
  * a few pixels wide.
  * ------------------------------------------------------------------------- */
+/* The page shell for all four user-facing pages.
+   
+   `width: 100%` is load-bearing and not obvious: `body` is a column flex
+   container, so this is a flex item, and `margin: auto` on a flex item overrides
+   `align-self: stretch` with shrink-to-fit. Without it the column collapses onto
+   its widest child — the quiz rendered 953px wide inside a 1440px viewport,
+   centred, with 243px of dead space either side. That bug existed because the
+   quiz had its own copy of this rule, missing this line; the copy is now gone. */
 .page {
   flex: 1;
   display: flex;
@@ -776,14 +748,11 @@ ol, ul { padding: 0; list-style: none; }
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
+  padding: 10px var(--s-3);
   text-align: left;
   font: inherit;
   color: var(--text);
-  background: var(--bg-raised, var(--bg));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: -3px 0 10px rgb(0 0 0 / 0.10);
+  box-shadow: var(--shadow-fan);
   cursor: pointer;
   transition: transform 160ms ease, margin 160ms ease, box-shadow 160ms ease,
     border-color 160ms ease;
@@ -844,28 +813,43 @@ ol, ul { padding: 0; list-style: none; }
 .chip-strip__item { display: flex; flex-direction: column; gap: 5px; }
 .chip-strip__empty { color: var(--text-muted); font-size: 12.5px; padding: 4px 2px; }
 
-.chip {
+/* One pill, two sizes. `.chip` (a finding) and `.evidence__pick__tab` (a rival
+   definition) are the same control — a sunken capsule that turns accent when
+   chosen — and were three separate implementations with three radii and three
+   paddings. The shared behaviour lives here once; only size and resting colour
+   differ below, which is the whole of the real difference. */
+.chip,
+.evidence__pick__tab {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 5px 10px;
   font: inherit;
-  font-size: 12.5px;
-  color: var(--text);
   background: var(--bg-sunken);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
-.chip:hover { border-color: var(--border-strong); }
-.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.chip--open {
+/* Size and resting colour. This has to sit ABOVE `.chip--open`: both are a
+   single class, so they tie on specificity and source order is the whole of the
+   cascade. Putting it below cost the chosen chip its accent label while leaving
+   the accent fill, border and count — a half-applied selected state that reads
+   as a rendering glitch rather than as a CSS ordering mistake. */
+.chip { gap: 6px; padding: 5px 10px; font-size: var(--fs-base); color: var(--text); }
+
+.chip:hover,
+.evidence__pick__tab:hover { border-color: var(--border-strong); }
+.chip:focus-visible,
+.evidence__pick__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Chosen, and last, for the reason above. */
+.chip--open,
+.evidence__pick__tab.is-on {
   color: var(--accent);
   background: var(--accent-weak);
   border-color: var(--accent);
   font-weight: 600;
 }
-.chip__n { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.chip__n { font-size: var(--fs-xs); color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .chip--open .chip__n { color: var(--accent); }
 
 .chip__cases { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
@@ -955,47 +939,53 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
   display: flex; flex-direction: column; gap: 6px;
 }
 .evidence__title { margin: 0; font-size: 13px; }
-.evidence__source { margin: 0; font-size: 11px; color: var(--text-faint); }
-.evidence__note {
-  margin: 0; font-size: 11.5px; line-height: 1.45;
-  color: var(--text-muted); background: var(--bg-sunken);
-  border-radius: var(--radius-sm); padding: 7px 9px;
-}
-.evidence__tally { margin: 0; font-size: 11px; color: var(--text-faint); }
+.evidence__tally { margin: 0; font-size: var(--fs-xs); color: var(--text-faint); }
 
+/* A criterion row is a button; it must not look like one until it is marked.
+   This was two `.evidence__row` blocks twenty lines apart, and the split had
+   consequences neither block admitted to: the second one's `color: inherit`
+   came *after* `.evidence__row--unmeasured` at equal specificity and won the
+   tie, so an unmeasured row greyed three of its four columns and left the
+   quantity name at full strength. Its `font: inherit` — a shorthand, so it
+   resets size — also wiped the first block's `font-size: 12px`, which is why
+   these rows have always rendered at the inherited 14 px. That is left exactly
+   as it renders rather than quietly restyled here; the dead declaration is
+   dropped instead of carried into the merged block. */
 .evidence__row {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr);
   gap: 4px 12px;
   padding: 6px 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
   border-top: 1px solid var(--border);
-  font-size: 12px;
-}
-.evidence__where, .evidence__printed { color: var(--text-muted); }
-.evidence__measured { font-variant-numeric: tabular-nums; }
-.evidence__qualifier {
-  grid-column: 1 / -1; font-size: 11px; color: var(--text-faint); line-height: 1.4;
-}
-.evidence__row--unmeasured { color: var(--text-faint); }
-.evidence__row--unmeasured .evidence__where,
-.evidence__row--unmeasured .evidence__printed,
-.evidence__row--unmeasured .evidence__measured { color: var(--text-faint); }
-
-@media (max-width: 900px) {
-  .evidence__row { grid-template-columns: 1fr; gap: 2px; }
-}
-
-/* A criterion row is a button; it must not look like one until it is marked. */
-.evidence__row {
-  width: 100%; text-align: left; font: inherit; color: inherit;
-  background: none; border: 0; border-top: 1px solid var(--border);
   cursor: pointer;
 }
 .evidence__row:hover { background: var(--bg-sunken); }
 .evidence__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.evidence__where, .evidence__printed { color: var(--text-muted); }
+.evidence__measured { font-variant-numeric: tabular-nums; }
+.evidence__qualifier {
+  grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.4;
+}
+
+/* The modifiers come after the base, so they can actually override it. */
+.evidence__row--unmeasured { color: var(--text-faint); }
+.evidence__row--unmeasured .evidence__where,
+.evidence__row--unmeasured .evidence__printed,
+.evidence__row--unmeasured .evidence__measured { color: var(--text-faint); }
 /* The marked state is the accent, matching the wash on the tracing. Never
    `--ok` or `--error`: this says which leads to look at, not whether they agree. */
 .evidence__row--marked { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+
+@media (max-width: 900px) {
+  .evidence__row { grid-template-columns: 1fr; gap: 2px; }
+}
 
 /* Folded prose. The rows are what a reader scans; the guideline history is what
    they open when a row surprises them. Summaries stay visible so the presence of
@@ -1034,16 +1024,9 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
    never the same as not knowing the others exist. */
 .evidence__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .evidence__pick__count { font-size: 11.5px; color: var(--text-muted); margin-right: 2px; }
+/* Size and resting colour only; everything else is the shared pill above. */
 .evidence__pick__tab {
-  font: inherit; font-size: 11.5px; padding: 4px 9px; cursor: pointer;
-  color: var(--text-muted); background: var(--bg-sunken);
-  border: 1px solid var(--border); border-radius: 999px;
-}
-.evidence__pick__tab:hover { border-color: var(--border-strong); }
-.evidence__pick__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.evidence__pick__tab.is-on {
-  color: var(--accent); background: var(--accent-weak);
-  border-color: var(--accent); font-weight: 600;
+  font-size: var(--fs-sm); padding: var(--s-1) 9px; color: var(--text-muted);
 }
 
 /* The caliper/magnifier layer sits exactly over the tracing canvas. Pointer
@@ -1071,9 +1054,84 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 
 /* The gloss sits under the original report and is visibly secondary to it: the
    cardiologist wrote one of these and this tool wrote the other. */
-.cal-note--gloss {
+.note--gloss {
   border-left: 2px solid var(--accent);
   padding-left: 8px;
   color: var(--text-muted);
   font-style: normal;
 }
+
+/* Focus rings for the interactive elements that were relying on UA defaults.
+   Same treatment as everything else, so the page has one focus language. */
+.study__remove:focus-visible,
+.study__colour:focus-visible,
+.field select:focus-visible,
+.field .select:focus-visible,
+.check input:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* `panel__count` is carried by the markup four times and had no rule at all.
+   (`field__label` is the same story and is handled at its own `.field` block,
+   where the positional selector it was relying on lives.) */
+.panel__count {
+  font-size: var(--fs-base);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the two engine-facing pages ------------------------------------------
+
+   `dev.html` and `try.html` each carried a private <style> block, and each had
+   reimplemented the card — one as `.dev__card`, one as `.card`, both `.panel`
+   minus its shadow. `try.html` went further and redefined `.field`, which this
+   file already owns, so its labels had quietly drifted from every other page's.
+   Both now use `.panel` and `.field__label` like everything else, and what is
+   left below is only what is genuinely particular to these two pages.
+
+   Everything here is scoped under `.dev` or `.trial`. The blocks these replace
+   styled bare `canvas`, `pre` and `select`, which was safe only for as long as
+   they lived in one file each. */
+
+.dev, .trial { padding: var(--s-4) 20px; display: flex; flex-direction: column; gap: 14px; }
+.dev__controls, .trial .controls { display: flex; flex-wrap: wrap; }
+.dev__controls { gap: 10px; align-items: center; }
+.trial .controls {
+  gap: 14px; align-items: flex-end;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--s-3) 14px;
+}
+
+.dev__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 1100px) { .dev__grid { grid-template-columns: 1fr; } }
+.dev .panel, .trial .panel { min-width: 0; }
+
+/* White, not `--bg-raised`: these two pages show what pdf.js rasterised and
+   what was recovered from it, and both are drawn on paper. */
+.dev canvas {
+  width: 100%; height: auto; display: block;
+  background: #fff; border: 1px solid var(--border);
+}
+.trial canvas {
+  width: 100%; display: block;
+  border: 1px solid var(--border); border-radius: 4px;
+}
+
+.dev pre, .trial pre {
+  font-family: var(--mono); line-height: 1.5;
+  white-space: pre-wrap; margin: 0; color: var(--text-muted);
+}
+.dev pre { font-size: var(--fs-sm); max-height: 320px; overflow: auto; }
+.trial pre { font-size: var(--fs-base); line-height: 1.55; }
+
+.dev__controls select, .trial input[type="file"] {
+  font: inherit; font-size: 13px; padding: 6px 10px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--bg-raised); color: var(--text);
+}
+
+.trial .legend { display: flex; gap: var(--s-4); flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-base); }
+.trial .legend span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.trial .dot { width: 9px; height: 9px; border-radius: 50%; }

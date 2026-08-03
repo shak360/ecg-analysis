@@ -336,7 +336,7 @@ async function reveal(): Promise<void> {
 
   if (current.report) {
     const rep = document.createElement("div");
-    rep.className = "cal-note";
+    rep.className = "note";
     // textContent: this is free text out of a clinical system.
     rep.textContent = `Cardiologist's report: ${current.report}`;
     item.appendChild(rep);

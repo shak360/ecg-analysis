@@ -431,7 +431,7 @@ function renderLabels(e: Entry): void {
 
   if (e.report) {
     const rep = document.createElement("div");
-    rep.className = "cal-note";
+    rep.className = "note";
     rep.textContent = `Cardiologist's report: ${e.report}`;
     item.appendChild(rep);
 
@@ -447,7 +447,7 @@ function renderLabels(e: Entry): void {
     if (looksGerman(e.report)) {
       const { text, unknown } = glossReport(e.report);
       const gl = document.createElement("div");
-      gl.className = "cal-note cal-note--gloss";
+      gl.className = "note note--gloss";
       gl.textContent = `Term-by-term gloss (not a translation; German word order kept): ${text}`;
       item.appendChild(gl);
 

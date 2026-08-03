@@ -133,7 +133,7 @@ export function evidenceHtml(v: EvidenceView): string {
 
   if (!v.results.length) {
     return `<section class="evidence">${head}` +
-      `<p class="evidence__note">No published criteria for this finding are recorded in ` +
+      `<p class="note">No published criteria for this finding are recorded in ` +
       `this atlas — ${v.coverage.covered} of its ${v.coverage.total} findings have them. ` +
       `That is a gap in this page, not a statement about the ECG. The label stands as the ` +
       `cardiologist recorded it.</p>${FOOTER}</section>`;
