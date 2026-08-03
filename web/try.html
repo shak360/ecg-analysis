@@ -5,40 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pipeline trial — ECG Atlas</title>
   <link rel="stylesheet" href="./styles/app.css">
-  <style>
-    .trial { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
-    .controls {
-      display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap;
-      background: var(--bg-raised); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 12px 14px;
-    }
-    .field { display: flex; flex-direction: column; gap: 4px; }
-    .field label {
-      font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-      color: var(--text-muted); font-weight: 600;
-    }
-    select, input[type=file] {
-      font: inherit; font-size: 13px; padding: 6px 10px;
-      border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
-      background: var(--bg-raised); color: var(--text);
-    }
-    .card {
-      background: var(--bg-raised); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 12px;
-    }
-    .card h3 {
-      font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
-      color: var(--text-muted); margin-bottom: 10px;
-    }
-    canvas { width: 100%; display: block; border: 1px solid var(--border); border-radius: 4px; }
-    pre {
-      font-family: var(--mono); font-size: 12px; line-height: 1.55;
-      white-space: pre-wrap; margin: 0; color: var(--text-muted);
-    }
-    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
-    .legend span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
-    .dot { width: 9px; height: 9px; border-radius: 50%; }
-  </style>
 </head>
 <body>
   <header class="topbar">
@@ -67,7 +33,7 @@
   <main class="trial">
     <div class="controls">
       <div class="field">
-        <label for="fixture">Fixture</label>
+        <label class="field__label" for="fixture">Fixture</label>
         <select id="fixture">
           <option value="serial-a-baseline">serial-a-baseline (68 bpm)</option>
           <option value="serial-b-followup">serial-b-followup (82 bpm, ST+ V2-V4)</option>
@@ -76,18 +42,18 @@
         </select>
       </div>
       <div class="field">
-        <label for="file">&hellip;or your own PDF</label>
+        <label class="field__label" for="file">&hellip;or your own PDF</label>
         <input type="file" id="file" accept="application/pdf,.pdf">
       </div>
       <div class="field">
-        <label for="speed">Paper speed (assumed)</label>
+        <label class="field__label" for="speed">Paper speed (assumed)</label>
         <select id="speed">
           <option value="25" selected>25 mm/s</option>
           <option value="50">50 mm/s</option>
         </select>
       </div>
       <div class="field">
-        <label for="gain">Gain (assumed)</label>
+        <label class="field__label" for="gain">Gain (assumed)</label>
         <select id="gain">
           <option value="5">5 mm/mV</option>
           <option value="10" selected>10 mm/mV</option>
@@ -97,8 +63,8 @@
       <button type="button" class="btn" id="run">Run</button>
     </div>
 
-    <div class="card">
-      <h3>Rhythm strip &mdash; conditioned, with located beats</h3>
+    <div class="panel">
+      <h3 class="panel__title">Rhythm strip &mdash; conditioned, with located beats</h3>
       <canvas id="strip"></canvas>
       <div class="legend">
         <span><i class="dot" style="background:#0b6ab8"></i> normal</span>
@@ -109,8 +75,8 @@
       </div>
     </div>
 
-    <div class="card">
-      <h3>Report</h3>
+    <div class="panel">
+      <h3 class="panel__title">Report</h3>
       <pre id="report">Loading&hellip;</pre>
     </div>
   </main>
