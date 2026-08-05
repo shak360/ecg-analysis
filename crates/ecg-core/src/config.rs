@@ -387,8 +387,24 @@ pub const T_MIN_SLOPE_MV_S: f32 = 0.20;
 /// Relative amplitude for terminal-lobe selection in a biphasic T.
 pub const T_LOBE_REL_AMP: f32 = 0.15;
 
-/// T search span is min(this fraction of RR, 0.55 s).
+/// Fraction of RR the T search may span, measured from the QRS offset.
+///
+/// Read by `fiducial::t_offset`; the span is `min(T_WIN_RR_FRAC * RR,
+/// T_WIN_MAX_S)`. Measured from the QRS *offset* rather than the R peak so the
+/// window travels with the complex: an R-anchored bound admits at most QTcF 462
+/// at 100 bpm, which would refuse exactly the tachycardic long-QT patients QT is
+/// measured for.
 pub const T_WIN_RR_FRAC: f64 = 0.60;
+
+/// s; the ceiling on that span whatever the RR.
+///
+/// Binds below about 65 bpm, where `0.60 * RR` exceeds it. At the present frame
+/// geometry the frame usually ends first — `FRAME_N` samples from `FRAME_T0_S`
+/// reach 600 ms past R, and a typical QRS offset sits 60–80 ms past R, so
+/// `qrs_offset + 0.55 s` lands past the last sample. It is implemented as the
+/// rule states it, because the rule is a property of the estimator rather than
+/// of whichever frame happens to feed it.
+pub const T_WIN_MAX_S: f64 = 0.55;
 
 /// Percentile fallback when the vector magnitude is unusable but enough leads are.
 pub const T_PERCENTILE_FALLBACK: f64 = 0.75;

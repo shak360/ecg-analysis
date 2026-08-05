@@ -263,17 +263,31 @@ pub fn measure_study(
     // Refuse a QT that will not fit inside its own cardiac cycle.
     //
     // Repolarisation finishes before the next depolarisation begins, so QT < RR
-    // is not a convention but arithmetic. A value above it means the T-offset
-    // walk left the T wave — at short RR the T and the following P crowd, and
-    // the walk terminates on the next beat instead.
+    // is not a convention but arithmetic.
     //
-    // This is a REFUSAL, not a correction, and it is deliberately not silent:
-    // surveyed over 1,184 real PTB-XL records, 11.0% of QT values exceed their
-    // own RR, and above 100 bpm it is 70.7%. That is a systematic failure of the
-    // T-offset estimator, tracked separately. Refusing keeps a fabricated QTc
-    // off the screen; it does not fix the estimator, and pretending otherwise by
-    // clamping to a plausible-looking number would hide the problem behind
-    // numbers that no longer look wrong.
+    // This once carried the estimator. The frame runs to 600 ms past R, so above
+    // 100 bpm the next complex was inside it, and an unbounded "largest
+    // deflection after the QRS" search took that R wave for the T peak: over
+    // 1,184 PTB-XL records 11.0% of QT values exceeded their own RR, and in the
+    // 100+ bpm band 70.7% did. `fiducial::t_offset` now bounds the search by RR,
+    // and that is where the defect is fixed.
+    //
+    // This stays, as a backstop rather than the mechanism, for three reasons.
+    // The bound admits a span of `0.60 * RR` and `QRS_DUR_PLAUSIBLE_MS` permits a
+    // 220 ms complex, so the widest QT the estimator can still emit is about
+    // `220 + 0.60 * RR` ms — which reaches RR itself from around 109 bpm, at a
+    // width where QT is not a meaningful measurement anyway. `StudyAnalysis::
+    // measure` also rebuilds fiducials from cached integers, a path the bound is
+    // nowhere near. And "the estimator can no longer produce an impossible QT"
+    // is a claim about a corpus; `QT < RR` is a proof, and it costs five lines.
+    //
+    // It never covered the case where the rate itself is unknown — `hr_bpm` is
+    // `None` for a single beat, so this does not run at all there. That case is
+    // now `Unmeasurable::RateUnknown` before a QT is ever computed.
+    //
+    // It remains a REFUSAL, not a correction. Clamping to a plausible-looking
+    // number would hide whatever remains behind numbers that no longer look
+    // wrong, which is the one outcome worse than a blank.
     if let (Some(qt), Some(hr)) = (s.qt_ms, hr_bpm) {
         if hr > 0.0 && qt >= 60_000.0 / hr {
             s.qt_ms = None;
@@ -342,9 +356,14 @@ mod tests {
 
     /// A QT that will not fit in its own cardiac cycle is refused, not printed.
     ///
-    /// Surveyed on 1,184 real PTB-XL records this fires on 11% overall and 71%
-    /// above 100 bpm, so it is guarding a systematic estimator failure rather
-    /// than a rare glitch.
+    /// This used to fire on 11% of real PTB-XL records and 71% above 100 bpm,
+    /// when it was carrying an unbounded T search. `fiducial::t_offset` now
+    /// bounds that search by RR, so what is left here is the narrow geometric
+    /// corner where a very wide complex at a high rate can still overrun — see
+    /// the comment on the check itself. It is exercised directly rather than
+    /// through the estimator, because it must hold for any fiducials handed to
+    /// `measure_study`, including the cached ones `StudyAnalysis::measure`
+    /// rebuilds without going near the bound.
     #[test]
     fn a_qt_longer_than_its_rr_is_refused() {
         // 150 bpm: RR is 400 ms, so a 420 ms QT is impossible.

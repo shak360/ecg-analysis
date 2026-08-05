@@ -31,6 +31,20 @@ fn qrs_ms(s: &ecg_core::StudyAnalysis) -> Option<f64> {
     Some((s.qrs_offset() - s.qrs_onset()) as f64 / FS * 1000.0)
 }
 
+/// QT straight off the fiducials, before `measure`'s arithmetic backstop.
+///
+/// `measurements_json` reports the number that survived `measure_study`, which
+/// nulls every `qt >= RR` — that is, precisely the values this survey exists to
+/// count. Reading it alone reports 0% impossible however broken the estimator
+/// is, so the survey was measuring its own backstop rather than the estimator.
+/// Both getters are already on the boundary.
+fn qt_raw_ms(s: &ecg_core::StudyAnalysis) -> Option<f64> {
+    if s.qrs_onset() < 0 || s.t_offset() < 0 {
+        return None;
+    }
+    Some((s.t_offset() - s.qrs_onset()) as f64 / FS * 1000.0)
+}
+
 /// Can the engine read a real ECG at all?
 ///
 /// The first question, and not a rhetorical one: every assumption in the
@@ -244,7 +258,11 @@ fn survey_qt_plausibility() {
         return;
     }
 
-    let mut ratios: Vec<(f64, f64, f64)> = Vec::new(); // (qt_ms, rr_ms, hr)
+    // (raw_qt_ms, rr_ms, hr, reported_qt_ms). `raw` is the estimator's own
+    // output; `reported` is what survives the backstop and reaches a reader.
+    // Keeping both is the point: the gap between them is how much of the
+    // estimator's error is currently being absorbed by a refusal.
+    let mut ratios: Vec<(f64, f64, f64, Option<f64>)> = Vec::new();
     let (mut n, mut no_qt) = (0, 0);
 
     for id in common::all_record_ids() {
@@ -258,54 +276,66 @@ fn survey_qt_plausibility() {
         }
         let rr_ms = 60_000.0 / hr;
 
-        let m: serde_json_lite::Value = serde_json_lite::parse(&s.measurements_json());
-        let Some(qt) = m.number("qt") else {
+        let Some(raw) = qt_raw_ms(&s) else {
             no_qt += 1;
             continue;
         };
-        ratios.push((qt, rr_ms, hr));
+        let m: serde_json_lite::Value = serde_json_lite::parse(&s.measurements_json());
+        ratios.push((raw, rr_ms, hr, m.number("qt")));
     }
 
     ratios.sort_by(|a, b| (a.0 / a.1).partial_cmp(&(b.0 / b.1)).unwrap());
     let frac = |f: f64| ratios[((ratios.len() - 1) as f64 * f) as usize];
 
-    let impossible: Vec<_> = ratios.iter().filter(|(qt, rr, _)| qt > rr).collect();
-    let very_long: Vec<_> = ratios.iter().filter(|(qt, _, _)| *qt > 600.0).collect();
+    let impossible: Vec<_> = ratios.iter().filter(|(qt, rr, _, _)| qt > rr).collect();
+    let very_long: Vec<_> = ratios.iter().filter(|(qt, _, _, _)| *qt > 600.0).collect();
+    let reported = ratios.iter().filter(|r| r.3.is_some()).count();
 
     println!("records analysed        {n}");
-    println!("QT unmeasurable         {no_qt}");
-    println!("QT measured             {}", ratios.len());
+    println!("raw QT unmeasurable     {no_qt}");
+    println!("raw QT produced         {}", ratios.len());
+    println!("reported to a reader    {reported}");
     println!(
-        "QT/RR ratio             p5 {:.2}  p50 {:.2}  p95 {:.2}  max {:.2}",
+        "raw QT/RR ratio         p5 {:.2}  p50 {:.2}  p95 {:.2}  max {:.2}",
         { let r = frac(0.05); r.0 / r.1 },
         { let r = frac(0.50); r.0 / r.1 },
         { let r = frac(0.95); r.0 / r.1 },
         { let r = ratios[ratios.len() - 1]; r.0 / r.1 },
     );
     println!(
-        "QT longer than its RR   {} ({:.1}%)",
+        "raw QT longer than RR   {} ({:.1}%)",
         impossible.len(),
         100.0 * impossible.len() as f64 / ratios.len().max(1) as f64
     );
     println!(
-        "QT over 600 ms          {} ({:.1}%)",
+        "raw QT over 600 ms      {} ({:.1}%)",
         very_long.len(),
         100.0 * very_long.len() as f64 / ratios.len().max(1) as f64
     );
 
     // Is it a tachycardia problem, as the single observed case suggested?
-    let by_rate = |lo: f64, hi: f64| {
-        let sub: Vec<_> = ratios.iter().filter(|(_, _, hr)| *hr >= lo && *hr < hi).collect();
-        let bad = sub.iter().filter(|(qt, rr, _)| qt > rr).count();
-        (sub.len(), bad)
-    };
+    //
+    // Banded, and reporting the raw median alongside the impossible count,
+    // because the bands where the RR bound cannot bind must not move at all —
+    // movement there is a threading bug, not a measurement change — while the
+    // bands where it does bind are expected to trade wrong numbers for refusals.
     println!("\nby rate:");
+    println!("  band          n   raw>RR          reported   p50 raw QT/RR");
     for (lo, hi) in [(0.0, 60.0), (60.0, 80.0), (80.0, 100.0), (100.0, 300.0)] {
-        let (tot, bad) = by_rate(lo, hi);
-        if tot == 0 { continue }
+        let mut sub: Vec<_> =
+            ratios.iter().filter(|(_, _, hr, _)| *hr >= lo && *hr < hi).collect();
+        if sub.is_empty() {
+            continue;
+        }
+        let bad = sub.iter().filter(|(qt, rr, _, _)| qt > rr).count();
+        let rep = sub.iter().filter(|r| r.3.is_some()).count();
+        sub.sort_by(|a, b| (a.0 / a.1).partial_cmp(&(b.0 / b.1)).unwrap());
+        let p50 = { let r = sub[sub.len() / 2]; r.0 / r.1 };
         println!(
-            "  {lo:>3.0}-{hi:<3.0} bpm  n={tot:<5} impossible {bad:<4} ({:.1}%)",
-            100.0 * bad as f64 / tot as f64
+            "  {lo:>3.0}-{hi:<3.0} bpm {:>5}   {bad:<4} ({:>5.1}%)   {rep:>5} ({:>5.1}%)   {p50:>10.2}",
+            sub.len(),
+            100.0 * bad as f64 / sub.len() as f64,
+            100.0 * rep as f64 / sub.len() as f64,
         );
     }
 }

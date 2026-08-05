@@ -10,3 +10,26 @@ edition = "2021"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+# Tests run optimised.
+#
+# The corpus survey over 1,355 real records took 477 s unoptimised and 42 s
+# here — 11x, on the same machine and the same code. Everything the engine does
+# is float loops over 5,000-sample arrays, which is exactly the shape `opt-level
+# = 0` punishes most, and the survey is the thing anyone actually waits for.
+#
+# Debug assertions stay on: the point is to run the same checks faster, not to
+# quietly test a different build than the one that was written. Overflow checks
+# stay on for the same reason.
+[profile.test]
+opt-level = 2
+
+# Release, but with the symbols a profiler needs.
+#
+# `--release` alone gives a flame graph of hex addresses, because nothing here
+# emits debug info and LTO has already inlined the names away. Used by
+# `samply record -- target/profiling/deps/<bin>`; see docs/decisions.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"

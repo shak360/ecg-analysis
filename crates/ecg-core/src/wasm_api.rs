@@ -69,10 +69,12 @@ struct Built {
 }
 
 impl Built {
-    fn fiducials(&self) -> GlobalFiducials {
+    /// `rr_s` is the rhythm strip's median RR. It bounds the T search, and
+    /// without one there is no T offset at all — see `fiducial::t_offset`.
+    fn fiducials(&self, rr_s: Option<f64>) -> GlobalFiducials {
         let weights = vec![1.0f32; self.beats.len()];
         let vm = self.beats.first().cloned().unwrap_or_else(|| vec![0.0; FRAME_LEN]);
-        fiducials(&self.beats, &weights, &vm, FS, 0.0)
+        fiducials(&self.beats, &weights, &vm, FS, 0.0, rr_s)
     }
 }
 
@@ -201,7 +203,17 @@ impl StudyBuilder {
         let strip = self.rhythm.as_ref().and_then(|v| condition(v, 100.0));
         // Beats are kept as structs, not times: the panel verification needs the
         // full beat to reconcile a panel's timing against the strip's.
-        let (strip_beats, hr_bpm) = match &strip {
+        // `rr_median_s` is carried rather than derived from `hr_bpm` later: they
+        // are the same number by construction, and taking it from the detector
+        // guarantees the T-search bound and `measure`'s `QT < RR` backstop can
+        // never disagree about the cycle length they are both reasoning about.
+        //
+        // Median, not minimum. The ensemble is a median-RR object, and this is a
+        // regular-rhythm defect by mechanism — under irregular RR the intruding
+        // complex lands at a different index in every frame and is smeared away
+        // by the combination. A min-RR bound would over-refuse AF for a failure
+        // AF does not have.
+        let (strip_beats, hr_bpm, rr_median_s) = match &strip {
             Some(s) => {
                 let prov = provisional_detrend(s, FS, None, None);
                 let det = detect_qrs(&prov, FS);
@@ -214,9 +226,10 @@ impl StudyBuilder {
                         .copied()
                         .collect::<Vec<Beat>>(),
                     det.hr_bpm.unwrap_or(f64::NAN),
+                    det.rr_median_s,
                 )
             }
-            None => (Vec::new(), f64::NAN),
+            None => (Vec::new(), f64::NAN, None),
         };
 
         // Condition every panel once; both passes reuse the result.
@@ -336,7 +349,7 @@ impl StudyBuilder {
         let pass1 = build_pass(&panels, provenance, sigma_prov, |r| {
             r.saturating_sub(seed_onset)
         });
-        let f1 = pass1.fiducials();
+        let f1 = pass1.fiducials(rr_median_s);
 
         // --- pass 2: re-detrend against the measured onset ------------------
         let anchor = r_index(FS);
@@ -348,7 +361,7 @@ impl StudyBuilder {
                 let pass2 = build_pass(&panels, provenance, sigma_prov, |r| {
                     (r as i64 + delta).max(0) as usize
                 });
-                let f2 = pass2.fiducials();
+                let f2 = pass2.fiducials(rr_median_s);
                 let moved = f2
                     .qrs_onset
                     .ok()
