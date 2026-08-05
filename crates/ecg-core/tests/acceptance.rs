@@ -1000,3 +1000,48 @@ fn a_panel_without_an_established_baseline_reports_no_st() {
         with_st
     );
 }
+
+/// A tachycardic record yields a QT, and it is this beat's, not the next beat's.
+///
+/// Before the T search was bounded by RR, `t_offset` took the following
+/// complex's R wave for the T peak — the frame runs to 600 ms past R, and at
+/// 120 bpm the next R sits inside it at 350. QT came out around one RR too
+/// long, and `measure`'s arithmetic backstop then nulled it. So the QT reported
+/// above 100 bpm was not wrong, it was *absent*: 123 of 174 PTB-XL records in
+/// that band produced an impossible value, and only 51 reached a reader.
+///
+/// This asserts both halves through the real pipeline — detection, both detrend
+/// passes, the ensemble and the boundary — rather than a hand-built frame.
+#[test]
+fn a_tachycardic_record_still_yields_a_qt() {
+    let s = build_simultaneous_study(&generate(120.0, &[], 0.0, 7));
+    assert!((s.hr_bpm() - 120.0).abs() < 3.0, "HR {} is not the 120 asked for", s.hr_bpm());
+
+    let next_r = s.anchor_index() as i32 + (0.5 * FS) as i32;
+    assert!(s.t_offset() >= 0, "no T offset at 120 bpm");
+    assert!(
+        s.t_offset() < next_r,
+        "T offset {} landed on the next complex at {next_r}",
+        s.t_offset(),
+    );
+
+    let qt = (s.t_offset() - s.qrs_onset()) as f64 / FS * 1000.0;
+    assert!((250.0..450.0).contains(&qt), "QT {qt} ms implausible at 120 bpm");
+    assert!(
+        !s.measurements_json().contains(r#""qt":null"#),
+        "QT still refused at 120 bpm: {}",
+        s.measurements_json(),
+    );
+}
+
+/// The resting case is untouched by the bound.
+///
+/// At 60 bpm the span reaches past the frame, so the frame binds exactly as it
+/// did before — the arithmetic is unchanged, and this pins that it stays so.
+#[test]
+fn bounding_the_t_search_leaves_a_resting_record_alone() {
+    let s = build_simultaneous_study(&generate(60.0, &[], 0.0, 7));
+    assert!(s.t_offset() >= 0, "no T offset at 60 bpm");
+    let qt = (s.t_offset() - s.qrs_onset()) as f64 / FS * 1000.0;
+    assert!((300.0..480.0).contains(&qt), "QT {qt} ms implausible at 60 bpm");
+}

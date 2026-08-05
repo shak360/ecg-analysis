@@ -32,7 +32,7 @@
 use crate::config::{
     FRAME_N, FRAME_T0_S, QRS_DUR_PLAUSIBLE_MS, QRS_OFF_CLAMP_MS, QRS_ON_CLAMP_MS,
     SV_HALF_PT, SV_HALF_QRS, SV_MIN_LEADS, SV_PERSIST_SAMPLES, SV_REJOIN_MS, SV_THRESH_FRAC,
-    SV_THRESH_MAD_K, T_LS_HALF, T_MIN_AMP_MV, T_MIN_SLOPE_MV_S,
+    SV_THRESH_MAD_K, T_LS_HALF, T_MIN_AMP_MV, T_MIN_SLOPE_MV_S, T_WIN_MAX_S, T_WIN_RR_FRAC,
 };
 
 /// Why a fiducial could not be determined. Each returns *no number* rather than
@@ -50,8 +50,16 @@ pub enum Unmeasurable {
     FlatT,
     /// The descending tangent was too shallow to intersect the baseline usefully.
     ShallowTangent,
-    /// The T wave ran past the end of the frame.
+    /// The T wave ran past the end of the search window — the RR-derived bound
+    /// or the frame, whichever came first.
     TruncatedT,
+    /// No RR interval was established, so the T search could not be bounded.
+    ///
+    /// This is not a fallback position. An unbounded search returns the *next*
+    /// beat's R wave, which is several times any T wave; that was the
+    /// estimator's dominant failure mode above 100 bpm. With no rhythm to bound
+    /// it there is no honest T offset, and so no QT.
+    RateUnknown,
 }
 
 /// One study's fiducials, in samples relative to the frame start.
@@ -310,17 +318,31 @@ pub fn t_offset(
     qrs_offset: usize,
     fs_hz: f64,
     baseline_mv: f32,
+    rr_s: Option<f64>,
 ) -> Result<usize, Unmeasurable> {
     let n = vm.len();
+
+    // No RR, no bound, no number. See `Unmeasurable::RateUnknown`.
+    let Some(rr_s) = rr_s.filter(|r| r.is_finite() && *r > 0.0) else {
+        return Err(Unmeasurable::RateUnknown);
+    };
+
+    // The search window, exclusive: no sample at or past `end` takes part in any
+    // step below. Without this the "largest deflection after the QRS" is the
+    // *next beat's R wave* at any rate above 100 bpm, since the frame runs to
+    // 600 ms past R and the next R lands inside it.
+    let span_s = (T_WIN_RR_FRAC * rr_s).min(T_WIN_MAX_S);
+    let end = (qrs_offset + (span_s * fs_hz).round() as usize).min(n);
+
     let search_start = (qrs_offset + (0.04 * fs_hz) as usize).min(n.saturating_sub(1));
-    if search_start + 4 >= n {
+    if search_start + 4 >= end {
         return Err(Unmeasurable::TruncatedT);
     }
 
     // Peak of the terminal lobe: the largest absolute deflection after the QRS.
     let mut t_peak = search_start;
     let mut t_amp = 0.0f32;
-    for (i, &v) in vm.iter().enumerate().take(n).skip(search_start) {
+    for (i, &v) in vm.iter().enumerate().take(end).skip(search_start) {
         let a = (v - baseline_mv).abs();
         if a > t_amp {
             t_amp = a;
@@ -331,13 +353,24 @@ pub fn t_offset(
         return Err(Unmeasurable::FlatT);
     }
 
+    // A peak pressed against the window edge means the window clipped a wave
+    // still rising, not that repolarisation ended there. Without this the same
+    // input still refuses — no descending limb is found, so the tangent test
+    // rejects it — but as `ShallowTangent`, which is a different claim about the
+    // record than "the window cut the T off".
+    if t_peak + T_LS_HALF >= end {
+        return Err(Unmeasurable::TruncatedT);
+    }
+
     let polarity = (vm[t_peak] - baseline_mv).signum();
-    let d = sg_derivative(vm, SV_HALF_PT);
+    // Derived over the window only, so the derivative's own lookahead cannot
+    // reach past `end` into the next complex.
+    let d = sg_derivative(&vm[..end], SV_HALF_PT);
 
     // Steepest return toward baseline after the T peak.
     let mut steep = t_peak;
     let mut steep_slope = 0.0f32;
-    for (i, &slope) in d.iter().enumerate().take(n).skip(t_peak + 1) {
+    for (i, &slope) in d.iter().enumerate().take(end).skip(t_peak + 1) {
         let toward = -polarity * slope;
         if toward > steep_slope {
             steep_slope = toward;
@@ -352,7 +385,7 @@ pub fn t_offset(
     // Least-squares slope over a short window at that point, which is steadier
     // than the single-sample derivative.
     let lo = steep.saturating_sub(T_LS_HALF);
-    let hi = (steep + T_LS_HALF + 1).min(n);
+    let hi = (steep + T_LS_HALF + 1).min(end);
     if hi <= lo + 2 {
         return Err(Unmeasurable::TruncatedT);
     }
@@ -381,25 +414,33 @@ pub fn t_offset(
         return Err(Unmeasurable::ShallowTangent);
     }
     let idx = x_at_baseline.round() as usize;
-    if idx >= n {
+    if idx >= end {
+        // Returning `end` here would be a QT set by the window rather than
+        // measured from the wave: biased short by an unknown amount, drifting
+        // with rate, and entirely plausible-looking. That is the failure this
+        // whole change exists to remove, not a fallback for it.
         return Err(Unmeasurable::TruncatedT);
     }
     Ok(idx)
 }
 
 /// Compute all fiducials for one study.
+///
+/// `rr_s` bounds the T search only. A study with no established rhythm still
+/// gets a QRS duration — that measurement needs no RR — but no QT.
 pub fn fiducials(
     leads: &[Vec<f32>],
     weights: &[f32],
     vm: &[f32],
     fs_hz: f64,
     baseline_mv: f32,
+    rr_s: Option<f64>,
 ) -> GlobalFiducials {
     let r_index = ((-FRAME_T0_S) * fs_hz).round() as usize;
     let (qrs_onset, qrs_offset, sv_peak) = qrs_boundaries(leads, weights, r_index, fs_hz);
 
     let t_offset = match qrs_offset {
-        Ok(off) => t_offset(vm, off, fs_hz, baseline_mv),
+        Ok(off) => t_offset(vm, off, fs_hz, baseline_mv, rr_s),
         Err(e) => Err(e),
     };
 
@@ -444,18 +485,41 @@ mod tests {
     ///    walk terminates there. Real leads differ in Q/R/S balance, so their
     ///    derivative zeros do not coincide and the velocity stays positive
     ///    across the complex.
-    fn frame(qrs_ms: f64, t_amp: f32, q: f32, r_amp: f32, s: f32) -> Vec<f32> {
+    /// 3. **The neighbouring complexes.** An infinite `rr_ms` draws this beat
+    ///    alone, which is how the fixture began and exactly why every T test in
+    ///    this file passed while `t_offset` was returning the *next beat's R
+    ///    wave*: the next beat was not in the fixture to be found. The frame
+    ///    runs to 600 ms past R, so above 100 bpm a real recording has another
+    ///    complex inside it. Tests that do not care about rate pass infinity and
+    ///    get the original single-complex frame sample-for-sample.
+    fn frame_at_rate(
+        qrs_ms: f64,
+        t_amp: f32,
+        q: f32,
+        r_amp: f32,
+        s: f32,
+        rr_ms: f64,
+    ) -> Vec<f32> {
         let r = r_index(FS);
         let half = (qrs_ms / 1000.0 * FS) as f32 / 2.0;
+        let rr = (rr_ms / 1000.0 * FS) as f32;
+        let complex = |d: f32| {
+            let qrs = lobe(d, -0.55 * half, 0.45 * half, q)
+                + lobe(d, -0.05 * half, 0.60 * half, r_amp)
+                + lobe(d, 0.50 * half, 0.50 * half, s);
+            let t =
+                t_amp * (-0.5 * ((d - 0.21 * FS as f32) / (0.048 * FS as f32)).powi(2)).exp();
+            qrs + t
+        };
         (0..FRAME_N)
             .map(|i| {
                 let d = i as f32 - r as f32;
-                let qrs = lobe(d, -0.55 * half, 0.45 * half, q)
-                    + lobe(d, -0.05 * half, 0.60 * half, r_amp)
-                    + lobe(d, 0.50 * half, 0.50 * half, s);
-                let t = t_amp
-                    * (-0.5 * ((d - 0.21 * FS as f32) / (0.048 * FS as f32)).powi(2)).exp();
-                qrs + t
+                if !rr.is_finite() {
+                    return complex(d);
+                }
+                // The beat before and the two after; beyond that nothing reaches
+                // a 401-sample frame at any rate this fixture is used at.
+                (-1..=2).map(|k| complex(d - k as f32 * rr)).sum()
             })
             .collect()
     }
@@ -479,10 +543,16 @@ mod tests {
     ];
 
     fn twelve(qrs_ms: f64, t_amp: f32) -> (Vec<Vec<f32>>, Vec<f32>) {
+        twelve_at_rate(qrs_ms, t_amp, f64::INFINITY)
+    }
+
+    fn twelve_at_rate(qrs_ms: f64, t_amp: f32, rr_ms: f64) -> (Vec<Vec<f32>>, Vec<f32>) {
         (
             MORPH
                 .iter()
-                .map(|&(q, r, s)| frame(qrs_ms, t_amp * r.abs().max(0.2), q, r, s))
+                .map(|&(q, r, s)| {
+                    frame_at_rate(qrs_ms, t_amp * r.abs().max(0.2), q, r, s, rr_ms)
+                })
                 .collect(),
             vec![1.0; 12],
         )
@@ -507,8 +577,8 @@ mod tests {
     fn a_wider_qrs_reads_as_wider() {
         let (narrow, w) = twelve(80.0, 0.35);
         let (wide, _) = twelve(150.0, 0.35);
-        let fn_ = fiducials(&narrow, &w, &narrow[1], FS, 0.0);
-        let fw = fiducials(&wide, &w, &wide[1], FS, 0.0);
+        let fn_ = fiducials(&narrow, &w, &narrow[1], FS, 0.0, Some(1.0));
+        let fw = fiducials(&wide, &w, &wide[1], FS, 0.0, Some(1.0));
         let dn = fn_.qrs_duration_ms(FS).expect("narrow");
         let dw = fw.qrs_duration_ms(FS).expect("wide");
         assert!(dw > dn + 20.0, "wide {dw} ms not clearly above narrow {dn} ms");
@@ -558,10 +628,94 @@ mod tests {
 
     // ---- T offset ----------------------------------------------------------
 
+    /// The defect the RR bound exists for, at the rate where it appears.
+    ///
+    /// At 120 bpm the next R sits at index 350, inside a frame that runs to 400.
+    /// It is several times any T wave, so an unbounded "largest deflection after
+    /// the QRS" search selects it, fits the tangent to its downstroke, and
+    /// returns a QT of about one RR too long. Surveyed over 1,355 PTB-XL
+    /// records this was 70.7% of everything above 100 bpm.
+    #[test]
+    fn the_next_beats_r_wave_is_not_measured_as_this_beats_t_wave() {
+        let rr_s = 0.5; // 120 bpm
+        let (leads, w) = twelve_at_rate(100.0, 0.40, rr_s * 1000.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(rr_s));
+
+        let next_r = r_index(FS) + (rr_s * FS) as usize;
+        let t = f.t_offset.expect("no T offset at 120 bpm");
+        assert!(t < next_r, "T offset {t} landed on the next complex at {next_r}");
+
+        let qt = f.qt_ms(FS).expect("no QT");
+        assert!(qt < rr_s * 1000.0, "QT {qt} ms does not fit a {} ms cycle", rr_s * 1000.0);
+        assert!((250.0..450.0).contains(&qt), "QT {qt} ms implausible at 120 bpm");
+    }
+
+    /// No rhythm, no QT — but the QRS duration is unaffected.
+    ///
+    /// The tempting fallback is to search unbounded when RR is unknown, which
+    /// is exactly the behaviour being removed: with nothing to stop it the
+    /// search finds the next beat's R. A missing rate must cost the T offset
+    /// and nothing else.
+    #[test]
+    fn an_unknown_rate_is_refused_rather_than_searched_unbounded() {
+        let (leads, w) = twelve_at_rate(100.0, 0.40, 500.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, None);
+        assert_eq!(f.t_offset.unwrap_err(), Unmeasurable::RateUnknown);
+        assert!(f.qt_ms(FS).is_none(), "a QT was produced with no rate");
+        assert!(f.qrs_onset.is_ok(), "the QRS onset needs no RR");
+        assert!(f.qrs_offset.is_ok(), "the QRS offset needs no RR");
+        assert!(f.qrs_duration_ms(FS).is_some(), "the QRS duration needs no RR");
+    }
+
+    /// A T wave still running at the window edge yields no number.
+    ///
+    /// Returning the edge index would be a QT set by the window rather than
+    /// measured from the wave — plausible-looking, biased short, and drifting
+    /// with rate. That is the failure this bound exists to remove.
+    #[test]
+    fn a_t_wave_that_outlasts_its_window_is_unmeasurable_not_truncated() {
+        let (leads, w) = twelve(100.0, 0.40);
+        let (on, off, _) = qrs_boundaries(&leads, &w, r_index(FS), FS);
+        let err = t_offset(&leads[0], off.expect("no offset"), FS, 0.0, Some(0.30))
+            .expect_err("a number survived a 180 ms window");
+        assert_eq!(err, Unmeasurable::TruncatedT);
+        let _ = on;
+    }
+
+    /// Above the `T_WIN_MAX_S` knee the rate must not move the measurement.
+    ///
+    /// 50 and 65 bpm both clamp to the same 0.55 s span, so the same waveform
+    /// has to give the identical sample index. If it does not, the bound is
+    /// leaking the rate into a measurement that should not see it.
+    #[test]
+    fn a_bound_that_does_not_bind_leaves_the_measurement_alone() {
+        let (leads, w) = twelve(100.0, 0.40);
+        let slow = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.2));
+        let less_slow = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(0.92));
+        assert_eq!(slow.t_offset, less_slow.t_offset);
+
+        // Identical to the unbounded search this replaced — proved, not pinned.
+        // The old code searched to `n`; the new one searches to
+        // `qrs_offset + 0.55 s`. Where that lands past the frame the two are the
+        // same expression, so showing it does is stronger evidence than a
+        // recorded index, which could equally pin a value the bound had moved.
+        let (_, off, _) = qrs_boundaries(&leads, &w, r_index(FS), FS);
+        let off = off.expect("no offset");
+        let span = (T_WIN_MAX_S * FS).round() as usize;
+        assert!(
+            off + span >= FRAME_N,
+            "at 60 bpm the bound binds ({} < {FRAME_N}), so this fixture no \
+             longer demonstrates the resting case is untouched",
+            off + span,
+        );
+        let sixty = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
+        assert_eq!(sixty.t_offset, Ok(253), "the resting index moved");
+    }
+
     #[test]
     fn t_offset_lands_after_the_t_peak() {
         let (leads, w) = twelve(100.0, 0.40);
-        let f = fiducials(&leads, &w, &leads[0], FS, 0.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
         let t = f.t_offset.expect("no T offset");
         let t_peak = r_index(FS) + (0.21 * FS) as usize;
         assert!(t > t_peak, "T offset {t} is not after the peak {t_peak}");
@@ -571,7 +725,7 @@ mod tests {
     #[test]
     fn qt_is_plausible() {
         let (leads, w) = twelve(100.0, 0.40);
-        let f = fiducials(&leads, &w, &leads[0], FS, 0.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
         let qt = f.qt_ms(FS).expect("no QT");
         assert!((280.0..520.0).contains(&qt), "QT {qt} ms implausible");
     }
@@ -581,7 +735,7 @@ mod tests {
         // The failure that matters: guessing a T end on a flat T fabricates a QT
         // and then a QTc, and QTc change is a reported serial finding.
         let (leads, w) = twelve(100.0, 0.005);
-        let f = fiducials(&leads, &w, &leads[0], FS, 0.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
         assert_eq!(f.t_offset.unwrap_err(), Unmeasurable::FlatT);
         assert!(f.qt_ms(FS).is_none(), "a QT was produced from a flat T");
     }
@@ -600,7 +754,7 @@ mod tests {
                 *v -= 2.0 * g; // flip the T
             }
         }
-        let f = fiducials(&leads, &w, &leads[0], FS, 0.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
         assert!(f.t_offset.is_ok(), "inverted T reported {:?}", f.t_offset);
     }
 
@@ -608,7 +762,7 @@ mod tests {
     fn fiducial_failure_propagates_rather_than_being_papered_over() {
         let leads = vec![vec![0.0f32; FRAME_N]; 12];
         let w = vec![1.0f32; 12];
-        let f = fiducials(&leads, &w, &leads[0], FS, 0.0);
+        let f = fiducials(&leads, &w, &leads[0], FS, 0.0, Some(1.0));
         assert!(f.qrs_onset.is_err());
         assert!(f.t_offset.is_err(), "a T offset appeared without a QRS offset");
         assert!(f.qrs_duration_ms(FS).is_none());
