@@ -519,10 +519,37 @@ pub fn resample(src: &Uniform, f_out: f64) -> Resampled {
 /// Never below the source density (interpolating onto a coarser grid aliases)
 /// and never below the canonical rate, rounded up to a multiple of 10 Hz so the
 /// subsequent conversion ratio stays well conditioned.
+///
+/// # Why the rounding is not a bare `ceil`
+///
+/// The caller measures `f_src` as `(n - 1) / span`, and for a source that is
+/// already at a round rate that division lands a few parts in 10^16 *above* it:
+/// a 500 Hz record arrives as 500.000000000000057. A bare `ceil` promotes that
+/// 5.7e-14 Hz of floating-point noise into a whole 10 Hz step, so the PCHIP grid
+/// becomes 510 Hz and the final conversion is 510 -> 500 instead of 500 -> 500.
+///
+/// That is not merely slower, though it is dramatically slower — it misses
+/// `resample`'s identity path, which exists precisely so an unchanged rate does
+/// not commit an interpolation error it did not need to. Every record in a
+/// 500 Hz corpus was being run through a 32-zero-crossing windowed-sinc kernel
+/// to convert it by 2%, and the whole corpus is 500 Hz. Measured: 94% of
+/// `wasm_api::condition`, which is itself 66% of a full study analysis.
+///
+/// So a value within float noise of a multiple of 10 Hz is treated as being on
+/// it. Anything genuinely above one still rounds up, which is the property the
+/// grid conditioning actually needs.
 pub fn intermediate_rate(f_src: f64, f_canonical: f64) -> f64 {
     let raw = f_src.max(f_canonical);
-    (raw / 10.0).ceil() * 10.0
+    let tenths = raw / 10.0;
+    let nearest = tenths.round();
+    let steps = if (tenths - nearest).abs() <= RATE_SNAP_TOL { nearest } else { tenths.ceil() };
+    steps * 10.0
 }
+
+/// How close to a multiple of 10 Hz counts as being on it, in units of that
+/// multiple. Far above the ~1e-16 relative error of the division that produces
+/// `f_src`, and far below any rate difference a recording could really have.
+const RATE_SNAP_TOL: f64 = 1e-9;
 
 #[cfg(test)]
 mod tests {
@@ -861,6 +888,37 @@ mod tests {
         assert_eq!(intermediate_rate(200.0, FS), 500.0);
         assert_eq!(intermediate_rate(977.0, FS), 980.0);
         assert_eq!(intermediate_rate(1000.0, FS), 1000.0);
+    }
+
+    /// A source already at the canonical rate must stay there.
+    ///
+    /// The caller does not hand over a literal 500.0 — it divides, and the
+    /// division overshoots. `(n - 1) / span` for a 10 s record at 500 Hz is
+    /// 500.000000000000057, and a bare `ceil` turned that into 510 Hz: the PCHIP
+    /// grid moved off the canonical rate, `resample` lost its identity path, and
+    /// every record in a 500 Hz corpus paid for a windowed-sinc conversion of 2%
+    /// that also cost it an interpolation error. It was 94% of `condition`.
+    #[test]
+    fn float_noise_in_the_measured_rate_does_not_cost_a_whole_step() {
+        let n = (FS * 10.0) as usize;
+        let t: Vec<f64> = (0..n).map(|i| i as f64 / FS).collect();
+        let measured = (n - 1) as f64 / (t[n - 1] - t[0]);
+
+        assert!(measured > FS, "this test is pointless if the division is exact");
+        assert_eq!(
+            intermediate_rate(measured, FS),
+            FS,
+            "measured {measured:.17} Hz was promoted off the canonical rate",
+        );
+    }
+
+    /// Snapping must not swallow a rate that is genuinely higher.
+    #[test]
+    fn a_real_excess_still_rounds_up() {
+        assert_eq!(intermediate_rate(500.5, FS), 510.0);
+        assert_eq!(intermediate_rate(501.0, FS), 510.0);
+        // Just outside the tolerance, so still a real difference.
+        assert_eq!(intermediate_rate(500.0 * (1.0 + 1e-6), FS), 510.0);
     }
 
     #[test]
