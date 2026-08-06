@@ -51,6 +51,9 @@ export interface CasePicker {
   openCode(): string | null;
 }
 
+/** How many numbered case buttons a chosen finding shows. */
+const SHOWN = 12;
+
 export function mountCasePicker(opts: CasePickerOptions): CasePicker {
   const { el, index } = opts;
   let openClass: string = CATEGORIES[0]!.id;
@@ -84,6 +87,24 @@ export function mountCasePicker(opts: CasePickerOptions): CasePicker {
     const all = (index.byCode.get(code) ?? [])
       .filter((e) => source === "all" || e.source === source);
     return opts.filterCases ? opts.filterCases(all) : all;
+  }
+
+  /**
+   * Follow the filter into whichever category still has something.
+   *
+   * Without this, typing a term that matches only Rhythm findings while the
+   * Normal card is open shows an empty list and reads as "no results" — when
+   * the results exist one card over. The filter is the reader's question; the
+   * open category is not.
+   */
+  function followFilter(): void {
+    const all = filteredCodes();
+    if (all.some((s) => categoryOf(s) === openClass)) return;
+    const fallback = all[0];
+    if (fallback) {
+      openClass = categoryOf(fallback);
+      openCode = null;
+    }
   }
 
   function renderFan(): void {
@@ -174,21 +195,28 @@ export function mountCasePicker(opts: CasePickerOptions): CasePicker {
       });
       li.appendChild(chip);
 
-      if (openCode === s.id && cases.length > 1) {
+      // The chosen finding's cases sit directly beneath its chip. A case can
+      // carry several findings, so a common one like sinus rhythm accumulates
+      // every record that mentions it — hundreds of buttons wrapping into thirty
+      // rows. Twelve is as many examples as anyone browses; the rest are
+      // reachable by filtering, and the count on the chip says they exist.
+      if (openCode === s.id) {
         const row = document.createElement("div");
         row.className = "chip__cases";
-        cases.slice(0, 12).forEach((e, i) => {
+        cases.slice(0, SHOWN).forEach((e, i) => {
           const b = document.createElement("button");
           b.type = "button";
           b.className = "btn btn--ghost";
           b.textContent = String(i + 1);
+          // Which record a numbered button leads to, without opening it.
+          b.title = `${e.id}${e.sex ? `, ${e.sex}` : ""}${e.age ? `, ${e.age}` : ""}`;
           b.addEventListener("click", () => opts.onPick(s.id, e));
           row.appendChild(b);
         });
-        if (cases.length > 12) {
+        if (cases.length > SHOWN) {
           const more = document.createElement("span");
           more.className = "chip__more";
-          more.textContent = `+${cases.length - 12}`;
+          more.textContent = `+${cases.length - SHOWN}`;
           row.appendChild(more);
         }
         li.appendChild(row);
@@ -197,34 +225,32 @@ export function mountCasePicker(opts: CasePickerOptions): CasePicker {
     }
   }
 
+  function refresh(): void {
+    followFilter();
+    renderFan();
+    renderFindings();
+  }
+
   for (const c of [el.kind, el.source]) {
     c.addEventListener("change", () => {
       openCode = null;
-      renderFan();
-      renderFindings();
+      refresh();
     });
   }
-  el.search.addEventListener("input", () => {
-    renderFan();
-    renderFindings();
-  });
+  el.search.addEventListener("input", refresh);
 
-  // Populate the corpus filter from what actually loaded.
+  // Populate the corpus filter from what actually loaded, with each corpus's
+  // size — the reader is choosing between sources of very different weight, and
+  // a bare list of names hides that.
   for (const [id, label] of [...index.sources].sort((a, b) => a[1].localeCompare(b[1]))) {
     const o = document.createElement("option");
     o.value = id;
-    o.textContent = label;
+    o.textContent = `${label} (${index.entries.filter((e) => e.source === id).length})`;
     el.source.appendChild(o);
   }
 
   renderFan();
   renderFindings();
 
-  return {
-    refresh() {
-      renderFan();
-      renderFindings();
-    },
-    openCode: () => openCode,
-  };
+  return { refresh, openCode: () => openCode };
 }

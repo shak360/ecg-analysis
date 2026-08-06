@@ -19,6 +19,14 @@
  */
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
+import {
+  ATLAS_WINDOW_S,
+  type CorpusIndex,
+  type Entry,
+  firstWindow,
+  loadCorpusIndex,
+} from "./app/corpus.ts";
+import { mountCasePicker } from "./ui/case-picker.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
@@ -34,38 +42,8 @@ const $ = <T extends HTMLElement>(id: string): T => {
 const engine = createEngine();
 const TRACE = "#1b4a8f";
 
-interface Statement {
-  id: string;
-  description: string;
-  diagnosticClass: string;
-  kind: "diagnostic" | "form" | "rhythm";
-  sourceCode: string;
-}
-
-interface Entry {
-  id: string;
-  source: string;
-  sourceLabel: string;
-  /**
-   * Whether a human reviewed this label.
-   *
-   * Only PTB-XL records it. Shown on every case rather than quietly dropped,
-   * because the atlas held itself to human-validated labels while it had one
-   * corpus, and a learner is entitled to know when that standard no longer
-   * applies.
-   */
-  provenance: "human-validated" | "as-published";
-  age: number | null;
-  sex: "M" | "F" | null;
-  report: string;
-  findings: Statement[];
-}
-
-let entries: Entry[] = [];
-/** Statement code to the records carrying it. */
-let byCode = new Map<string, Entry[]>();
-let meta = new Map<string, Statement>();
-let openCode: string | null = null;
+/** Everything loaded, once the index has been read. */
+let corpus: CorpusIndex | null = null;
 let lastPrintout: PrintoutStudy[] = [];
 let lastColumnSeconds = 10;
 /** Full duration in seconds when the record was longer than the shown window. */
@@ -101,181 +79,6 @@ let ticket = 0;
  * values, carried through the shared vocabulary; the last two are derived from
  * `kind`, since a rhythm statement has no diagnostic class.
  */
-const CATEGORIES: { id: string; label: string; blurb: string }[] = [
-  { id: "NORM", label: "Normal", blurb: "the reference every other card is read against" },
-  { id: "RHYTHM", label: "Rhythm", blurb: "what is driving the heart, and how regularly" },
-  { id: "CD", label: "Conduction", blurb: "blocks, delays and accessory pathways" },
-  { id: "MI", label: "Infarction", blurb: "Q waves and the territories they name" },
-  { id: "STTC", label: "ST & T", blurb: "repolarisation: elevation, depression, inversion" },
-  { id: "HYP", label: "Hypertrophy", blurb: "voltage and chamber enlargement" },
-  { id: "OTHER", label: "Other morphology", blurb: "descriptive findings without a diagnosis" },
-];
-
-/** Which card a statement belongs under. Every statement lands in exactly one. */
-function categoryOf(s: Statement): string {
-  if (s.kind === "rhythm") return "RHYTHM";
-  if (CATEGORIES.some((c) => c.id === s.diagnosticClass)) return s.diagnosticClass;
-  return "OTHER";
-}
-
-let openClass: string = CATEGORIES[0]!.id;
-
-/** Statements passing every filter *except* the category, for the fan's counts. */
-function filteredCodes(): Statement[] {
-  const kind = $<HTMLSelectElement>("filter-kind").value;
-  const q = $<HTMLInputElement>("search").value.trim().toLowerCase();
-  const source = $<HTMLSelectElement>("filter-source").value;
-
-  return [...meta.values()]
-    .filter((s) =>
-      (byCode.get(s.id) ?? []).some((e) => source === "all" || e.source === source)
-    )
-    .filter((s) => kind === "all" || s.kind === kind)
-    .filter((s) =>
-      !q ||
-      s.id.toLowerCase().includes(q) ||
-      s.description.toLowerCase().includes(q) ||
-      s.sourceCode.toLowerCase().includes(q)
-    )
-    .sort((a, b) => a.description.localeCompare(b.description));
-}
-
-function visibleCodes(): Statement[] {
-  return filteredCodes().filter((s) => categoryOf(s) === openClass);
-}
-
-/** Cases carrying `code`, honouring the corpus filter. */
-function casesFor(code: string): Entry[] {
-  const source = $<HTMLSelectElement>("filter-source").value;
-  return (byCode.get(code) ?? []).filter((e) => source === "all" || e.source === source);
-}
-
-function renderFan(): void {
-  const fan = $("class-fan");
-  const all = filteredCodes();
-  fan.innerHTML = "";
-
-  CATEGORIES.forEach((c, i) => {
-    const codes = all.filter((s) => categoryOf(s) === c.id);
-    // A category's case count is over distinct records: a record with both
-    // CLBBB and IVCD is one ECG under Conduction, not two.
-    const cases = new Set<string>();
-    for (const s of codes) for (const e of casesFor(s.id)) cases.add(e.id);
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "fan__card";
-    btn.style.setProperty("--i", String(i));
-    btn.setAttribute("role", "tab");
-    btn.disabled = codes.length === 0;
-    btn.setAttribute("aria-selected", String(openClass === c.id));
-    if (openClass === c.id) btn.classList.add("fan__card--open");
-    if (!codes.length) btn.classList.add("fan__card--empty");
-
-    btn.innerHTML =
-      `<span class="fan__label"></span>` +
-      `<span class="fan__count"></span>` +
-      `<span class="fan__blurb"></span>`;
-    btn.querySelector(".fan__label")!.textContent = c.label;
-    btn.querySelector(".fan__count")!.textContent = codes.length
-      ? `${cases.size} ECG${cases.size === 1 ? "" : "s"} · ${codes.length} finding${
-        codes.length === 1 ? "" : "s"
-      }`
-      : "nothing here under this filter";
-    btn.querySelector(".fan__blurb")!.textContent = c.blurb;
-
-    btn.addEventListener("click", () => {
-      openClass = c.id;
-      openCode = null;
-      renderFan();
-      renderFindings();
-    });
-    fan.appendChild(btn);
-  });
-}
-
-function renderFindings(): void {
-  const list = $("finding-list");
-  const shown = visibleCodes();
-  list.innerHTML = "";
-
-  // Both halves must be the same scope. Pairing the open category's finding
-  // count with the whole corpus's case count read as "these 2 findings cover
-  // 1,207 cases", which is false and in the flattering direction. The fan gives
-  // the per-category breakdown, so this line states the filtered whole.
-  const source = $<HTMLSelectElement>("filter-source").value;
-  const all = filteredCodes();
-  const cases = new Set<string>();
-  for (const s of all) for (const e of casesFor(s.id)) cases.add(e.id);
-  $("record-count").textContent = `${all.length} findings · ${cases.size} cases` +
-    (source === "all" ? "" : " in this corpus");
-
-  if (!shown.length) {
-    const li = document.createElement("li");
-    li.className = "chip-strip__empty";
-    li.textContent = "No findings in this category match that filter.";
-    list.appendChild(li);
-    return;
-  }
-
-  for (const s of shown) {
-    const cases = casesFor(s.id);
-    const li = document.createElement("li");
-    li.className = "chip-strip__item";
-
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip";
-    if (openCode === s.id) chip.classList.add("chip--open");
-    chip.setAttribute("aria-expanded", String(openCode === s.id));
-    chip.title = `${s.sourceCode} · ${s.kind}`;
-    chip.innerHTML = `<span class="chip__name"></span><span class="chip__n"></span>`;
-    chip.querySelector(".chip__name")!.textContent = s.description || s.id;
-    chip.querySelector(".chip__n")!.textContent = String(cases.length);
-
-    // One click reaches an ECG. Selecting a finding opens its first case rather
-    // than only revealing more buttons — "show me one of these" is the question,
-    // and making it two clicks taught nobody anything extra.
-    chip.addEventListener("click", () => {
-      if (openCode === s.id) return;
-      openCode = s.id;
-      renderFindings();
-      const first = cases[0];
-      if (first) void openCase(s.id, first);
-    });
-    li.appendChild(chip);
-
-    // The chosen finding's cases sit directly beneath its chip. A case can carry
-    // several findings, so a common one like sinus rhythm accumulates every
-    // record that mentions it — hundreds of buttons wrapping into thirty rows.
-    // Twelve is as many examples as anyone browses; the rest are reachable by
-    // filtering, and the count on the chip says they exist.
-    if (openCode === s.id) {
-      const SHOWN = 12;
-      const row = document.createElement("div");
-      row.className = "chip__cases";
-      cases.slice(0, SHOWN).forEach((e, i) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "btn btn--ghost";
-        b.textContent = String(i + 1);
-        b.title = `${e.id}${e.sex ? `, ${e.sex}` : ""}${e.age ? `, ${e.age}` : ""}`;
-        b.addEventListener("click", () => void openCase(s.id, e));
-        row.appendChild(b);
-      });
-      if (cases.length > SHOWN) {
-        const more = document.createElement("span");
-        more.className = "chip__more";
-        more.textContent = `+${cases.length - SHOWN}`;
-        row.appendChild(more);
-      }
-      li.appendChild(row);
-    }
-
-    list.appendChild(li);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // One case
 // ---------------------------------------------------------------------------
@@ -294,41 +97,9 @@ function render(): void {
   tools.redraw();
 }
 
-/**
- * How much of a record the atlas shows and measures.
- *
- * Every corpus here is a standard resting ECG at 10 seconds — except INCART,
- * which is 30-minute ambulatory Holter at 257 Hz: 462,600 samples per lead,
- * 1,800 times the recording a resting layout is drawn for. Handing that to the
- * engine does not fail, it simply does not come back; the page sat on
- * "Loading st_petersburg_incart:I0004…" indefinitely, which is the least
- * diagnosable way for something to be wrong.
- *
- * Ten seconds is not an arbitrary cap, it is what the printout beneath already
- * claims to be: 25 mm/s across a standard page.
- */
-const ATLAS_WINDOW_S = 10;
-
-/**
- * The leading window of a record, and how much was left off.
- *
- * The *first* window rather than a chosen one, because any other rule is a
- * judgement about which part of somebody's Holter is representative, and this
- * page does not make judgements about tracings. The caller says what it did.
- */
-function firstWindow(rec: { leads: Map<string, Float32Array>; fsHz: number; nSamples: number }) {
-  const want = Math.round(ATLAS_WINDOW_S * rec.fsHz);
-  if (rec.nSamples <= want) {
-    return { leads: rec.leads, nSamples: rec.nSamples, trimmedFrom: null };
-  }
-  const leads = new Map<string, Float32Array>();
-  for (const [name, samples] of rec.leads) leads.set(name, samples.subarray(0, want));
-  return { leads, nSamples: want, trimmedFrom: rec.nSamples / rec.fsHz };
-}
-
 async function openCase(code: string, e: Entry): Promise<void> {
-  openCode = code;
-  renderFindings();
+  // Which finding is open is the picker's state now, and the evidence view is
+  // told the code directly, so nothing here needs to mirror it.
   const mine = ++ticket;
 
   $("case-placeholder").hidden = false;
@@ -483,11 +254,14 @@ function renderEvidence(code: string, e: Entry, summary: any): void {
 
   markedLeads = [];
   $("case-evidence").innerHTML = evidenceHtml({
-    findingLabel: meta.get(code)?.description || code,
+    findingLabel: corpus?.meta.get(code)?.description || code,
     results: m ? entries.map((x) => evaluateEntry(x, m, who)) : [],
     // Computed, never written into a string: `atlas.ts` already learned that a
     // hardcoded count drifts and always in the flattering direction.
-    coverage: { covered: [...covered].filter((c) => meta.has(c)).length, total: meta.size },
+    coverage: {
+      covered: [...covered].filter((c) => corpus?.meta.has(c)).length,
+      total: corpus?.meta.size ?? 0,
+    },
   });
 }
 
@@ -598,22 +372,6 @@ function renderReport(summary: any): void {
  * as "no results" when the results are one card away. So the selection falls
  * through to the first category that still has findings.
  */
-function refresh(): void {
-  if (!visibleCodes().length) {
-    const fallback = filteredCodes()[0];
-    if (fallback) {
-      openClass = categoryOf(fallback);
-      openCode = null;
-    }
-  }
-  renderFan();
-  renderFindings();
-}
-
-for (const id of ["filter-kind", "filter-source"]) {
-  $(id).addEventListener("change", refresh);
-}
-$("search").addEventListener("input", refresh);
 $("scale").addEventListener("change", render);
 $("layout").addEventListener("change", render);
 globalThis.addEventListener("resize", render);
@@ -634,21 +392,10 @@ async function boot(): Promise<void> {
     status.classList.add("statusbar__item--error");
   }
 
-  // Both corpora, concatenated. Each writes its own index in the same shape, so
-  // merging is an append — and either being absent is the ordinary state on a
-  // machine that has fetched only one of them, not a fault.
-  const sources = ["/corpus/atlas.json", "/corpus-challenge/atlas.json"];
-  const loaded = await Promise.all(sources.map(async (u) => {
-    try {
-      const res = await fetch(u);
-      return res.ok ? (await res.json()) as Entry[] : [];
-    } catch {
-      return [];
-    }
-  }));
-  entries = loaded.flat();
+  const index = await loadCorpusIndex();
+  corpus = index;
 
-  if (!entries.length) {
+  if (!index.entries.length) {
     $("atlas-status").textContent =
       "No atlas index found. Run `npm run fetch:ptbxl -- --atlas 6`, " +
       "and optionally `npm run fetch:challenge -- --atlas 4` for the other corpora.";
@@ -656,33 +403,23 @@ async function boot(): Promise<void> {
     return;
   }
 
-  byCode = new Map();
-  meta = new Map();
-  for (const e of entries) {
-    for (const s of e.findings) {
-      meta.set(s.id, s);
-      const list = byCode.get(s.id) ?? [];
-      list.push(e);
-      byCode.set(s.id, list);
-    }
-  }
+  mountCasePicker({
+    el: {
+      fan: $("class-fan"),
+      list: $("finding-list"),
+      count: $("record-count"),
+      kind: $<HTMLSelectElement>("filter-kind"),
+      source: $<HTMLSelectElement>("filter-source"),
+      search: $<HTMLInputElement>("search"),
+    },
+    index,
+    onPick: (code, e) => void openCase(code, e),
+  });
 
-  // Populate the corpus filter from what actually loaded.
-  const bySource = new Map<string, string>();
-  for (const e of entries) bySource.set(e.source, e.sourceLabel);
-  const sel = $<HTMLSelectElement>("filter-source");
-  for (const [id, label] of [...bySource].sort((a, b) => a[1].localeCompare(b[1]))) {
-    const opt = document.createElement("option");
-    opt.value = id;
-    opt.textContent = `${label} (${entries.filter((e) => e.source === id).length})`;
-    sel.appendChild(opt);
-  }
-
-  const reviewed = entries.filter((e) => e.provenance === "human-validated").length;
+  const reviewed = index.entries.filter((e) => e.provenance === "human-validated").length;
   $("atlas-status").textContent =
-    `${entries.length} cases across ${meta.size} findings, from ${bySource.size} ` +
-    `corpora — ${reviewed} with human-reviewed labels.`;
-  refresh();
+    `${index.entries.length} cases across ${index.meta.size} findings, from ` +
+    `${index.sources.size} corpora — ${reviewed} with human-reviewed labels.`;
 }
 
 void boot();
