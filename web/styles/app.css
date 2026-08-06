@@ -1193,7 +1193,7 @@ summary:focus-visible {
    and a reader comparing them should not have to scroll between them. */
 .vcg-space__row {
   display: grid;
-  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
   gap: var(--s-3);
   align-items: start;
 }
@@ -1204,3 +1204,20 @@ summary:focus-visible {
 }
 /* A panel you can click to look down should say so by feel, not only in text. */
 #loops { cursor: pointer; }
+
+/* The compass is its own box beside the loop: two fixed references on top, the
+   turning one beneath. The fixed pair is what makes the turning one readable —
+   a diagram of directions is only useful against directions you already know. */
+.vcg-compass {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-2);
+  background: var(--bg-sunken);
+}
+.vcg-compass__fixed {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.vcg-compass .note { margin: 0 0 var(--s-1); font-size: var(--fs-xs); }

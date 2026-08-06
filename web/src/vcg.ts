@@ -29,6 +29,7 @@ import {
   planeAt,
   reorthonormalise,
   rotFromPlane,
+  rotIdentity,
   rotMul,
   type View3d,
 } from "./ui/vcg-loops.ts";
@@ -72,13 +73,34 @@ function render(): void {
   };
   drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, shown);
   drawVcg3d($<HTMLCanvasElement>("space"), snapshot, cursor, view, shown);
+  // The cursor's vector, shared by all three compasses so they agree.
+  const here = cursor < snapshot.x.length
+    ? { x: snapshot.x[cursor]!, y: snapshot.y[cursor]!, z: snapshot.z[cursor]! }
+    : null;
+
+  // The two fixed references. Their rotations come from the plane definitions
+  // the engine supplies, so they cannot drift from the panels above them.
+  const planeRot = (id: string) => {
+    const p = snapshot!.planes.find((q) => q.id === id);
+    return p ? { rot: rotFromPlane(p) } : { rot: rotIdentity() };
+  };
+  drawLeadCompass($<HTMLCanvasElement>("compass-limb"), snapshot.leadAxes, planeRot("frontal"), {
+    dark: shown.dark,
+    only: (a) => a.limb,
+    vector: here,
+    caption: "facing the patient",
+  });
+  drawLeadCompass($<HTMLCanvasElement>("compass-prec"), snapshot.leadAxes, planeRot("horizontal"), {
+    dark: shown.dark,
+    only: (a) => !a.limb,
+    vector: here,
+    caption: "from below",
+  });
+
+  // And the one that follows the loop.
   drawLeadCompass($<HTMLCanvasElement>("compass"), snapshot.leadAxes, view, {
     dark: shown.dark,
-    // The compass shows where this instant points, so it needs the same sample
-    // the loop's cursor is on.
-    vector: cursor < snapshot.x.length
-      ? { x: snapshot.x[cursor]!, y: snapshot.y[cursor]!, z: snapshot.z[cursor]! }
-      : null,
+    vector: here,
   });
 
   // Milliseconds relative to the R peak, which is what a reader is actually

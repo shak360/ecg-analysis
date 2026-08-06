@@ -11,6 +11,7 @@
  * numbers: leftward must go right on screen, inferior must go down.
  */
 import { expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
   arcball,
@@ -29,7 +30,7 @@ import {
 
 /** A view at the named orientation, for the readable cases below. */
 const at = (yaw: number, pitch: number) => ({ rot: rotFromYawPitch(yaw, pitch) });
-import type { VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
+import type { LeadAxis, VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
 
 /** The plane definitions as the engine emits them. */
 const PLANES: VcgPlane[] = [
@@ -54,6 +55,30 @@ const PLANES: VcgPlane[] = [
 ];
 
 const byId = (id: string) => PLANES.find((p) => p.id === id)!;
+
+/**
+ * The lead directions, read out of `config.rs` at test time.
+ *
+ * Parsed rather than copied, for the reason `criteria-doc.test.ts` gives about
+ * the criteria table: a copy passes forever while the constant it claims to
+ * check drifts underneath it. These are anatomical directions where a sign error
+ * points a lead at the opposite wall of the chest, so the test has to be reading
+ * the real thing.
+ */
+const LEAD_AXES: LeadAxis[] = (() => {
+  const rs = readFileSync(new URL("../crates/ecg-core/src/config.rs", import.meta.url), "utf8");
+  const block = /pub const LEAD_AXES[^=]*= \[([\s\S]*?)\];/.exec(rs);
+  if (!block) throw new Error("LEAD_AXES not found in config.rs");
+  const rows = [...block[1]!.matchAll(/\("([^"]+)", \[([-\d.]+), ([-\d.]+), ([-\d.]+)\]\)/g)];
+  if (rows.length !== 12) throw new Error(`expected 12 lead axes, parsed ${rows.length}`);
+  return rows.map((r) => ({
+    lead: r[1]!,
+    v: [Number(r[2]), Number(r[3]), Number(r[4])] as [number, number, number],
+    limb: !r[1]!.startsWith("V"),
+    approximate: r[1]!.startsWith("V"),
+  }));
+})();
+
 
 test("a leftward vector goes right on screen in both planes that show X", () => {
   // X is left-positive; canvas u grows rightward. Anatomical left is drawn to
@@ -378,5 +403,50 @@ test("anterior and posterior always land on opposite sides of the origin", () =>
     expect(a.u).toBeCloseTo(-p.u, 9);
     expect(a.v).toBeCloseTo(-p.v, 9);
     expect(a.depth).toBeCloseTo(-p.depth, 9);
+  }
+});
+
+// --- the two fixed reference compasses -------------------------------------
+
+test("the frontal reference faces the patient: left right, inferior down", () => {
+  // This is the hexaxial diagram every reader already knows, so it is the one
+  // that must be beyond argument. Facing a patient puts their left on your
+  // right.
+  const rot = rotFromPlane(byId("frontal"));
+  expect(project3d(1, 0, 0, { rot }).u, "patient's left is to the reader's right")
+    .toBeGreaterThan(0);
+  expect(project3d(0, 1, 0, { rot }).v, "inferior is down the screen")
+    .toBeGreaterThan(0);
+});
+
+test("the transverse reference puts anterior up and posterior down", () => {
+  // The question this whole diagram exists to settle. A transverse section is
+  // conventionally drawn as a CT slice is — anterior at the top, the patient's
+  // left on the reader's right, which is the view from the feet.
+  const rot = rotFromPlane(byId("horizontal"));
+  expect(project3d(0, 0, -1, { rot }).v, "anterior must be up the screen")
+    .toBeLessThan(0);
+  expect(project3d(0, 0, 1, { rot }).v, "posterior must be down the screen")
+    .toBeGreaterThan(0);
+  expect(project3d(1, 0, 0, { rot }).u, "patient's left is to the reader's right")
+    .toBeGreaterThan(0);
+});
+
+test("V1 and V2 point anteriorly, V6 points left", () => {
+  // The lead directions themselves, independent of any view. If these were
+  // wrong every compass would be wrong together and consistently, which is the
+  // hardest kind of error to notice.
+  const axis = (lead: string) => LEAD_AXES.find((a) => a.lead === lead)!;
+  for (const lead of ["V1", "V2"]) {
+    expect(axis(lead).v[2], `${lead} must point anteriorly (negative Z)`).toBeLessThan(0);
+  }
+  expect(axis("V6").v[0], "V6 points to the patient's left").toBeGreaterThan(0.9);
+  expect(Math.abs(axis("V6").v[2]), "V6 is not an anterior lead").toBeLessThan(0.1);
+  // V1 is rightward as well as anterior; V6 is leftward. That spread is the
+  // reason there are six of them.
+  expect(axis("V1").v[0]).toBeLessThan(0);
+  // Limb leads carry no front-back component at all.
+  for (const lead of ["I", "II", "III", "aVR", "aVL", "aVF"]) {
+    expect(axis(lead).v[2], `${lead} is a frontal-plane lead`).toBe(0);
   }
 });

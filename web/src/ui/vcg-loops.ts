@@ -703,25 +703,60 @@ export function planeAt(
 
 // --- the lead compass ------------------------------------------------------
 
+/** What each screen direction means, drawn around a compass so it cannot be read
+ * backwards. Derived from the rotation, never written per-panel. */
+function orientationMarks(
+  view: View3d | { rot: Rot },
+): { u: number; v: number; label: string; near: boolean }[] {
+  const dirs: [[number, number, number], string][] = [
+    [[1, 0, 0], "left"],
+    [[-1, 0, 0], "right"],
+    [[0, 1, 0], "inferior"],
+    [[0, -1, 0], "superior"],
+    [[0, 0, 1], "posterior"],
+    [[0, 0, -1], "anterior"],
+  ];
+  return dirs.map(([d, label]) => {
+    const p = project3d(d[0], d[1], d[2], view);
+    return { u: p.u, v: p.v, label, near: p.depth < 0 };
+  });
+}
+
+export interface CompassOptions {
+  dark: boolean;
+  /** Which leads to draw. Omit for all twelve. */
+  only?: (a: LeadAxis) => boolean;
+  /** The cursor's vector, drawn in the cursor colour. */
+  vector?: { x: number; y: number; z: number } | null;
+  /** Shown top-left; says what the reader is looking at. */
+  caption?: string;
+}
+
 /**
- * The twelve lead axes, turning with the loop.
+ * Lead directions, drawn in a given orientation.
  *
  * A vectorcardiogram answers "where is the heart's vector pointing", and the
  * twelve leads are twelve directions that vector gets measured along. Drawn in
- * the same rotated frame as the loop, the relationship stops being something a
- * reader has to hold in their head: turn the loop until a lead points at you and
- * that lead is the one seeing the deflection head-on.
+ * the loop's own rotated frame, the relationship stops being something a reader
+ * has to hold in their head.
  *
- * Limb leads solid, precordial dashed — because the limb angles are
- * definitional and the precordial ones are a textbook approximation to a
- * direction that really depends on the chest. Drawing them alike would claim a
- * precision the second six do not have.
+ * # Every compass states its own orientation
+ *
+ * The first version drew lead names and nothing else, which left a reader no way
+ * to tell which way the body was facing — and an orthographic projection offers
+ * no cue of its own. A diagram of directions that does not say which way is
+ * front is not a compass, it is a star. So the six anatomical directions are
+ * marked on every one of these, with the ones pointing toward the reader in ink
+ * and the ones pointing away faint.
+ *
+ * Limb leads solid, precordial dashed — the limb angles are definitional, the
+ * precordial ones a textbook approximation.
  */
 export function drawLeadCompass(
   canvas: HTMLCanvasElement,
   axes: LeadAxis[],
-  view: View3d,
-  opts: { dark: boolean; vector?: { x: number; y: number; z: number } | null },
+  view: View3d | { rot: Rot },
+  opts: CompassOptions,
 ): void {
   const th = loopTheme(opts.dark);
   const dpr = globalThis.devicePixelRatio || 1;
@@ -739,10 +774,8 @@ export function drawLeadCompass(
 
   const cx = cssW / 2;
   const cy = cssH / 2;
-  const r = cssW / 2 - 22;
+  const r = cssW / 2 - 30;
 
-  // The sphere the leads live on, so the diagram reads as a ball of directions
-  // rather than a flat star.
   ctx.strokeStyle = th.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -753,16 +786,25 @@ export function drawLeadCompass(
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // Farthest first, so a lead in front is drawn over one behind it.
-  const drawn = axes
+  // The anatomical directions first, outside the circle, so the leads are read
+  // against a frame that is already established.
+  for (const m of orientationMarks(view)) {
+    // An axis lying in the screen plane is the informative case; one pointing
+    // straight at the reader collapses to the centre and is dropped rather than
+    // stacked on the origin.
+    if (Math.hypot(m.u, m.v) < 0.25) continue;
+    ctx.fillStyle = m.near ? th.muted : th.faint;
+    ctx.fillText(m.label, cx + m.u * (r + 17), cy + m.v * (r + 17));
+  }
+
+  const shown = axes.filter((a) => (opts.only ? opts.only(a) : true));
+  const drawn = shown
     .map((a) => ({ a, p: project3d(a.v[0], a.v[1], a.v[2], view) }))
     .sort((m, n) => n.p.depth - m.p.depth);
 
   for (const { a, p } of drawn) {
     const x = cx + p.u * r;
     const y = cy + p.v * r;
-    // Toward the viewer reads strong, away reads faint: that is the cue that
-    // makes it a three-dimensional diagram rather than a dial.
     const front = 0.45 + 0.55 * (1 - Math.min(1, Math.max(0, p.depth / 2 + 0.5)));
 
     ctx.globalAlpha = front;
@@ -776,12 +818,10 @@ export function drawLeadCompass(
     ctx.setLineDash([]);
 
     ctx.fillStyle = a.limb ? th.ink : th.muted;
-    ctx.fillText(a.lead, cx + p.u * (r + 11), cy + p.v * (r + 11));
+    ctx.fillText(a.lead, cx + p.u * (r + 8), cy + p.v * (r + 8));
     ctx.globalAlpha = 1;
   }
 
-  // The instantaneous vector, in the cursor's colour, so the compass answers
-  // "which leads is *this* moment pointing at".
   if (opts.vector) {
     const p = project3d(opts.vector.x, opts.vector.y, opts.vector.z, view);
     const n = Math.hypot(opts.vector.x, opts.vector.y, opts.vector.z) || 1;
@@ -797,5 +837,12 @@ export function drawLeadCompass(
     ctx.beginPath();
     ctx.arc(cx + p.u * k, cy + p.v * k, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  if (opts.caption) {
+    ctx.fillStyle = th.muted;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(opts.caption, 2, 2);
   }
 }
