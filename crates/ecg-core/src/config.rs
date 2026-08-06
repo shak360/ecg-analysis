@@ -641,3 +641,66 @@ pub const QUALITY_ASYMMETRY_NAME: f32 = 3.0;
 /// elevation" at three decimals against a 0.06 mV limit is the exact artifact
 /// this product must not produce.
 pub const ST_DISPLAY_QUANTUM_MV: f32 = 0.05;
+
+// ---- §18 VECTORCARDIOGRAPHY -------------------------------------------------
+
+/// The eight leads the Kors regression reads, in coefficient order.
+///
+/// III, aVR, aVL and aVF are exact linear combinations of I and II. A transform
+/// naming them would be double-counting, not using more information.
+pub const KORS_LEADS: [&str; 8] = ["I", "II", "V1", "V2", "V3", "V4", "V5", "V6"];
+
+/// Kors regression coefficients, one row per orthogonal lead, in `KORS_LEADS`
+/// order. Kors et al., *Eur Heart J* 1990;11:1083–92.
+///
+/// # Signs are the whole of the correctness here
+///
+/// X is **left** positive, Y is **inferior** (foot) positive, Z is **posterior**
+/// positive, as Frank defined them. A single flipped sign still draws a smooth,
+/// entirely plausible loop — with its rotation reversed. Rotation *is* the
+/// reading: a normal horizontal loop runs counterclockwise, and clockwise is
+/// how posterior infarction and right ventricular hypertrophy present. So a
+/// typo here is not a wrong number a reader can spot, it is a wrong diagnosis
+/// that looks right.
+///
+/// Every one of these 24 values is pinned against `docs/vcg-transform.md` by
+/// `vcg::tests`, in the manner of `test/criteria-doc.test.ts`, so the table a
+/// reader checks and the numbers the code runs cannot drift apart.
+pub const KORS_X: [f32; 8] = [0.38, -0.07, -0.13, 0.05, -0.01, 0.14, 0.06, 0.54];
+pub const KORS_Y: [f32; 8] = [-0.07, 0.93, 0.06, -0.02, -0.05, 0.06, -0.17, 0.13];
+pub const KORS_Z: [f32; 8] = [0.11, -0.23, -0.43, -0.06, -0.14, -0.20, -0.11, 0.31];
+
+/// Coefficient of variation of RR above which the ten seconds are not one
+/// rhythm, so the twelve ensemble beats do not describe one beat. Spec §4.3.
+///
+/// The 12-lead matrix is synthetic — the leads are derived from one another —
+/// and the spec is explicit that it is not valid for instant-by-instant vector
+/// quantities unless rate and conduction were stable.
+pub const VCG_RR_CV_MAX: f64 = 0.10;
+
+/// QRS correlation below which the beats are *reported* as poorly matched.
+///
+/// # This is a note, not a gate, and the measurement is why
+///
+/// The spec asks for `ρ > 0.98` alongside the RR check. Applied to
+/// `min(ρ)` across a lead's ensemble that is a category error, and the corpus
+/// says so plainly. `ensemble()` admits no beat below `RHO_OK_VECTOR` (0.95),
+/// so the minimum admitted ρ is by construction the worst beat that cleared the
+/// bar — always just above it. Over 1,355 PTB-XL records:
+///
+/// ```text
+/// min ρ    p01 0.950   p10 0.951   p50 0.956     below 0.98: 1,268 of 1,342
+/// RR CV    p50 0.025   p90 0.129   p99 0.287     above 0.10:   184 of 1,355
+/// ```
+///
+/// Gating on that minimum asks "were all admitted beats far above the admission
+/// threshold?", which the admission process guarantees is usually false. It
+/// refused 92.7% of the corpus — not because those records were non-stationary,
+/// but because the statistic cannot clear a bar set above its own floor.
+///
+/// So stationarity is decided by `VCG_RR_CV_MAX`, which is a fact about the
+/// rhythm and calibrates sensibly (it refuses ~14%, the irregular ones). ρ is
+/// carried to the reader as a note. If a future change wants ρ to gate, it needs
+/// a statistic that is not floored by the screen — the ensemble's own
+/// correlation, or a median rather than a minimum — not a lower threshold.
+pub const VCG_QRS_RHO_NOTE: f32 = 0.98;

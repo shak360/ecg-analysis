@@ -17,6 +17,7 @@ use crate::beats::detect::{detect_qrs, Beat, BeatClass};
 use crate::beats::ensemble::{ensemble, Provenance};
 use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
 use crate::config::{
+    KORS_LEADS, MIN_BEATS_FOR_DELTA,
     CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV,
 };
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
@@ -26,6 +27,7 @@ use crate::dsp::resample::{
 };
 use crate::fiducial::{fiducials, r_index, GlobalFiducials, Unmeasurable, FRAME_LEN};
 use crate::measure::{measure_study, LeadMeasurements};
+use crate::vcg::{kors, Stationarity, VcgRefusal};
 use crate::serial::gate::{
     gate_all, pair_blockers, ConfounderScreens, CoverageEvidence, FilterEvidence, GainEvidence,
     IdentityEvidence, LeadEvidence, LeadVerdict, PairEvidence, RhoGain, Screen, StudyEvidence,
@@ -66,6 +68,22 @@ struct Built {
     /// that line, so without it there is no ST to report — only a height above
     /// zero, and zero is wherever the trace happened to sit.
     baselined: Vec<bool>,
+    /// Parallel to `names`: the worst beat-to-template QRS correlation that
+    /// still entered this lead's ensemble.
+    ///
+    /// `ensemble()` computes it and drops it. Averaging hides morphology change
+    /// by construction, so the ensemble alone cannot say whether the beats it
+    /// combined were the same beat — this is the only surviving evidence, and a
+    /// derived vectorcardiogram is exactly the reading that needs it.
+    rho_min: Vec<f32>,
+    /// Parallel to `names`: the mean alignment shift applied to this lead's
+    /// beats, milliseconds.
+    ///
+    /// Each lead aligns to *its own* medoid, so two leads can end up with a
+    /// relative time offset. On a scalar tracing that is invisible; on a loop it
+    /// rotates and fattens the QRS. Kept so the spread can be reported rather
+    /// than silently corrected.
+    shift_mean_ms: Vec<f32>,
 }
 
 impl Built {
@@ -98,6 +116,8 @@ fn build_pass(
         n_used: Vec::new(),
         display_only: Vec::new(),
         baselined: Vec::new(),
+        rho_min: Vec::new(),
+        shift_mean_ms: Vec::new(),
     };
 
     for p in panels {
@@ -127,6 +147,16 @@ fn build_pass(
         out.beats.push(eb.v_mv.clone());
         out.sigmas.push(eb.sigma_mv.clone());
         out.n_used.push(eb.n_used as u32);
+        // Worst correlation and mean shift, both computed by `ensemble()` and
+        // otherwise discarded at this line.
+        out.rho_min
+            .push(eb.rho.iter().copied().fold(f32::INFINITY, f32::min));
+        let shift_mean = if eb.shifts.is_empty() {
+            0.0
+        } else {
+            eb.shifts.iter().sum::<f32>() / eb.shifts.len() as f32
+        };
+        out.shift_mean_ms.push(shift_mean / FS as f32 * 1000.0);
         // `measurable()` was written and then never called, so the only thing
         // stopping a single-beat lead from being gated was an INFINITY in the
         // sigma array — which anyone who later floors that array for display
@@ -383,8 +413,10 @@ impl StudyBuilder {
             ));
         }
 
-        let Built { names, signals, offsets, beats, sigmas, n_used, display_only, baselined } =
-            built;
+        let Built {
+            names, signals, offsets, beats, sigmas, n_used, display_only, baselined,
+            rho_min, shift_mean_ms,
+        } = built;
 
         // A single-beat lead is not a slightly noisier lead. Its beat-to-beat
         // spread is unestimable, so the gate excludes it from every serial
@@ -401,6 +433,22 @@ impl StudyBuilder {
             ));
         }
 
+        // How steady the rate was across the ten seconds.
+        //
+        // NaN, not zero, when there are too few beats to say: a coefficient of
+        // variation nobody could compute is unknown, and unknown must not read
+        // as "perfectly regular" to whatever consumes it.
+        let rr_cv = {
+            let rr: Vec<f64> = strip_beats.iter().filter_map(|b| b.rr_prev_s).collect();
+            if rr.len() < 3 {
+                f64::NAN
+            } else {
+                let mean = rr.iter().sum::<f64>() / rr.len() as f64;
+                let var = rr.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rr.len() as f64;
+                if mean > 0.0 { var.sqrt() / mean } else { f64::NAN }
+            }
+        };
+
         StudyAnalysis {
             names,
             signals,
@@ -410,6 +458,9 @@ impl StudyBuilder {
             sigmas,
             n_used,
             baselined,
+            rho_min,
+            shift_mean_ms,
+            rr_cv,
             hr_bpm,
             qrs_onset: f.qrs_onset.map(|v| v as i32).unwrap_or(-1),
             qrs_offset: f.qrs_offset.map(|v| v as i32).unwrap_or(-1),
@@ -453,6 +504,13 @@ pub struct StudyAnalysis {
     /// the measurement happens later and this is the fact that decides whether
     /// an ST amplitude exists at all.
     baselined: Vec<bool>,
+    /// Parallel to `names`: worst beat-to-template QRS correlation in that
+    /// lead's ensemble, and the mean alignment shift applied, milliseconds.
+    /// Both are computed by `ensemble()` and were previously discarded.
+    rho_min: Vec<f32>,
+    shift_mean_ms: Vec<f32>,
+    /// Coefficient of variation of RR across the strip; NaN when unmeasurable.
+    rr_cv: f64,
     hr_bpm: f64,
     qrs_onset: i32,
     qrs_offset: i32,
@@ -621,6 +679,102 @@ impl StudyAnalysis {
     #[wasm_bindgen(getter)]
     pub fn anchor_index(&self) -> usize {
         r_index(FS)
+    }
+
+    /// This study's vectorcardiogram, derived from its ensemble beats.
+    ///
+    /// Always returns a value. A study the transform cannot be applied to comes
+    /// back carrying a refusal and **empty** arrays — never zero-filled ones. A
+    /// loop of zeros draws a dot at the origin, and a null vector is a finding.
+    pub fn vcg(&self) -> VcgLoops {
+        let beats: Vec<(String, Vec<f32>)> = self
+            .names
+            .iter()
+            .cloned()
+            .zip(self.beats.iter().cloned())
+            .collect();
+
+        // The gate reads the worst lead, not the average: one lead whose beats
+        // disagree is enough to make the instantaneous vector meaningless.
+        let rho_min = self
+            .rho_min
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        let stationarity = if self.rr_cv.is_nan() || !rho_min.is_finite() {
+            Stationarity::NotMeasured
+        } else {
+            Stationarity::Measured { rr_cv: self.rr_cv, rho_min }
+        };
+
+        // Each lead aligns to its own medoid, so the leads can drift relative to
+        // one another. Reported, never silently corrected — re-aligning eight
+        // leads to a common template would be a new estimator with no test.
+        let spread = if self.shift_mean_ms.is_empty() {
+            0.0
+        } else {
+            let hi = self.shift_mean_ms.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let lo = self.shift_mean_ms.iter().copied().fold(f32::INFINITY, f32::min);
+            hi - lo
+        };
+
+        let mut notes = Vec::new();
+        for (i, name) in self.names.iter().enumerate() {
+            if KORS_LEADS.contains(&name.as_str()) && self.n_used[i] < MIN_BEATS_FOR_DELTA {
+                notes.push(format!(
+                    "{name} was averaged from a single beat, so its contribution \
+                     carries full single-beat noise."
+                ));
+            }
+        }
+        if spread > 4.0 {
+            notes.push(format!(
+                "The contributing leads were aligned to their own beats and differ \
+                 by up to {spread:.1} ms. On a loop that rotates and widens the QRS \
+                 rather than shifting it."
+            ));
+        }
+
+        match kors(&beats, &self.offsets, &self.baselined, stationarity) {
+            Ok(v) => VcgLoops {
+                x_mv: v.x_mv,
+                y_mv: v.y_mv,
+                z_mv: v.z_mv,
+                qrs_onset: self.qrs_onset,
+                qrs_offset: self.qrs_offset,
+                t_offset: self.t_offset,
+                refusal: None,
+                notes,
+                alignment_spread_ms: spread,
+            },
+            Err(r) => VcgLoops {
+                x_mv: Vec::new(),
+                y_mv: Vec::new(),
+                z_mv: Vec::new(),
+                qrs_onset: -1,
+                qrs_offset: -1,
+                t_offset: -1,
+                refusal: Some(r),
+                notes,
+                alignment_spread_ms: spread,
+            },
+        }
+    }
+
+    /// Coefficient of variation of RR across the strip; NaN if unmeasurable.
+    ///
+    /// Named apart from the field it reads: a private field shadows a same-named
+    /// method for callers outside the crate, including this crate's own
+    /// integration tests, which is where it bit.
+    #[wasm_bindgen(getter = rr_cv)]
+    pub fn rr_cv_measured(&self) -> f64 {
+        self.rr_cv
+    }
+
+    /// Worst beat-to-template QRS correlation across every lead's ensemble.
+    #[wasm_bindgen(getter = rho_min)]
+    pub fn rho_min_measured(&self) -> f32 {
+        self.rho_min.iter().copied().fold(f32::INFINITY, f32::min)
     }
 
     fn index_of(&self, lead: &str) -> Option<usize> {
@@ -1205,6 +1359,62 @@ mod tests {
         b.analyze(true)
     }
 
+    #[test]
+    fn the_vcg_accessor_always_answers_and_never_fakes_a_loop() {
+        let v = a_study().vcg();
+        let refusal = v.refusal_json();
+
+        if refusal == "null" {
+            // A derived loop is exactly as long as the frame it came from, so a
+            // cursor index into the tracing indexes the loop too.
+            assert_eq!(v.x_mv().len(), FRAME_LEN);
+            assert_eq!(v.y_mv().len(), FRAME_LEN);
+            assert_eq!(v.z_mv().len(), FRAME_LEN);
+            assert_eq!(v.anchor_index(), r_index(FS));
+        } else {
+            // The alternative to a loop is empty arrays and a reason — never
+            // zeros, which would draw a dot at the origin, and a null vector is
+            // itself a finding.
+            assert!(v.x_mv().is_empty(), "a refusal must carry no samples");
+            assert!(v.y_mv().is_empty());
+            assert!(v.z_mv().is_empty());
+            assert!(refusal.contains("\"code\""), "{refusal}");
+            assert!(refusal.contains("\"sentence\""), "{refusal}");
+        }
+    }
+
+    #[test]
+    fn panels_from_a_printout_are_refused_at_the_boundary() {
+        // The four columns of a 3x4 printout are four different 2.5 s windows.
+        // This is the refusal a canvas could never make for itself, so it has to
+        // hold at the boundary and not only in `vcg::kors`.
+        let n = (10.0 * FS) as usize;
+        let t: Vec<f64> = (0..n).map(|k| k as f64 / FS).collect();
+        let sig = vec![0.0f32; n];
+        let mut b = StudyBuilder::new();
+        for (k, name) in LEAD_ORDER.iter().enumerate() {
+            b.add_lead(name, &t, &sig, (k / 3) as f64 * 2.5);
+        }
+        b.set_rhythm(&t, &sig);
+
+        let v = b.analyze(true).vcg();
+        let r = v.refusal_json();
+        assert!(r.contains("NotSimultaneous") || r.contains("LeadsMissing"), "{r}");
+        assert!(v.x_mv().is_empty());
+    }
+
+    #[test]
+    fn the_three_planes_are_named_and_distinct() {
+        let j = vcg_planes_json();
+        for id in ["frontal", "horizontal", "sagittal"] {
+            assert!(j.contains(id), "{id} missing from {j}");
+        }
+        // The sagittal plane reads Z backwards so anterior is to the right; if
+        // that sign ever vanished, every loop would be mirrored front-to-back.
+        assert!(j.contains("\"sign\":-1"), "no axis is inverted: {j}");
+        assert!(j.contains("posterior") && j.contains("anterior") && j.contains("inferior"));
+    }
+
     /// Every hole the boundary still has, named.
     ///
     /// This test fails when a hole closes, which is the point: closing one is a
@@ -1285,4 +1495,129 @@ mod tests {
         // And the sentences are prose for a reader, not variant names.
         assert!(json.contains("can be confirmed or excluded"), "{json}");
     }
+}
+
+/// One study's vectorcardiogram, or the reason it has none.
+///
+/// X is left-positive, Y inferior-positive, Z posterior-positive, on the same
+/// `FRAME_LEN` frame as the ensemble beats — so sample `i` here and sample `i`
+/// of any lead's beat are the same instant. That correspondence is what lets a
+/// cursor run along the tracing and the loop together.
+#[wasm_bindgen]
+pub struct VcgLoops {
+    x_mv: Vec<f32>,
+    y_mv: Vec<f32>,
+    z_mv: Vec<f32>,
+    qrs_onset: i32,
+    qrs_offset: i32,
+    t_offset: i32,
+    refusal: Option<VcgRefusal>,
+    notes: Vec<String>,
+    alignment_spread_ms: f32,
+}
+
+#[wasm_bindgen]
+impl VcgLoops {
+    #[wasm_bindgen(getter)]
+    pub fn x_mv(&self) -> Vec<f32> {
+        self.x_mv.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn y_mv(&self) -> Vec<f32> {
+        self.y_mv.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn z_mv(&self) -> Vec<f32> {
+        self.z_mv.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn qrs_onset(&self) -> i32 {
+        self.qrs_onset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn qrs_offset(&self) -> i32 {
+        self.qrs_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn t_offset(&self) -> i32 {
+        self.t_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn frame_len(&self) -> usize {
+        FRAME_LEN
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn anchor_index(&self) -> usize {
+        r_index(FS)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn fs_hz(&self) -> f64 {
+        FS
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn notes(&self) -> Vec<String> {
+        self.notes.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn alignment_spread_ms(&self) -> f32 {
+        self.alignment_spread_ms
+    }
+
+    /// `null`, or `{"code":…,"sentence":…,"leads":[…]}`.
+    pub fn refusal_json(&self) -> String {
+        match &self.refusal {
+            None => "null".to_string(),
+            Some(r) => {
+                let leads = r
+                    .leads()
+                    .iter()
+                    .map(|l| format!("\"{}\"", escape(l)))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{{\"code\":\"{}\",\"sentence\":\"{}\",\"leads\":[{leads}]}}",
+                    r.code(),
+                    escape(&r.sentence()),
+                )
+            }
+        }
+    }
+}
+
+/// How each plane maps the orthogonal leads onto two screen axes.
+///
+/// In Rust, beside the coefficients, because the sign on Z decides whether a
+/// horizontal loop reads clockwise or counterclockwise — and that is a
+/// diagnosis, not a layout choice. A normal horizontal QRS loop runs
+/// counterclockwise; clockwise is the pattern of posterior infarction and right
+/// ventricular hypertrophy. Leaving this to the drawing code would put a
+/// clinical convention somewhere no test would ever check it.
+///
+/// Canvas y grows downward and Frank Y is inferior-positive, so a vertical Y
+/// axis maps straight through with sign +1 — two conventions that happen to
+/// agree. Stated so nobody "fixes" one of them.
+#[wasm_bindgen]
+pub fn vcg_planes_json() -> String {
+    r#"[
+      {"id":"frontal","label":"Frontal",
+       "horizontal":{"axis":"x","sign":1,"positiveLabel":"left"},
+       "vertical":{"axis":"y","sign":1,"positiveLabel":"inferior"}},
+      {"id":"horizontal","label":"Horizontal (transverse)",
+       "horizontal":{"axis":"x","sign":1,"positiveLabel":"left"},
+       "vertical":{"axis":"z","sign":1,"positiveLabel":"posterior"}},
+      {"id":"sagittal","label":"Left sagittal",
+       "horizontal":{"axis":"z","sign":-1,"positiveLabel":"anterior"},
+       "vertical":{"axis":"y","sign":1,"positiveLabel":"inferior"}}
+    ]"#
+    .to_string()
 }

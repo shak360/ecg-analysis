@@ -356,3 +356,72 @@ mod serde_json_lite {
         }
     }
 }
+
+/// How often a real record actually yields a vectorcardiogram, and why not.
+///
+/// `VCG_QRS_RHO_MIN` is stricter than the bar a beat clears to join an ensemble
+/// at all, so it could plausibly refuse almost everything and leave a teaching
+/// page that only ever says no. That is not knowable by reading the constant.
+///
+///   cargo test -p ecg-core --test real_serial -- --ignored --nocapture survey_vcg
+#[test]
+#[ignore = "needs the fetched corpus; run deliberately"]
+fn survey_vcg_refusals() {
+    if !common::corpus_available() {
+        eprintln!("no corpus on disk — skipping");
+        return;
+    }
+
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut drawn = 0usize;
+    let mut total = 0usize;
+    let mut spread_over_4ms = 0usize;
+    let mut rr_cvs: Vec<f64> = Vec::new();
+    let mut rhos: Vec<f32> = Vec::new();
+
+    for id in common::all_record_ids() {
+        let Ok(rec) = common::read_by_id(id) else { continue };
+        let Some(study) = common::build_study(&rec) else { continue };
+        total += 1;
+
+        rr_cvs.push(study.rr_cv_measured());
+        rhos.push(study.rho_min_measured());
+        let v = study.vcg();
+        let refusal = v.refusal_json();
+        if refusal == "null" {
+            drawn += 1;
+            if v.alignment_spread_ms() > 4.0 {
+                spread_over_4ms += 1;
+            }
+        } else {
+            let code = refusal
+                .split("\"code\":\"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .unwrap_or("?")
+                .to_string();
+            *counts.entry(code).or_default() += 1;
+        }
+    }
+
+    println!("\nVCG over {total} records");
+    println!("  loop drawn        {drawn} ({:.1}%)", 100.0 * drawn as f64 / total as f64);
+    println!("  alignment > 4 ms  {spread_over_4ms} of the drawn");
+    let pct = |v: &mut Vec<f64>, q: f64| -> f64 {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        if v.is_empty() { return f64::NAN; }
+        v[((v.len() - 1) as f64 * q) as usize]
+    };
+    let mut cv: Vec<f64> = rr_cvs.iter().copied().filter(|x| x.is_finite()).collect();
+    let mut rh: Vec<f64> = rhos.iter().map(|&x| x as f64).filter(|x| x.is_finite()).collect();
+    let n_cv_fail = cv.iter().filter(|&&x| x > 0.10).count();
+    let n_rho_fail = rh.iter().filter(|&&x| x < 0.98).count();
+    println!("  rr_cv measurable {} of {total}: p50 {:.3} p90 {:.3} p99 {:.3} | >0.10: {n_cv_fail}",
+             cv.len(), pct(&mut cv, 0.5), pct(&mut cv, 0.9), pct(&mut cv, 0.99));
+    println!("  rho   measurable {} of {total}: p01 {:.3} p10 {:.3} p50 {:.3} | <0.98: {n_rho_fail}",
+             rh.len(), pct(&mut rh, 0.01), pct(&mut rh, 0.10), pct(&mut rh, 0.5));
+    println!("  refused:");
+    for (code, n) in &counts {
+        println!("    {code:<24} {n:>5} ({:.1}%)", 100.0 * *n as f64 / total as f64);
+    }
+}
