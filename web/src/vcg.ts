@@ -18,7 +18,15 @@ import type { VcgSnapshot } from "./engine/protocol.ts";
 import { type Entry, firstWindow, loadCorpusIndex } from "./app/corpus.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { mountCasePicker } from "./ui/case-picker.ts";
-import { drawBeatGrid, drawVcgLoops, loopSpan } from "./ui/vcg-loops.ts";
+import {
+  drawBeatGrid,
+  drawVcg3d,
+  drawVcgLoops,
+  loopSpan,
+  type View3d,
+  VIEW_PITCH,
+  VIEW_YAW,
+} from "./ui/vcg-loops.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -41,6 +49,8 @@ let playing = false;
 let lastFrameMs: number | null = null;
 /** Guards against a slow case landing after the reader moved on. */
 let ticket = 0;
+/** Where the reader has turned the loop to. */
+let view: View3d = { yaw: VIEW_YAW, pitch: VIEW_PITCH };
 
 const dark = () =>
   document.documentElement.dataset.theme === "dark" ||
@@ -50,11 +60,13 @@ const dark = () =>
 function render(): void {
   if (!snapshot) return;
   drawBeatGrid($<HTMLCanvasElement>("beats"), snapshot, cursor, LEAD_ORDER, { dark: dark() });
-  drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, {
+  const shown = {
     dark: dark(),
     showQrs: $<HTMLInputElement>("show-qrs").checked,
     showT: $<HTMLInputElement>("show-t").checked,
-  });
+  };
+  drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, shown);
+  drawVcg3d($<HTMLCanvasElement>("space"), snapshot, cursor, view, shown);
 
   // Milliseconds relative to the R peak, which is what a reader is actually
   // locating — "40 ms after R" means something, "sample 140" does not.
@@ -238,6 +250,65 @@ async function openCase(_code: string, e: Entry): Promise<void> {
     $("vcg-status").textContent = "";
   }
 }
+
+/**
+ * Drag the loop around.
+ *
+ * Pointer capture, so a drag that leaves the canvas keeps rotating rather than
+ * stopping half way — letting go outside the box is the normal way to finish a
+ * throw, not a cancellation. Pitch is clamped just short of straight down, where
+ * yaw would stop meaning anything.
+ */
+{
+  const space = $<HTMLCanvasElement>("space");
+  let from: { x: number; y: number; yaw: number; pitch: number } | null = null;
+
+  space.addEventListener("pointerdown", (e) => {
+    from = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch };
+    space.setPointerCapture(e.pointerId);
+  });
+  space.addEventListener("pointermove", (e) => {
+    if (!from) return;
+    view = {
+      yaw: from.yaw + (e.clientX - from.x) * 0.01,
+      pitch: clampPitch(from.pitch + (e.clientY - from.y) * 0.01),
+    };
+    render();
+  });
+  for (const ev of ["pointerup", "pointercancel"]) {
+    space.addEventListener(ev, () => {
+      from = null;
+    });
+  }
+
+  // The same rotation from the keyboard: a control that only answers to a drag
+  // is a control some readers do not have.
+  space.addEventListener("keydown", (e) => {
+    const step = 0.12;
+    const by: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const d = by[e.key];
+    if (!d) return;
+    e.preventDefault();
+    view = { yaw: view.yaw + d[0], pitch: clampPitch(view.pitch + d[1]) };
+    render();
+  });
+}
+
+/** Just short of straight down, where yaw stops meaning anything. */
+function clampPitch(p: number): number {
+  const limit = Math.PI / 2 - 0.05;
+  return Math.min(Math.max(p, -limit), limit);
+}
+
+$("reset-view").addEventListener("click", () => {
+  view = { yaw: VIEW_YAW, pitch: VIEW_PITCH };
+  render();
+});
 
 $("play").addEventListener("click", () => setPlaying(!playing));
 $("scrub").addEventListener("input", () => {

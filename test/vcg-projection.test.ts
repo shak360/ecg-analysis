@@ -12,7 +12,12 @@
  */
 import { expect, test } from "vitest";
 
-import { loopExtent, loopSpan, projectPlane } from "../web/src/ui/vcg-loops.ts";
+import {
+  loopExtent,
+  loopSpan,
+  project3d,
+  projectPlane,
+} from "../web/src/ui/vcg-loops.ts";
 import type { VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
 
 /** The plane definitions as the engine emits them. */
@@ -144,4 +149,52 @@ test("the drawn span runs QRS onset to T offset, and survives missing fiducials"
   const noQrs = loopSpan(snap({ qrsOnset: -1 }));
   expect(noQrs.from).toBeGreaterThanOrEqual(0);
   expect(noQrs.to).toBeGreaterThan(noQrs.from);
+});
+
+// --- the loop in space -----------------------------------------------------
+
+test("with no rotation the 3D view is exactly the frontal plane", () => {
+  // The two pictures must agree where they overlap. If they did not, a reader
+  // turning the 3D loop back to square would find it disagreeing with the panel
+  // directly above it, and neither would be obviously the wrong one.
+  const flat = projectPlane(byId("frontal"), 0.7, -0.4, 0.9);
+  const solid = project3d(0.7, -0.4, 0.9, { yaw: 0, pitch: 0 });
+  expect(solid.u).toBeCloseTo(flat.u, 9);
+  expect(solid.v).toBeCloseTo(flat.v, 9);
+});
+
+test("depth is the axis pointing away, and only that", () => {
+  // Unrotated, Z is depth and neither X nor Y contributes to it.
+  expect(project3d(0, 0, 1, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(1, 9);
+  expect(project3d(1, 0, 0, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(0, 9);
+  expect(project3d(0, 1, 0, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(0, 9);
+});
+
+test("a quarter turn of yaw brings the posterior axis into view", () => {
+  // Turn the body a quarter turn and what was pointing away is now across the
+  // screen — this is what makes the horizontal plane fall out of the 3D view.
+  const p = project3d(0, 0, 1, { yaw: Math.PI / 2, pitch: 0 });
+  expect(p.u).toBeCloseTo(1, 9);
+  expect(p.depth).toBeCloseTo(0, 9);
+});
+
+test("rotation preserves length, so no view can inflate a vector", () => {
+  // The projection is orthographic and the rotation is rigid; a loop must not
+  // get bigger because of where the reader turned it. This is the property that
+  // would break if a perspective divide were ever added.
+  const v: [number, number, number] = [0.6, -0.9, 0.35];
+  const norm = Math.hypot(...v);
+  for (const yaw of [0, 0.7, -1.9, 3.0]) {
+    for (const pitch of [0, 0.4, -1.1]) {
+      const p = project3d(v[0], v[1], v[2], { yaw, pitch });
+      expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(norm, 6);
+    }
+  }
+});
+
+test("turning all the way round returns to where it started", () => {
+  const a = project3d(0.3, 0.8, -0.5, { yaw: 0.4, pitch: 0.2 });
+  const b = project3d(0.3, 0.8, -0.5, { yaw: 0.4 + 2 * Math.PI, pitch: 0.2 });
+  expect(b.u).toBeCloseTo(a.u, 6);
+  expect(b.v).toBeCloseTo(a.v, 6);
 });

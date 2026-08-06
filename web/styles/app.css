@@ -1162,3 +1162,19 @@ summary:focus-visible {
   accent-color: var(--accent);
 }
 .scrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The loop in space sits under its own projections, because the three flat
+   panels stay the clinical reading and this is what makes them legible. */
+.vcg-space { margin-top: var(--s-3); }
+.vcg-space .panel__title { display: flex; align-items: center; gap: var(--s-2); }
+/* Square, and capped: the drawing is a sphere of directions, so it sizes to the
+   smaller edge either way — an unbounded width just centres it in empty space. */
+.vcg-space canvas {
+  width: 100%;
+  max-width: 460px;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.vcg-space canvas:active { cursor: grabbing; }
+.vcg-space canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

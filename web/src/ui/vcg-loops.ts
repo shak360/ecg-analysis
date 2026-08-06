@@ -312,3 +312,167 @@ export function drawBeatGrid(
     }
   });
 }
+
+// --- the loop in space -----------------------------------------------------
+
+/**
+ * The default oblique view: enough yaw and pitch that the loop reads as a solid
+ * object on arrival rather than as one of the flat projections above it.
+ */
+export const VIEW_YAW = -0.62;
+export const VIEW_PITCH = -0.34;
+
+export interface View3d {
+  /** Radians about the body's vertical axis. */
+  yaw: number;
+  /** Radians about the screen's horizontal axis. */
+  pitch: number;
+}
+
+/**
+ * One sample, rotated into the viewer's frame.
+ *
+ * **Orthographic, deliberately.** A perspective projection would make the near
+ * half of a loop larger than the far half, and this is a plot of *magnitudes* —
+ * the whole quantity a reader is judging is how far the vector reaches. Adding
+ * foreshortening would make a loop's size depend on which way it happened to be
+ * pointing.
+ *
+ * At `yaw = 0, pitch = 0` this reduces exactly to the frontal plane — `u` is X
+ * (left positive), `v` is Y (inferior positive) — so the 3D view and the flat
+ * frontal panel agree at their shared orientation instead of being two unrelated
+ * pictures. `depth` grows away from the viewer and is only a drawing cue.
+ */
+export function project3d(
+  x: number,
+  y: number,
+  z: number,
+  view: View3d,
+): { u: number; v: number; depth: number } {
+  const cy = Math.cos(view.yaw);
+  const sy = Math.sin(view.yaw);
+  const x1 = x * cy + z * sy;
+  const z1 = -x * sy + z * cy;
+
+  const cp = Math.cos(view.pitch);
+  const sp = Math.sin(view.pitch);
+  const y1 = y * cp - z1 * sp;
+  const z2 = y * sp + z1 * cp;
+
+  return { u: x1, v: y1, depth: z2 };
+}
+
+/** The three body axes, as unit vectors with the end each label belongs to. */
+const AXES_3D: { v: [number, number, number]; label: string }[] = [
+  { v: [1, 0, 0], label: "left" },
+  { v: [0, 1, 0], label: "inferior" },
+  { v: [0, 0, 1], label: "posterior" },
+];
+
+/**
+ * Draw the loop as one object in space, rotatable.
+ *
+ * The three flat panels are the clinical convention and stay the primary
+ * reading; this is the thing that makes them make sense — the same path, seen
+ * whole, so a reader can turn it and watch each projection fall out of it.
+ */
+export function drawVcg3d(
+  canvas: HTMLCanvasElement,
+  v: VcgSnapshot,
+  at: number,
+  view: View3d,
+  opts: { dark: boolean; showQrs: boolean; showT: boolean },
+): void {
+  const th = loopTheme(opts.dark);
+  const dpr = globalThis.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 420;
+  const cssH = Math.max(240, Math.min(cssW, 420));
+
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.height = `${cssH}px`;
+
+  const ctx = canvas.getContext("2d")!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  if (!v.x.length) return;
+
+  const span = loopSpan(v);
+  const extent = loopExtent(v, span.from, span.to);
+  const cx = cssW / 2;
+  const cy = cssH / 2;
+  const r = Math.min(cssW, cssH) / 2 - 26;
+  const sx = (u: number) => cx + (u / extent) * r;
+  const sy = (w: number) => cy + (w / extent) * r;
+
+  // The axes first, so the loop sits over them and the reader always knows
+  // which way is which while dragging.
+  ctx.font = "9px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const ax of AXES_3D) {
+    const pos = project3d(ax.v[0] * extent, ax.v[1] * extent, ax.v[2] * extent, view);
+    const neg = project3d(-ax.v[0] * extent, -ax.v[1] * extent, -ax.v[2] * extent, view);
+    ctx.strokeStyle = th.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx(neg.u), sy(neg.v));
+    ctx.lineTo(sx(pos.u), sy(pos.v));
+    ctx.stroke();
+    ctx.fillStyle = th.muted;
+    ctx.fillText(ax.label, sx(pos.u * 1.1), sy(pos.v * 1.1));
+  }
+
+  const qrsTo = v.qrsOffset >= 0 ? v.qrsOffset : span.to;
+
+  /**
+   * Draw a run segment by segment, fading with depth.
+   *
+   * Orthographic projection alone gives no sense of which part of the loop is
+   * near — a plain outline of a three-dimensional path reads flat. Depth-fading
+   * each segment is the cheapest honest cue: it changes nothing about where a
+   * point is drawn, only how strongly.
+   */
+  const path = (from: number, to: number, colour: string, width: number) => {
+    for (let i = from + 1; i < to; i++) {
+      const a = project3d(v.x[i - 1]!, v.y[i - 1]!, v.z[i - 1]!, view);
+      const b = project3d(v.x[i]!, v.y[i]!, v.z[i]!, view);
+      const mid = (a.depth + b.depth) / 2;
+      ctx.globalAlpha = 0.35 + 0.65 * (1 - Math.min(1, Math.max(0, mid / extent / 2 + 0.5)));
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(sx(a.u), sy(a.v));
+      ctx.lineTo(sx(b.u), sy(b.v));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.8);
+  if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.8);
+
+  const tailFrom = Math.max(span.from, at - Math.round((TAIL_MS / 1000) * v.fsHz));
+  path(tailFrom, Math.min(at + 1, span.to), th.cursor, 3);
+
+  if (at >= span.from && at < span.to) {
+    const p = project3d(v.x[at]!, v.y[at]!, v.z[at]!, view);
+    // The vector itself, drawn from the origin: on a loop the reader sees the
+    // path, but the quantity is the arrow — where the heart's dipole points at
+    // this instant, and how far.
+    ctx.strokeStyle = th.cursor;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(sx(0), sy(0));
+    ctx.lineTo(sx(p.u), sy(p.v));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = th.cursor;
+    ctx.beginPath();
+    ctx.arc(sx(p.u), sy(p.v), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
