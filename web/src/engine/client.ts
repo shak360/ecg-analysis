@@ -17,6 +17,7 @@ import {
   type Request,
   type Response,
   type StudySummary,
+  type VcgSnapshot,
 } from "./protocol.ts";
 
 /**
@@ -47,6 +48,8 @@ export interface Engine {
     fsHz: number,
   ): Promise<StudySummary>;
   compare(studyIds: string[]): Promise<ComparisonSnapshot>;
+  /** One study's vectorcardiogram, or the reason it has none. */
+  vcg(studyId: string): Promise<VcgSnapshot>;
   release(studyIds: string[]): Promise<void>;
   /** Where the compute is actually running, for the status bar. */
   readonly where: "worker" | "inline";
@@ -90,6 +93,11 @@ export class InlineEngine implements Engine {
   async compare(studyIds: string[]): Promise<ComparisonSnapshot> {
     await this.ready();
     return this.#core.compare(studyIds);
+  }
+
+  async vcg(studyId: string): Promise<VcgSnapshot> {
+    await this.ready();
+    return this.#core.vcg(studyId);
   }
 
   release(studyIds: string[]): Promise<void> {
@@ -178,6 +186,12 @@ export class WorkerEngine implements Engine {
     const r = await this.#send({ kind: "compare", studyIds });
     if (r.kind !== "compared") throw new Error(`unexpected reply ${r.kind}`);
     return r.snapshot;
+  }
+
+  async vcg(studyId: string): Promise<VcgSnapshot> {
+    const r = await this.#send({ kind: "vcg", studyId });
+    if (r.kind !== "vcgDerived") throw new Error(`unexpected reply ${r.kind}`);
+    return r.vcg;
   }
 
   async release(studyIds: string[]): Promise<void> {

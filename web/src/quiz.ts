@@ -29,6 +29,7 @@ import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printou
 import { mountTools } from "./ui/tools.ts";
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
+import type { Entry, Statement } from "./app/corpus.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -39,25 +40,6 @@ const $ = <T extends HTMLElement>(id: string): T => {
 const engine = createEngine();
 const TRACE = "#1b4a8f";
 const STORE_KEY = "ecg-quiz-progress-v1";
-
-interface Statement {
-  id: string;
-  description: string;
-  diagnosticClass: string;
-  kind: "diagnostic" | "form" | "rhythm";
-  sourceCode: string;
-}
-
-interface Entry {
-  id: string;
-  source: string;
-  sourceLabel: string;
-  provenance: "human-validated" | "as-published";
-  age: number | null;
-  sex: "M" | "F" | null;
-  report: string;
-  findings: Statement[];
-}
 
 interface Question {
   kind: string;
@@ -527,6 +509,11 @@ async function boot(): Promise<void> {
     status.textContent = `Engine failed to start: ${err instanceof Error ? err.message : err}`;
   }
 
+  // PTB-XL only, deliberately — not `loadCorpusIndex`, which also merges the
+  // Challenge 2021 corpora. This page tells the reader every answer is a PTB-XL
+  // cardiologist's, and PTB-XL is the one corpus that records whether a human
+  // validated the label. Widening the pool here would quietly grade people
+  // against as-published labels while the page still promised otherwise.
   try {
     const res = await fetch("/corpus/atlas.json");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

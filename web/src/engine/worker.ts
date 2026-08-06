@@ -15,7 +15,12 @@
  * would buy nothing but a compatibility cliff.
  */
 import { EngineCore } from "./core.ts";
-import { type Request, type Response, snapshotTransfers } from "./protocol.ts";
+import {
+  type Request,
+  type Response,
+  snapshotTransfers,
+  vcgTransfers,
+} from "./protocol.ts";
 
 const core = new EngineCore();
 
@@ -61,6 +66,11 @@ self.addEventListener("message", (e: MessageEvent<Request>) => {
         case "compare": {
           const snapshot = core.compare(req.studyIds);
           reply({ kind: "compared", id: req.id, snapshot }, snapshotTransfers(snapshot));
+          return;
+        }
+        case "vcg": {
+          const vcg = core.vcg(req.studyId);
+          reply({ kind: "vcgDerived", id: req.id, vcg }, vcgTransfers(vcg));
           return;
         }
         case "release": {

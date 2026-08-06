@@ -16,6 +16,7 @@ pub mod dsp;
 pub mod fiducial;
 pub mod measure;
 pub mod serial;
+pub mod vcg;
 mod wasm_api;
 
 pub use wasm_api::{
