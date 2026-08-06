@@ -267,11 +267,13 @@ export type Request =
     fsHz: number;
   }
   | { kind: "compare"; id: string; studyIds: string[] }
+  | { kind: "vcg"; id: string; studyId: string }
   | { kind: "release"; id: string; studyIds: string[] };
 
 export type Response =
   | { kind: "analysed"; id: string; summary: StudySummary | null; error: string | null }
   | { kind: "compared"; id: string; snapshot: ComparisonSnapshot }
+  | { kind: "vcgDerived"; id: string; vcg: VcgSnapshot }
   | { kind: "released"; id: string }
   | { kind: "failed"; id: string; error: string };
 
@@ -306,6 +308,90 @@ export function snapshotTransfers(s: ComparisonSnapshot): ArrayBuffer[] {
   for (const p of s.printouts) {
     for (const sig of p.leads.values()) push(sig);
     push(p.rhythm);
+  }
+  return out;
+}
+
+
+/**
+ * How one plane maps the orthogonal leads onto two screen axes.
+ *
+ * Supplied by the engine rather than chosen here. The sign on the Z axis decides
+ * whether a horizontal loop reads clockwise or counterclockwise, and that is a
+ * clinical reading — a normal horizontal QRS loop runs counterclockwise, while
+ * clockwise is the pattern of posterior infarction and right ventricular
+ * hypertrophy. A drawing module is the wrong place to keep a fact like that,
+ * and decision 0004 already says so.
+ */
+export interface VcgPlane {
+  id: "frontal" | "horizontal" | "sagittal";
+  label: string;
+  horizontal: { axis: "x" | "y" | "z"; sign: 1 | -1; positiveLabel: string };
+  vertical: { axis: "x" | "y" | "z"; sign: 1 | -1; positiveLabel: string };
+}
+
+/** Why a study has no loop. `code` is stable; `sentence` is for the reader. */
+export interface VcgRefusal {
+  code: string;
+  sentence: string;
+  leads: string[];
+}
+
+/**
+ * One study's vectorcardiogram, or the reason it has none.
+ *
+ * `x`/`y`/`z` are on the same frame as every lead's ensemble beat, so sample `i`
+ * here and sample `i` of the tracing are the same instant. That is what lets one
+ * cursor run along the ECG and around the loop at once.
+ */
+export interface VcgSnapshot {
+  studyId: string;
+  /**
+   * The ensemble beats the loop was derived from, by lead.
+   *
+   * Shipped alongside rather than fetched separately so the correspondence is
+   * structural: sample `i` of any of these and sample `i` of `x`/`y`/`z` came
+   * from the same call on the same frame, and no later change can quietly put
+   * the tracing and the loop on different clocks.
+   *
+   * Empty on a refusal, like the loops.
+   */
+  beats: Map<string, Float32Array>;
+  /** Empty on a refusal. Never zero-filled: a loop of zeros is a null vector. */
+  x: Float32Array;
+  y: Float32Array;
+  z: Float32Array;
+  /** Frame indices; negative means that fiducial was not measurable. */
+  qrsOnset: number;
+  qrsOffset: number;
+  tOffset: number;
+  anchorIndex: number;
+  frameLen: number;
+  fsHz: number;
+  refusal: VcgRefusal | null;
+  /** Facts a reader needs that are not refusals. */
+  notes: string[];
+  /** Largest inter-lead alignment difference, milliseconds. */
+  alignmentSpreadMs: number;
+  planes: VcgPlane[];
+}
+
+/**
+ * The three orthogonal leads, transferred rather than copied.
+ *
+ * Each is a fresh slice out of the WASM heap, so nothing worker-side needs them
+ * afterwards — the same argument `snapshotTransfers` makes.
+ */
+export function vcgTransfers(v: VcgSnapshot): ArrayBuffer[] {
+  const out: ArrayBuffer[] = [];
+  const seen = new Set<ArrayBuffer>();
+  for (const a of [v.x, v.y, v.z, ...v.beats.values()]) {
+    // A refusal carries no samples, and a detached-twice buffer throws.
+    if (!a.length) continue;
+    const b = a.buffer as ArrayBuffer;
+    if (seen.has(b)) continue;
+    seen.add(b);
+    out.push(b);
   }
   return out;
 }

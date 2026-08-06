@@ -14,6 +14,7 @@ import init, {
   serial_findings_json,
   st_verdicts_json,
   StudyBuilder,
+  vcg_planes_json,
 } from "../../wasm/ecg_core.js";
 import { extractPageGeometry } from "../ingest/pdf-paths.ts";
 import { classifyPolylines } from "../ingest/classify.ts";
@@ -31,6 +32,9 @@ import type {
   SerialFinding,
   SnapshotTrace,
   StudySummary,
+  VcgPlane,
+  VcgRefusal,
+  VcgSnapshot,
 } from "./protocol.ts";
 
 /** Raised for the expected failures — a raster PDF, no grid — not for bugs. */
@@ -378,6 +382,56 @@ export class EngineCore {
   }
 
   /** Drop handles so the WASM heap does not grow with every reload. */
+  /**
+   * One study's vectorcardiogram.
+   *
+   * A second call against a handle the engine still holds, in the shape
+   * `compare` already established — rather than folding three `Float32Array`s
+   * into every `analysed` reply, which would make four pages that never want a
+   * loop pay to structured-clone one.
+   */
+  vcg(studyId: string): VcgSnapshot {
+    const held = this.#studies.get(studyId);
+    if (!held) throw new Error(`study ${studyId} is not loaded in the engine`);
+
+    const v = held.analysis.vcg();
+    try {
+      const refusal = JSON.parse(v.refusal_json() as string) as VcgRefusal | null;
+
+      // The beats the loop came from. Withheld on a refusal for the same reason
+      // the loops are: half a picture invites the reader to build the other
+      // half by eye, which is the error the refusal exists to prevent.
+      const beats = new Map<string, Float32Array>();
+      if (!refusal) {
+        for (const lead of held.analysis.lead_names as string[]) {
+          const b = held.analysis.beat(lead) as Float32Array | undefined;
+          if (b) beats.set(lead, b);
+        }
+      }
+
+      return {
+        studyId,
+        beats,
+        x: v.x_mv as Float32Array,
+        y: v.y_mv as Float32Array,
+        z: v.z_mv as Float32Array,
+        qrsOnset: v.qrs_onset as number,
+        qrsOffset: v.qrs_offset as number,
+        tOffset: v.t_offset as number,
+        anchorIndex: v.anchor_index as number,
+        frameLen: v.frame_len as number,
+        fsHz: v.fs_hz as number,
+        refusal,
+        notes: Array.from(v.notes as string[]),
+        alignmentSpreadMs: v.alignment_spread_ms as number,
+        planes: JSON.parse(vcg_planes_json() as string) as VcgPlane[],
+      };
+    } finally {
+      // A wasm-bindgen struct holds heap memory until it is freed.
+      (v as { free?: () => void }).free?.();
+    }
+  }
+
   release(studyIds: string[]): void {
     for (const id of studyIds) {
       const h = this.#studies.get(id);

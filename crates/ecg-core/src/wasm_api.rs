@@ -721,9 +721,12 @@ impl StudyAnalysis {
         let mut notes = Vec::new();
         for (i, name) in self.names.iter().enumerate() {
             if KORS_LEADS.contains(&name.as_str()) && self.n_used[i] < MIN_BEATS_FOR_DELTA {
+                // "Lead I", not "I": a bare lead name at the start of a
+                // sentence reads as the first-person pronoun, and the tool
+                // talking about itself is exactly the wrong impression.
                 notes.push(format!(
-                    "{name} was averaged from a single beat, so its contribution \
-                     carries full single-beat noise."
+                    "Lead {name} was averaged from a single beat, so its \
+                     contribution carries full single-beat noise."
                 ));
             }
         }

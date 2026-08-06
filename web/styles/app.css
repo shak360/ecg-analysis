@@ -1135,3 +1135,30 @@ summary:focus-visible {
 .trial .legend { display: flex; gap: var(--s-4); flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-base); }
 .trial .legend span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .trial .dot { width: 9px; height: 9px; border-radius: 50%; }
+
+/* --- the vector loop page --------------------------------------------------
+   The tracing and the loops sit side by side because the cursor ties them
+   together: a reader has to be able to see the dot on lead V4 and the dot in
+   the frontal plane at the same moment, without scrolling between them. Below
+   the width where both fit, they stack rather than shrink — two illegible
+   panels teach less than one legible one after a scroll. */
+.vcg-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-4);
+  align-items: start;
+  margin-top: var(--s-2);
+}
+@media (max-width: 1000px) {
+  .vcg-split { grid-template-columns: minmax(0, 1fr); }
+}
+.vcg-split canvas { width: 100%; display: block; }
+
+/* Full width, because it is the page's time axis and a short slider is a
+   coarse one — every pixel is about two milliseconds of the beat. */
+.scrub {
+  width: 100%;
+  margin: var(--s-2) 0 0;
+  accent-color: var(--accent);
+}
+.scrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
