@@ -14,6 +14,8 @@ import { expect, test } from "vitest";
 
 import {
   arcball,
+  axisEndLabels,
+  defaultView,
   loopExtent,
   loopSpan,
   project3d,
@@ -320,4 +322,61 @@ test("the frontal snap is the identity, since that is where the 3D view starts",
 test("no two planes snap to the same view", () => {
   const seen = PLANES.map((p) => rotFromPlane(p).join(","));
   expect(new Set(seen).size).toBe(PLANES.length);
+});
+
+// --- which way the body faces ----------------------------------------------
+
+test("the default view looks at the patient from in front", () => {
+  // Asked directly, and worth pinning: at the opening orientation anterior must
+  // come *toward* the reader and posterior go away, because that is what looking
+  // at a patient means. A default that opened from behind would mirror every
+  // loop's rotation sense relative to what a clinician expects, and nothing else
+  // in the picture would say so.
+  const v = defaultView();
+  expect(project3d(0, 0, -1, v).depth, "anterior must come toward the viewer")
+    .toBeLessThan(0);
+  expect(project3d(0, 0, 1, v).depth, "posterior must go away from the viewer")
+    .toBeGreaterThan(0);
+});
+
+test("both ends of every axis are named", () => {
+  // An orthographic projection has no perspective cue, so a line through the
+  // origin looks the same whichever end points at you. Labelling only the
+  // positive end left the word "posterior" floating on an axis with no way to
+  // tell it was the far end — which read as posterior coming out of the screen.
+  const labels = axisEndLabels();
+  for (const pair of [["left", "right"], ["inferior", "superior"], ["posterior", "anterior"]]) {
+    for (const end of pair) {
+      expect(labels, `${end} is never drawn`).toContain(end);
+    }
+  }
+  expect(labels).toHaveLength(6);
+});
+
+test("each plane snap puts anterior where its own panel says it is", () => {
+  // One concrete fact per plane, each taken from that panel's own labels rather
+  // than from a rule I assumed applied to all three. My first attempt asserted
+  // "anterior is to the right" everywhere and failed on the horizontal panel,
+  // where anterior is *up* — the panel was right and the test was wrong.
+  const frontal = rotFromPlane(byId("frontal"));
+  expect(project3d(0, 0, -1, { rot: frontal }).depth, "frontal looks from the front")
+    .toBeLessThan(0);
+
+  // Horizontal: posterior is labelled downward, so anterior is up the screen.
+  const horizontal = rotFromPlane(byId("horizontal"));
+  expect(project3d(0, 0, -1, { rot: horizontal }).v).toBeLessThan(0);
+
+  // Left sagittal: anterior is labelled to the right.
+  const sagittal = rotFromPlane(byId("sagittal"));
+  expect(project3d(0, 0, -1, { rot: sagittal }).u).toBeGreaterThan(0);
+});
+
+test("anterior and posterior always land on opposite sides of the origin", () => {
+  for (const plane of [...PLANES.map(rotFromPlane), defaultView().rot]) {
+    const a = project3d(0, 0, -1, { rot: plane });
+    const p = project3d(0, 0, 1, { rot: plane });
+    expect(a.u).toBeCloseTo(-p.u, 9);
+    expect(a.v).toBeCloseTo(-p.v, 9);
+    expect(a.depth).toBeCloseTo(-p.depth, 9);
+  }
 });

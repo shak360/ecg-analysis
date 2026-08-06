@@ -476,12 +476,29 @@ export function project3d(
   };
 }
 
-/** The three body axes, as unit vectors with the end each label belongs to. */
-const AXES_3D: { v: [number, number, number]; label: string }[] = [
-  { v: [1, 0, 0], label: "left" },
-  { v: [0, 1, 0], label: "inferior" },
-  { v: [0, 0, 1], label: "posterior" },
+/**
+ * The three body axes, both ends named.
+ *
+ * Both ends, because an orthographic projection carries no perspective cue: a
+ * line through the origin looks exactly the same whichever end is pointing at
+ * you, so labelling only the positive end tells a reader nothing about which
+ * way the body is facing. Writing "posterior" on the one visible label and
+ * leaving it there invites exactly the wrong reading — that posterior is the
+ * end coming out of the screen.
+ *
+ * `plus` is the positive direction of the axis in the loop's frame; `minus` is
+ * what lies at the other end.
+ */
+const AXES_3D: { v: [number, number, number]; plus: string; minus: string }[] = [
+  { v: [1, 0, 0], plus: "left", minus: "right" },
+  { v: [0, 1, 0], plus: "inferior", minus: "superior" },
+  { v: [0, 0, 1], plus: "posterior", minus: "anterior" },
 ];
+
+/** Every direction the axes name, for a test that both ends are covered. */
+export function axisEndLabels(): string[] {
+  return AXES_3D.flatMap((a) => [a.plus, a.minus]);
+}
 
 /**
  * Draw the loop as one object in space, rotatable.
@@ -529,15 +546,48 @@ export function drawVcg3d(
   for (const ax of AXES_3D) {
     const pos = project3d(ax.v[0] * extent, ax.v[1] * extent, ax.v[2] * extent, view);
     const neg = project3d(-ax.v[0] * extent, -ax.v[1] * extent, -ax.v[2] * extent, view);
-    ctx.strokeStyle = th.grid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(sx(neg.u), sy(neg.v));
-    ctx.lineTo(sx(pos.u), sy(pos.v));
-    ctx.stroke();
-    ctx.fillStyle = th.muted;
-    ctx.fillText(ax.label, sx(pos.u * 1.1), sy(pos.v * 1.1));
+
+    // Each half drawn separately, and the half coming toward the reader drawn
+    // solid while the half going away is dotted and faint. This is the only
+    // thing in an orthographic picture that says which way round the body is,
+    // and without it "posterior" reads as the end pointing out of the screen.
+    for (const end of [pos, neg]) {
+      const near = end.depth < 0;
+      ctx.strokeStyle = near ? th.muted : th.grid;
+      ctx.lineWidth = near ? 1.4 : 1;
+      ctx.setLineDash(near ? [] : [2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(sx(0), sy(0));
+      ctx.lineTo(sx(end.u), sy(end.v));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Both ends labelled, the near one in ink and the far one faint, so the
+    // label and the line agree about which is which.
+    for (const [end, label] of [[pos, ax.plus], [neg, ax.minus]] as const) {
+      const near = end.depth < 0;
+      ctx.fillStyle = near ? th.ink : th.faint;
+      ctx.fillText(label, sx(end.u * 1.12), sy(end.v * 1.12));
+    }
   }
+
+  // Which way the reader is looking, in words, because it is the one fact the
+  // picture is least able to state on its own.
+  //
+  // Three cases, not two. Snap to a plane that holds the front-back axis across
+  // the screen — the horizontal and sagittal panels both do — and anterior is
+  // neither toward the reader nor away from them. Calling that "from behind"
+  // because the depth was not negative would be a confident wrong answer to the
+  // one question this line exists to answer.
+  const az = project3d(0, 0, -1, view).depth;
+  const facing = Math.abs(az) < 1e-6 ? "edge-on" : az < 0 ? "from in front" : "from behind";
+  ctx.fillStyle = th.muted;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(facing === "edge-on" ? "front-back axis edge-on" : `viewed ${facing}`, 2, 2);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
 
   const qrsTo = v.qrsOffset >= 0 ? v.qrsOffset : span.to;
 
