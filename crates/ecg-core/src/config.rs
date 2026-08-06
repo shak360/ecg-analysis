@@ -704,3 +704,34 @@ pub const VCG_RR_CV_MAX: f64 = 0.10;
 /// a statistic that is not floored by the screen — the ensemble's own
 /// correlation, or a median rather than a minimum — not a lower threshold.
 pub const VCG_QRS_RHO_NOTE: f32 = 0.98;
+
+/// Approximate direction of each lead's positive axis, in the same frame as the
+/// vectorcardiogram: X left-positive, Y inferior-positive, Z posterior-positive.
+///
+/// # These are schematic, and the difference matters
+///
+/// The six limb leads are genuinely coplanar and their angles are definitional —
+/// Einthoven's triangle and the augmented leads fix I at 0 degrees, aVF at 90,
+/// and the rest follow. Those six are exact.
+///
+/// The six precordial angles are **not**. A real precordial lead vector depends
+/// on where the electrode landed on a particular chest, on body habitus, and on
+/// the heart's position inside it; the transverse-plane angles used here are the
+/// conventional textbook approximation, and they treat V1-V6 as lying in one
+/// plane, which they only roughly do. They are drawn to show a reader how the
+/// precordial leads sample front-to-back where the limb leads cannot — not to
+/// measure anything. Nothing in this crate computes with them.
+pub const LEAD_AXES: [(&str, [f32; 3]); 12] = [
+    ("I", [1.000, 0.000, 0.000]),
+    ("II", [0.500, 0.866, 0.000]),
+    ("III", [-0.500, 0.866, 0.000]),
+    ("aVR", [-0.866, -0.500, 0.000]),
+    ("aVL", [0.866, -0.500, 0.000]),
+    ("aVF", [0.000, 1.000, 0.000]),
+    ("V1", [-0.423, 0.000, -0.906]),
+    ("V2", [-0.070, 0.000, -0.998]),
+    ("V3", [0.454, 0.000, -0.891]),
+    ("V4", [0.766, 0.000, -0.643]),
+    ("V5", [0.934, 0.000, -0.358]),
+    ("V6", [1.000, 0.000, -0.000]),
+];

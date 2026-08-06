@@ -17,7 +17,7 @@ use crate::beats::detect::{detect_qrs, Beat, BeatClass};
 use crate::beats::ensemble::{ensemble, Provenance};
 use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, PanelFlag};
 use crate::config::{
-    KORS_LEADS, MIN_BEATS_FOR_DELTA,
+    KORS_LEADS, LEAD_AXES, MIN_BEATS_FOR_DELTA,
     CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV,
 };
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
@@ -1623,4 +1623,26 @@ pub fn vcg_planes_json() -> String {
        "vertical":{"axis":"y","sign":1,"positiveLabel":"inferior"}}
     ]"#
     .to_string()
+}
+
+/// Where each of the twelve leads points, for a diagram that turns with the loop.
+///
+/// From Rust for the same reason the plane definitions are: these are anatomical
+/// directions, and a sign error in one draws a lead pointing at the opposite
+/// wall of the chest. Emitted with `approximate` set on the precordial six, so
+/// the drawing can say which half of the picture is definitional and which is a
+/// textbook convention — see `LEAD_AXES`.
+#[wasm_bindgen]
+pub fn vcg_lead_axes_json() -> String {
+    let rows: Vec<String> = LEAD_AXES
+        .iter()
+        .map(|(name, v)| {
+            let limb = !name.starts_with('V');
+            format!(
+                "{{\"lead\":\"{name}\",\"v\":[{:.3},{:.3},{:.3}],\"limb\":{limb},\"approximate\":{}}}",
+                v[0], v[1], v[2], !limb,
+            )
+        })
+        .collect();
+    format!("[{}]", rows.join(","))
 }

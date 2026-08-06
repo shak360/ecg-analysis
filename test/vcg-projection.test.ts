@@ -21,6 +21,7 @@ import {
   reorthonormalise,
   rotFromYawPitch,
   rotIdentity,
+  rotFromPlane,
   rotMul,
 } from "../web/src/ui/vcg-loops.ts";
 
@@ -127,6 +128,7 @@ function snap(over: Partial<VcgSnapshot> = {}): VcgSnapshot {
     notes: [],
     alignmentSpreadMs: 0,
     planes: PLANES,
+    leadAxes: [],
     ...over,
   };
 }
@@ -278,4 +280,44 @@ test("thousands of drags do not let the loop drift out of shape", () => {
   const before = Math.hypot(0.6, -0.9, 0.35);
   const p = project3d(0.6, -0.9, 0.35, { rot: m });
   expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(before, 6);
+});
+
+
+// --- looking down a plane --------------------------------------------------
+
+test("snapping to a plane reproduces that plane exactly", () => {
+  // The strongest form of this claim: for every plane, and for arbitrary
+  // vectors, the 3D view at the snapped rotation and the flat panel agree to
+  // floating point. A snap that merely looked close would leave the reader
+  // comparing two pictures that disagree slightly for no stated reason.
+  const vs: [number, number, number][] = [
+    [1, 0, 0], [0, 1, 0], [0, 0, 1], [0.63, -0.21, 0.48], [-0.9, 0.4, -0.15],
+  ];
+  for (const plane of PLANES) {
+    const rot = rotFromPlane(plane);
+    for (const [x, y, z] of vs) {
+      const flat = projectPlane(plane, x, y, z);
+      const solid = project3d(x, y, z, { rot });
+      expect(solid.u, `${plane.id} u`).toBeCloseTo(flat.u, 9);
+      expect(solid.v, `${plane.id} v`).toBeCloseTo(flat.v, 9);
+    }
+  }
+});
+
+test("every plane snap is a right-handed rotation, so none mirrors the loop", () => {
+  // The third row is a cross product precisely so this holds. If a snap were
+  // left-handed the loop would come out mirrored, and a mirrored loop runs the
+  // other way round — which is a different diagnosis, not a different view.
+  for (const plane of PLANES) {
+    expect(isRotation(rotFromPlane(plane)), plane.id).toBe(true);
+  }
+});
+
+test("the frontal snap is the identity, since that is where the 3D view starts", () => {
+  expect([...rotFromPlane(byId("frontal"))]).toEqual([...rotIdentity()]);
+});
+
+test("no two planes snap to the same view", () => {
+  const seen = PLANES.map((p) => rotFromPlane(p).join(","));
+  expect(new Set(seen).size).toBe(PLANES.length);
 });

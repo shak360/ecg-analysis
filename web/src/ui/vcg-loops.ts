@@ -9,7 +9,7 @@
  * clockwise one of posterior infarction.
  */
 
-import type { VcgPlane, VcgSnapshot } from "../engine/protocol.ts";
+import type { LeadAxis, VcgPlane, VcgSnapshot } from "../engine/protocol.ts";
 
 /** Where the cursor's bright tail starts, in milliseconds behind it. */
 export const TAIL_MS = 40;
@@ -589,6 +589,163 @@ export function drawVcg3d(
     ctx.fillStyle = th.cursor;
     ctx.beginPath();
     ctx.arc(sx(p.u), sy(p.v), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// --- looking at a plane ----------------------------------------------------
+
+/**
+ * The rotation that makes the 3D view show exactly this plane.
+ *
+ * Derived from the plane's own definition rather than written as angles: the
+ * first row is whichever axis the plane puts across the screen, the second is
+ * whichever it puts down it, and the third is their cross product. So the snap
+ * cannot drift away from the panel it is named after — change a plane's axes or
+ * signs in `vcg_planes_json` and the matching view follows automatically.
+ *
+ * The cross product for the third row is what keeps the result right-handed. A
+ * left-handed matrix would mirror the loop, and a mirrored loop reverses
+ * rotation sense, which is a different diagnosis.
+ */
+export function rotFromPlane(plane: VcgPlane): Rot {
+  const unit = (axis: "x" | "y" | "z", sign: number): [number, number, number] => [
+    axis === "x" ? sign : 0,
+    axis === "y" ? sign : 0,
+    axis === "z" ? sign : 0,
+  ];
+  const r0 = unit(plane.horizontal.axis, plane.horizontal.sign);
+  const r1 = unit(plane.vertical.axis, plane.vertical.sign);
+  const r2: [number, number, number] = [
+    r0[1] * r1[2] - r0[2] * r1[1],
+    r0[2] * r1[0] - r0[0] * r1[2],
+    r0[0] * r1[1] - r0[1] * r1[0],
+  ];
+  return [...r0, ...r1, ...r2];
+}
+
+/**
+ * Which plane panel a point falls in, or null.
+ *
+ * `drawVcgLoops` lays the panels out left to right in equal columns, so the
+ * index follows from the x offset. Kept beside the drawing that decides the
+ * layout, because the two have to agree and nothing else would notice if they
+ * stopped.
+ */
+export function planeAt(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+  planes: VcgPlane[],
+): VcgPlane | null {
+  if (!planes.length) return null;
+  const r = canvas.getBoundingClientRect();
+  if (clientY < r.top || clientY > r.bottom) return null;
+  const gap = 14;
+  const side = (r.width - gap * (planes.length - 1)) / planes.length;
+  const x = clientX - r.left;
+  const k = Math.floor(x / (side + gap));
+  if (k < 0 || k >= planes.length) return null;
+  // Inside the panel proper, not the gutter after it.
+  if (x - k * (side + gap) > side) return null;
+  return planes[k]!;
+}
+
+// --- the lead compass ------------------------------------------------------
+
+/**
+ * The twelve lead axes, turning with the loop.
+ *
+ * A vectorcardiogram answers "where is the heart's vector pointing", and the
+ * twelve leads are twelve directions that vector gets measured along. Drawn in
+ * the same rotated frame as the loop, the relationship stops being something a
+ * reader has to hold in their head: turn the loop until a lead points at you and
+ * that lead is the one seeing the deflection head-on.
+ *
+ * Limb leads solid, precordial dashed — because the limb angles are
+ * definitional and the precordial ones are a textbook approximation to a
+ * direction that really depends on the chest. Drawing them alike would claim a
+ * precision the second six do not have.
+ */
+export function drawLeadCompass(
+  canvas: HTMLCanvasElement,
+  axes: LeadAxis[],
+  view: View3d,
+  opts: { dark: boolean; vector?: { x: number; y: number; z: number } | null },
+): void {
+  const th = loopTheme(opts.dark);
+  const dpr = globalThis.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 220;
+  const cssH = cssW;
+
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.height = `${cssH}px`;
+
+  const ctx = canvas.getContext("2d")!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  if (!axes.length) return;
+
+  const cx = cssW / 2;
+  const cy = cssH / 2;
+  const r = cssW / 2 - 22;
+
+  // The sphere the leads live on, so the diagram reads as a ball of directions
+  // rather than a flat star.
+  ctx.strokeStyle = th.grid;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.font = "9px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  // Farthest first, so a lead in front is drawn over one behind it.
+  const drawn = axes
+    .map((a) => ({ a, p: project3d(a.v[0], a.v[1], a.v[2], view) }))
+    .sort((m, n) => n.p.depth - m.p.depth);
+
+  for (const { a, p } of drawn) {
+    const x = cx + p.u * r;
+    const y = cy + p.v * r;
+    // Toward the viewer reads strong, away reads faint: that is the cue that
+    // makes it a three-dimensional diagram rather than a dial.
+    const front = 0.45 + 0.55 * (1 - Math.min(1, Math.max(0, p.depth / 2 + 0.5)));
+
+    ctx.globalAlpha = front;
+    ctx.strokeStyle = a.limb ? th.qrs : th.t;
+    ctx.setLineDash(a.approximate ? [3, 3] : []);
+    ctx.lineWidth = a.limb ? 1.5 : 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = a.limb ? th.ink : th.muted;
+    ctx.fillText(a.lead, cx + p.u * (r + 11), cy + p.v * (r + 11));
+    ctx.globalAlpha = 1;
+  }
+
+  // The instantaneous vector, in the cursor's colour, so the compass answers
+  // "which leads is *this* moment pointing at".
+  if (opts.vector) {
+    const p = project3d(opts.vector.x, opts.vector.y, opts.vector.z, view);
+    const n = Math.hypot(opts.vector.x, opts.vector.y, opts.vector.z) || 1;
+    const k = r / n;
+    ctx.strokeStyle = th.cursor;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + p.u * k, cy + p.v * k);
+    ctx.stroke();
+    ctx.fillStyle = th.cursor;
+    ctx.beginPath();
+    ctx.arc(cx + p.u * k, cy + p.v * k, 3.5, 0, Math.PI * 2);
     ctx.fill();
   }
 }

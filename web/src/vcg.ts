@@ -24,8 +24,11 @@ import {
   drawBeatGrid,
   drawVcg3d,
   drawVcgLoops,
+  drawLeadCompass,
   loopSpan,
+  planeAt,
   reorthonormalise,
+  rotFromPlane,
   rotMul,
   type View3d,
 } from "./ui/vcg-loops.ts";
@@ -69,6 +72,14 @@ function render(): void {
   };
   drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, shown);
   drawVcg3d($<HTMLCanvasElement>("space"), snapshot, cursor, view, shown);
+  drawLeadCompass($<HTMLCanvasElement>("compass"), snapshot.leadAxes, view, {
+    dark: shown.dark,
+    // The compass shows where this instant points, so it needs the same sample
+    // the loop's cursor is on.
+    vector: cursor < snapshot.x.length
+      ? { x: snapshot.x[cursor]!, y: snapshot.y[cursor]!, z: snapshot.z[cursor]! }
+      : null,
+  });
 
   // Milliseconds relative to the R peak, which is what a reader is actually
   // locating — "40 ms after R" means something, "sample 140" does not.
@@ -324,6 +335,23 @@ async function openCase(_code: string, e: Entry): Promise<void> {
     render();
   }, { passive: false });
 }
+
+/**
+ * Click a plane panel to look straight down it.
+ *
+ * The three flat panels are three particular orientations of the same object,
+ * so a click on one is the most direct way to ask the 3D view for that
+ * orientation — and having asked, the reader can drag away from it and see how
+ * far they have turned.
+ */
+$("loops").addEventListener("click", (e) => {
+  if (!snapshot) return;
+  const plane = planeAt($<HTMLCanvasElement>("loops"), e.clientX, e.clientY, snapshot.planes);
+  if (!plane) return;
+  view = { ...view, rot: rotFromPlane(plane) };
+  $("vcg-status").textContent = `Looking down the ${plane.label.toLowerCase()} plane`;
+  render();
+});
 
 $("reset-view").addEventListener("click", () => {
   view = defaultView();

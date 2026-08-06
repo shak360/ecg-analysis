@@ -114,7 +114,10 @@
           <canvas id="beats"></canvas>
         </div>
         <div class="vcg-split__loops">
-          <p class="panel__title">Planes</p>
+          <p class="panel__title">
+            Planes
+            <span class="panel__count">click one to look down it</span>
+          </p>
           <canvas id="loops"></canvas>
           <div class="vcg-space">
             <p class="panel__title">
@@ -123,8 +126,19 @@
               <button type="button" class="btn btn--ghost" id="expand-view" aria-pressed="false">Focus</button>
               <button type="button" class="btn btn--ghost" id="reset-view">Reset view</button>
             </p>
-            <canvas id="space" tabindex="0"
-                    aria-label="The vector loop in three dimensions. Drag, or use the arrow keys, to rotate."></canvas>
+            <div class="vcg-space__row">
+              <div class="vcg-compass">
+                <canvas id="compass"
+                        aria-label="The twelve lead directions, turning with the loop."></canvas>
+                <p class="note">
+                  Limb leads solid, precordial dashed — the limb angles are
+                  definitional, the precordial ones a textbook approximation to a
+                  direction that depends on the chest.
+                </p>
+              </div>
+              <canvas id="space" tabindex="0"
+                      aria-label="The vector loop in three dimensions. Drag, or use the arrow keys, to rotate."></canvas>
+            </div>
           </div>
         </div>
       </div>

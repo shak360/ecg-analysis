@@ -1188,3 +1188,19 @@ summary:focus-visible {
 .vcg--focus .vcg-split__loops > .panel__title:first-child { display: none; }
 .vcg--focus .vcg-space { margin-top: 0; }
 .vcg--focus .vcg-space canvas { max-width: min(72vh, 100%); margin: 0 auto; }
+
+/* The compass sits beside the loop, not under it: they show the same rotation,
+   and a reader comparing them should not have to scroll between them. */
+.vcg-space__row {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+}
+.vcg-compass canvas { width: 100%; display: block; }
+.vcg-compass .note { margin-top: var(--s-1); font-size: var(--fs-xs); }
+@media (max-width: 900px) {
+  .vcg-space__row { grid-template-columns: minmax(0, 1fr); }
+}
+/* A panel you can click to look down should say so by feel, not only in text. */
+#loops { cursor: pointer; }
