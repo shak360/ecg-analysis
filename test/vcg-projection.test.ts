@@ -13,11 +13,19 @@
 import { expect, test } from "vitest";
 
 import {
+  arcball,
   loopExtent,
   loopSpan,
   project3d,
   projectPlane,
+  reorthonormalise,
+  rotFromYawPitch,
+  rotIdentity,
+  rotMul,
 } from "../web/src/ui/vcg-loops.ts";
+
+/** A view at the named orientation, for the readable cases below. */
+const at = (yaw: number, pitch: number) => ({ rot: rotFromYawPitch(yaw, pitch) });
 import type { VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
 
 /** The plane definitions as the engine emits them. */
@@ -158,22 +166,22 @@ test("with no rotation the 3D view is exactly the frontal plane", () => {
   // turning the 3D loop back to square would find it disagreeing with the panel
   // directly above it, and neither would be obviously the wrong one.
   const flat = projectPlane(byId("frontal"), 0.7, -0.4, 0.9);
-  const solid = project3d(0.7, -0.4, 0.9, { yaw: 0, pitch: 0 });
+  const solid = project3d(0.7, -0.4, 0.9, at(0, 0));
   expect(solid.u).toBeCloseTo(flat.u, 9);
   expect(solid.v).toBeCloseTo(flat.v, 9);
 });
 
 test("depth is the axis pointing away, and only that", () => {
   // Unrotated, Z is depth and neither X nor Y contributes to it.
-  expect(project3d(0, 0, 1, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(1, 9);
-  expect(project3d(1, 0, 0, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(0, 9);
-  expect(project3d(0, 1, 0, { yaw: 0, pitch: 0 }).depth).toBeCloseTo(0, 9);
+  expect(project3d(0, 0, 1, at(0, 0)).depth).toBeCloseTo(1, 9);
+  expect(project3d(1, 0, 0, at(0, 0)).depth).toBeCloseTo(0, 9);
+  expect(project3d(0, 1, 0, at(0, 0)).depth).toBeCloseTo(0, 9);
 });
 
 test("a quarter turn of yaw brings the posterior axis into view", () => {
   // Turn the body a quarter turn and what was pointing away is now across the
   // screen — this is what makes the horizontal plane fall out of the 3D view.
-  const p = project3d(0, 0, 1, { yaw: Math.PI / 2, pitch: 0 });
+  const p = project3d(0, 0, 1, at(Math.PI / 2, 0));
   expect(p.u).toBeCloseTo(1, 9);
   expect(p.depth).toBeCloseTo(0, 9);
 });
@@ -186,15 +194,88 @@ test("rotation preserves length, so no view can inflate a vector", () => {
   const norm = Math.hypot(...v);
   for (const yaw of [0, 0.7, -1.9, 3.0]) {
     for (const pitch of [0, 0.4, -1.1]) {
-      const p = project3d(v[0], v[1], v[2], { yaw, pitch });
+      const p = project3d(v[0], v[1], v[2], at(yaw, pitch));
       expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(norm, 6);
     }
   }
 });
 
 test("turning all the way round returns to where it started", () => {
-  const a = project3d(0.3, 0.8, -0.5, { yaw: 0.4, pitch: 0.2 });
-  const b = project3d(0.3, 0.8, -0.5, { yaw: 0.4 + 2 * Math.PI, pitch: 0.2 });
+  const a = project3d(0.3, 0.8, -0.5, at(0.4, 0.2));
+  const b = project3d(0.3, 0.8, -0.5, at(0.4 + 2 * Math.PI, 0.2));
   expect(b.u).toBeCloseTo(a.u, 6);
   expect(b.v).toBeCloseTo(a.v, 6);
+});
+
+
+// --- the third degree of freedom -------------------------------------------
+
+/** Is this matrix a rotation — orthonormal rows, right-handed? */
+function isRotation(m: readonly number[]): boolean {
+  const row = (i: number) => [m[i * 3]!, m[i * 3 + 1]!, m[i * 3 + 2]!];
+  const dot = (a: number[], b: number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+  const [r0, r1, r2] = [row(0), row(1), row(2)];
+  const unit = [r0, r1, r2].every((r) => Math.abs(Math.hypot(...r) - 1) < 1e-9);
+  const perp = Math.abs(dot(r0, r1)) < 1e-9 && Math.abs(dot(r0, r2)) < 1e-9 &&
+    Math.abs(dot(r1, r2)) < 1e-9;
+  // Right-handed: r0 x r1 == r2, not -r2, so no view is a mirror image. A
+  // mirrored loop reverses rotation sense, which is a different diagnosis.
+  const cross = [
+    r0[1]! * r1[2]! - r0[2]! * r1[1]!,
+    r0[2]! * r1[0]! - r0[0]! * r1[2]!,
+    r0[0]! * r1[1]! - r0[1]! * r1[0]!,
+  ];
+  return unit && perp && dot(cross, r2) > 0.999;
+}
+
+test("a drag across the rim produces roll, which yaw and pitch cannot", () => {
+  // The whole reason this stopped being two angles. A yaw/pitch gimbal welds the
+  // body's vertical axis to the screen's vertical, so the loop can face any
+  // direction but never tilt. Rolling means the vertical axis leaves the screen's
+  // vertical plane — that is exactly what no (yaw, pitch) pair can do.
+  const roll = arcball({ x: 0.9, y: -0.45 }, { x: 0.45, y: 0.9 });
+  const tilted = project3d(0, 1, 0, { rot: roll });
+  expect(Math.abs(tilted.u), "the vertical axis never left the screen's vertical")
+    .toBeGreaterThan(0.1);
+
+  // And confirm the gimbal really cannot: under any yaw/pitch, the body's
+  // vertical axis stays in the screen's vertical plane, so its `u` is zero.
+  for (const yaw of [0, 0.9, -2.2, 3.1]) {
+    for (const pitch of [0, 0.5, -1.2]) {
+      expect(Math.abs(project3d(0, 1, 0, at(yaw, pitch)).u)).toBeLessThan(1e-9);
+    }
+  }
+});
+
+test("an arcball drag is always a rotation, never a mirror or a stretch", () => {
+  for (const [a, b] of [
+    [{ x: 0, y: 0 }, { x: 0.4, y: 0.2 }],
+    [{ x: -0.7, y: 0.3 }, { x: 0.6, y: -0.8 }],
+    [{ x: 1.4, y: 0.2 }, { x: -1.1, y: 0.9 }], // both outside the sphere
+    [{ x: 0.2, y: 0.2 }, { x: 0.2, y: 0.2 }], // no movement at all
+  ] as const) {
+    expect(isRotation(arcball(a, b)), `${JSON.stringify(a)}→${JSON.stringify(b)}`).toBe(true);
+  }
+});
+
+test("a still pointer rotates by nothing", () => {
+  // `acos` of a dot product that floating point nudged past 1 would be NaN, and
+  // a NaN matrix erases the loop. The clamp is what stops a click doing that.
+  const m = arcball({ x: 0.3, y: -0.6 }, { x: 0.3, y: -0.6 });
+  expect(m.every(Number.isFinite)).toBe(true);
+  expect(m).toEqual(rotIdentity());
+});
+
+test("thousands of drags do not let the loop drift out of shape", () => {
+  // Composing matrices accumulates error; unchecked it becomes a shear, and the
+  // loop would slowly stretch into a shape the patient does not have.
+  let m = rotIdentity();
+  for (let i = 0; i < 4000; i++) {
+    m = reorthonormalise(rotMul(arcball({ x: 0.11, y: 0.07 }, { x: 0.17, y: -0.05 }), m));
+  }
+  expect(isRotation(m), "the accumulated view is no longer a rotation").toBe(true);
+
+  const before = Math.hypot(0.6, -0.9, 0.35);
+  const p = project3d(0.6, -0.9, 0.35, { rot: m });
+  expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(before, 6);
 });

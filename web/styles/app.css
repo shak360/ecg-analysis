@@ -1178,3 +1178,13 @@ summary:focus-visible {
 }
 .vcg-space canvas:active { cursor: grabbing; }
 .vcg-space canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Focus: the loop takes the page, because a gesture with three degrees of
+   freedom wants room to use them. The planes are still the clinical reading, so
+   this is a mode the reader asks for and leaves, not a new default. */
+.vcg--focus .vcg-split { grid-template-columns: minmax(0, 1fr); }
+.vcg--focus .vcg-split__ecg,
+.vcg--focus #loops,
+.vcg--focus .vcg-split__loops > .panel__title:first-child { display: none; }
+.vcg--focus .vcg-space { margin-top: 0; }
+.vcg--focus .vcg-space canvas { max-width: min(72vh, 100%); margin: 0 auto; }

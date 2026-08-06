@@ -316,17 +316,136 @@ export function drawBeatGrid(
 // --- the loop in space -----------------------------------------------------
 
 /**
- * The default oblique view: enough yaw and pitch that the loop reads as a solid
- * object on arrival rather than as one of the flat projections above it.
+ * The orientation of the loop, as a rotation matrix.
+ *
+ * # Why not yaw and pitch
+ *
+ * The first version of this carried two angles, and two angles cannot express
+ * every orientation. A rotation in three dimensions has **three** degrees of
+ * freedom; yaw and pitch supply two, and the missing one is *roll* — spin about
+ * the direction you are looking. With a yaw/pitch gimbal the body's vertical
+ * axis is welded to the screen's vertical, so the loop can be turned to face any
+ * direction but never tilted, and near the poles yaw stops doing anything at all
+ * (which is why that version had to clamp pitch away from straight down).
+ *
+ * A matrix has no such preferred axis. Every drag is a rotation about whichever
+ * axis the gesture implies, composed onto whatever came before, so the loop
+ * turns the way a physical object in the hand does.
+ *
+ * Row-major, nine numbers, and always orthonormal — see `reorthonormalise`.
  */
-export const VIEW_YAW = -0.62;
-export const VIEW_PITCH = -0.34;
+export type Rot = readonly number[];
+
+/** No rotation: the frontal plane, looking at the patient's front. */
+export function rotIdentity(): Rot {
+  return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+}
+
+/** `a` after `b`. */
+export function rotMul(a: Rot, b: Rot): Rot {
+  const o = new Array<number>(9);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      o[r * 3 + c] = a[r * 3]! * b[c]! + a[r * 3 + 1]! * b[3 + c]! + a[r * 3 + 2]! * b[6 + c]!;
+    }
+  }
+  return o;
+}
+
+/** Rotation of `angle` radians about a unit `axis`, by Rodrigues' formula. */
+export function rotAxisAngle(axis: readonly [number, number, number], angle: number): Rot {
+  const n = Math.hypot(axis[0], axis[1], axis[2]);
+  if (n < 1e-12) return rotIdentity();
+  const [x, y, z] = [axis[0] / n, axis[1] / n, axis[2] / n];
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const t = 1 - c;
+  return [
+    t * x * x + c, t * x * y - s * z, t * x * z + s * y,
+    t * x * y + s * z, t * y * y + c, t * y * z - s * x,
+    t * x * z - s * y, t * y * z + s * x, t * z * z + c,
+  ];
+}
+
+/**
+ * Pull a drifted matrix back onto the rotation group.
+ *
+ * Every drag multiplies matrices together, and floating-point error accumulates
+ * in the product. Left alone for a few thousand drags the rows stop being unit
+ * length and stop being perpendicular, which is not a rotation any more — it is
+ * a rotation plus a small shear and scale, and it would slowly stretch the loop
+ * into a shape the patient does not have. Gram-Schmidt, applied on every
+ * composition, costs nothing and makes the drift unrepresentable.
+ */
+export function reorthonormalise(m: Rot): Rot {
+  const dot = (a: number[], b: number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+  const norm = (a: number[]) => {
+    const n = Math.hypot(a[0]!, a[1]!, a[2]!) || 1;
+    return [a[0]! / n, a[1]! / n, a[2]! / n];
+  };
+  let r0 = norm([m[0]!, m[1]!, m[2]!]);
+  let r1 = [m[3]!, m[4]!, m[5]!];
+  r1 = norm([r1[0]! - dot(r1, r0) * r0[0]!, r1[1]! - dot(r1, r0) * r0[1]!, r1[2]! - dot(r1, r0) * r0[2]!]);
+  const r2 = [
+    r0[1]! * r1[2]! - r0[2]! * r1[1]!,
+    r0[2]! * r1[0]! - r0[0]! * r1[2]!,
+    r0[0]! * r1[1]! - r0[1]! * r1[0]!,
+  ];
+  return [...r0, ...r1, ...r2];
+}
+
+/** The starting oblique, chosen so the loop reads as solid on arrival. */
+export function defaultRot(): Rot {
+  return rotFromYawPitch(-0.62, -0.34);
+}
+
+/** The old two-angle construction, kept because it names a view readably. */
+export function rotFromYawPitch(yaw: number, pitch: number): Rot {
+  return rotMul(rotAxisAngle([1, 0, 0], pitch), rotAxisAngle([0, 1, 0], yaw));
+}
+
+/**
+ * Map a pointer position to a point on a virtual sphere over the canvas.
+ *
+ * Inside the sphere the drag tips the loop; outside it the gesture runs along
+ * the rim and comes out as **roll**, which is the degree of freedom the gimbal
+ * could not reach. That is the whole trick of an arcball: the third axis is not
+ * a separate control, it is what a circular drag near the edge already means.
+ */
+function onSphere(dx: number, dy: number): [number, number, number] {
+  const d = dx * dx + dy * dy;
+  if (d <= 1) return [dx, dy, Math.sqrt(1 - d)];
+  const n = Math.sqrt(d);
+  return [dx / n, dy / n, 0];
+}
+
+/**
+ * The rotation a drag from `from` to `to` implies, both in units of the
+ * canvas's radius from its centre.
+ */
+export function arcball(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): Rot {
+  const a = onSphere(from.x, from.y);
+  const b = onSphere(to.x, to.y);
+  const axis: [number, number, number] = [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const dot = Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  return rotAxisAngle(axis, Math.acos(dot));
+}
 
 export interface View3d {
-  /** Radians about the body's vertical axis. */
-  yaw: number;
-  /** Radians about the screen's horizontal axis. */
-  pitch: number;
+  rot: Rot;
+  /** 1 fills the panel; the reader can push in on a small loop. */
+  zoom: number;
+}
+
+export function defaultView(): View3d {
+  return { rot: defaultRot(), zoom: 1 };
 }
 
 /**
@@ -338,7 +457,7 @@ export interface View3d {
  * foreshortening would make a loop's size depend on which way it happened to be
  * pointing.
  *
- * At `yaw = 0, pitch = 0` this reduces exactly to the frontal plane — `u` is X
+ * At the identity rotation this reduces exactly to the frontal plane — `u` is X
  * (left positive), `v` is Y (inferior positive) — so the 3D view and the flat
  * frontal panel agree at their shared orientation instead of being two unrelated
  * pictures. `depth` grows away from the viewer and is only a drawing cue.
@@ -347,19 +466,14 @@ export function project3d(
   x: number,
   y: number,
   z: number,
-  view: View3d,
+  view: View3d | { rot: Rot },
 ): { u: number; v: number; depth: number } {
-  const cy = Math.cos(view.yaw);
-  const sy = Math.sin(view.yaw);
-  const x1 = x * cy + z * sy;
-  const z1 = -x * sy + z * cy;
-
-  const cp = Math.cos(view.pitch);
-  const sp = Math.sin(view.pitch);
-  const y1 = y * cp - z1 * sp;
-  const z2 = y * sp + z1 * cp;
-
-  return { u: x1, v: y1, depth: z2 };
+  const m = view.rot;
+  return {
+    u: m[0]! * x + m[1]! * y + m[2]! * z,
+    v: m[3]! * x + m[4]! * y + m[5]! * z,
+    depth: m[6]! * x + m[7]! * y + m[8]! * z,
+  };
 }
 
 /** The three body axes, as unit vectors with the end each label belongs to. */
@@ -386,7 +500,9 @@ export function drawVcg3d(
   const th = loopTheme(opts.dark);
   const dpr = globalThis.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || 420;
-  const cssH = Math.max(240, Math.min(cssW, 420));
+  // Square: the loop is a set of directions, so it wants the same room either
+  // way, and a wide short box just centres it in empty space.
+  const cssH = Math.max(240, cssW);
 
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
@@ -401,7 +517,7 @@ export function drawVcg3d(
   const extent = loopExtent(v, span.from, span.to);
   const cx = cssW / 2;
   const cy = cssH / 2;
-  const r = Math.min(cssW, cssH) / 2 - 26;
+  const r = (Math.min(cssW, cssH) / 2 - 26) * (view.zoom ?? 1);
   const sx = (u: number) => cx + (u / extent) * r;
   const sy = (w: number) => cy + (w / extent) * r;
 

@@ -19,13 +19,15 @@ import { type Entry, firstWindow, loadCorpusIndex } from "./app/corpus.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { mountCasePicker } from "./ui/case-picker.ts";
 import {
+  arcball,
+  defaultView,
   drawBeatGrid,
   drawVcg3d,
   drawVcgLoops,
   loopSpan,
+  reorthonormalise,
+  rotMul,
   type View3d,
-  VIEW_PITCH,
-  VIEW_YAW,
 } from "./ui/vcg-loops.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -49,8 +51,8 @@ let playing = false;
 let lastFrameMs: number | null = null;
 /** Guards against a slow case landing after the reader moved on. */
 let ticket = 0;
-/** Where the reader has turned the loop to. */
-let view: View3d = { yaw: VIEW_YAW, pitch: VIEW_PITCH };
+/** Where the reader has turned the loop to, and how far in. */
+let view: View3d = defaultView();
 
 const dark = () =>
   document.documentElement.dataset.theme === "dark" ||
@@ -252,61 +254,87 @@ async function openCase(_code: string, e: Entry): Promise<void> {
 }
 
 /**
- * Drag the loop around.
+ * Turn the loop.
  *
- * Pointer capture, so a drag that leaves the canvas keeps rotating rather than
- * stopping half way — letting go outside the box is the normal way to finish a
- * throw, not a cancellation. Pitch is clamped just short of straight down, where
- * yaw would stop meaning anything.
+ * An arcball, not a pair of angles: the pointer is mapped onto a virtual sphere
+ * over the canvas and the drag becomes a rotation about whatever axis the
+ * gesture implies. Dragging through the middle tips it; dragging around the rim
+ * rolls it, which is the third degree of freedom a yaw/pitch gimbal cannot
+ * reach at all.
+ *
+ * Pointer capture, so a drag that leaves the canvas keeps rotating — letting go
+ * outside the box is how a gesture ends, not a cancellation.
  */
 {
   const space = $<HTMLCanvasElement>("space");
-  let from: { x: number; y: number; yaw: number; pitch: number } | null = null;
+
+  /** Pointer position in units of the canvas's radius from its centre. */
+  const ball = (e: PointerEvent) => {
+    const r = space.getBoundingClientRect();
+    const radius = Math.min(r.width, r.height) / 2;
+    return { x: (e.clientX - (r.left + r.width / 2)) / radius, y: (e.clientY - (r.top + r.height / 2)) / radius };
+  };
+
+  let last: { x: number; y: number } | null = null;
 
   space.addEventListener("pointerdown", (e) => {
-    from = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch };
+    last = ball(e);
     space.setPointerCapture(e.pointerId);
   });
   space.addEventListener("pointermove", (e) => {
-    if (!from) return;
-    view = {
-      yaw: from.yaw + (e.clientX - from.x) * 0.01,
-      pitch: clampPitch(from.pitch + (e.clientY - from.y) * 0.01),
-    };
+    if (!last) return;
+    const now = ball(e);
+    // Composed onto the current view and re-orthonormalised every time, so a
+    // long drag cannot accumulate a shear.
+    view = { ...view, rot: reorthonormalise(rotMul(arcball(last, now), view.rot)) };
+    last = now;
     render();
   });
   for (const ev of ["pointerup", "pointercancel"]) {
     space.addEventListener(ev, () => {
-      from = null;
+      last = null;
     });
   }
 
-  // The same rotation from the keyboard: a control that only answers to a drag
-  // is a control some readers do not have.
+  // The same three axes from the keyboard, because a control that only answers
+  // to a drag is a control some readers do not have. Shift rolls.
   space.addEventListener("keydown", (e) => {
-    const step = 0.12;
-    const by: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
+    const d = 0.14;
+    const turn: Record<string, [number, number]> = {
+      ArrowLeft: [-d, 0],
+      ArrowRight: [d, 0],
+      ArrowUp: [0, -d],
+      ArrowDown: [0, d],
     };
-    const d = by[e.key];
-    if (!d) return;
+    const t = turn[e.key];
+    if (!t) return;
     e.preventDefault();
-    view = { yaw: view.yaw + d[0], pitch: clampPitch(view.pitch + d[1]) };
+    const from = e.shiftKey ? { x: 0.85, y: 0 } : { x: 0, y: 0 };
+    const to = e.shiftKey ? { x: 0.85, y: t[0] || t[1] } : { x: t[0], y: t[1] };
+    view = { ...view, rot: reorthonormalise(rotMul(arcball(from, to), view.rot)) };
     render();
   });
-}
 
-/** Just short of straight down, where yaw stops meaning anything. */
-function clampPitch(p: number): number {
-  const limit = Math.PI / 2 - 0.05;
-  return Math.min(Math.max(p, -limit), limit);
+  // Wheel to push in on a small loop. Clamped: past about 6x the trace is wider
+  // than the panel and the reader is looking at a fragment with no context.
+  space.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const next = view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    view = { ...view, zoom: Math.min(6, Math.max(0.5, next)) };
+    render();
+  }, { passive: false });
 }
 
 $("reset-view").addEventListener("click", () => {
-  view = { yaw: VIEW_YAW, pitch: VIEW_PITCH };
+  view = defaultView();
+  render();
+});
+
+// A bigger canvas for the same loop, since a drag deserves room.
+$("expand-view").addEventListener("click", () => {
+  const on = $("case-panel").classList.toggle("vcg--focus");
+  $("expand-view").setAttribute("aria-pressed", String(on));
+  $("expand-view").textContent = on ? "Show planes" : "Focus";
   render();
 });
 
