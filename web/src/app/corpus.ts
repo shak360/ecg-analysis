@@ -8,6 +8,8 @@
  * and look merely wrong rather than broken.
  */
 
+import { assetUrl } from "./site.ts";
+
 export interface Statement {
   id: string;
   description: string;
@@ -46,7 +48,7 @@ export interface CorpusIndex {
 }
 
 /** Where the indexes live. Either being absent is ordinary, not a fault. */
-const SOURCES = ["/corpus/atlas.json", "/corpus-challenge/atlas.json"];
+const SOURCES = ["corpus/atlas.json", "corpus-challenge/atlas.json"];
 
 /**
  * Load every corpus index that is present.
@@ -58,7 +60,7 @@ const SOURCES = ["/corpus/atlas.json", "/corpus-challenge/atlas.json"];
 export async function loadCorpusIndex(): Promise<CorpusIndex> {
   const loaded = await Promise.all(SOURCES.map(async (u) => {
     try {
-      const res = await fetch(u);
+      const res = await fetch(assetUrl(u));
       return res.ok ? (await res.json()) as Entry[] : [];
     } catch {
       return [];

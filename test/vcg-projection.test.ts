@@ -16,9 +16,12 @@ import { readFileSync } from "node:fs";
 import {
   arcball,
   axisEndLabels,
+  beatAt,
+  beatWindow,
   defaultView,
   loopExtent,
   loopSpan,
+  meanQrsVector,
   project3d,
   projectPlane,
   reorthonormalise,
@@ -138,7 +141,7 @@ test("a rotation reverses when the vertical sign flips, which is the diagnosis",
 // --- scaling ---------------------------------------------------------------
 
 function snap(over: Partial<VcgSnapshot> = {}): VcgSnapshot {
-  const n = 20;
+  const n = over.mode === "raw" ? 5000 : 20;
   return {
     studyId: "t",
     beats: new Map(),
@@ -156,6 +159,8 @@ function snap(over: Partial<VcgSnapshot> = {}): VcgSnapshot {
     alignmentSpreadMs: 0,
     planes: PLANES,
     leadAxes: [],
+    beatSamples: [],
+    mode: "averaged" as const,
     ...over,
   };
 }
@@ -511,4 +516,88 @@ test("a drag is still a rotation, not a mirror", () => {
     expect(isRotation(arcball({ x: a[0], y: a[1] }, { x: b[0], y: b[1] })), `${a} -> ${b}`)
       .toBe(true);
   }
+});
+
+// --- the axis is the loop ---------------------------------------------------
+
+test("the mean QRS vector points where the samples do", () => {
+  // "The axis" is the direction of this vector, so it has to be the vector the
+  // panels draw and not a separately computed number that happens to sit beside
+  // them.
+  const s = snap();
+  for (let i = 2; i < 8; i++) { // inside the QRS window of the fixture
+    s.x[i] = 0.8;
+    s.y[i] = 0.8;
+  }
+  const m = meanQrsVector(s)!;
+  expect(m).not.toBeNull();
+  expect(m.frontalDeg).toBeCloseTo(45, 5); // equal left and inferior
+  expect(m.x).toBeGreaterThan(0);
+  expect(m.y).toBeGreaterThan(0);
+});
+
+test("a leftward-inferior beat gives an axis in the normal range", () => {
+  // The everyday case, stated in the units a reader quotes: leftward and
+  // inferior is roughly +30 to +60, which is what a normal ECG reports.
+  const s = snap();
+  for (let i = 2; i < 8; i++) {
+    s.x[i] = 1.0;
+    s.y[i] = 0.6;
+  }
+  const m = meanQrsVector(s)!;
+  expect(m.frontalDeg).toBeGreaterThan(0);
+  expect(m.frontalDeg).toBeLessThan(90);
+});
+
+test("an isoelectric QRS has no axis rather than an arbitrary one", () => {
+  // atan2(0, 0) is 0, which would draw a confident arrow at lead I on a beat
+  // with no frontal vector at all.
+  expect(meanQrsVector(snap())).toBeNull();
+});
+
+test("a beat with no measurable QRS window has no axis", () => {
+  expect(meanQrsVector(snap({ qrsOnset: -1 }))).toBeNull();
+  expect(meanQrsVector(snap({ qrsOffset: -1 }))).toBeNull();
+});
+
+// --- every beat, not the average --------------------------------------------
+
+const raw = (over: Partial<VcgSnapshot> = {}) =>
+  snap({ mode: "raw", beatSamples: [100, 600, 1100], ...over });
+
+test("the raw loop's cursor walks the record, not one beat", () => {
+  // The averaged frame is one beat and its span is QRS onset to T offset. The
+  // raw frame is the whole window, and those fiducials index a beat that is not
+  // in it — using them would confine the cursor to the first 30 ms of a ten
+  // second recording.
+  const v = raw();
+  expect(loopSpan(v)).toEqual({ from: 0, to: v.x.length });
+});
+
+test("a beat's window is the same stretch the averaged frame covers", () => {
+  // So a beat drawn raw and a beat drawn averaged are comparable rather than
+  // two different slices of the cycle.
+  const v = raw();
+  const w = beatWindow(v, 600);
+  expect(w.from).toBe(600 - Math.round(0.2 * v.fsHz));
+  expect(w.to - w.from).toBeLessThanOrEqual(Math.round(0.8 * v.fsHz));
+});
+
+test("a beat's window is clipped to the recording rather than indexing outside", () => {
+  const v = raw({ beatSamples: [5] });
+  const w = beatWindow(v, 5);
+  expect(w.from).toBe(0);
+  expect(w.to).toBeLessThanOrEqual(v.x.length);
+});
+
+test("the cursor knows which beat it is inside, and when it is between two", () => {
+  const v = raw({ beatSamples: [100, 600] });
+  expect(beatAt(v, 100)).toBe(100);
+  // Well after the last beat's window, so inside none of them.
+  expect(beatAt(v, v.x.length - 1)).toBeNull();
+});
+
+test("an averaged loop reports no beats, because it is one beat", () => {
+  expect(snap().beatSamples).toEqual([]);
+  expect(beatAt(snap(), 5)).toBeNull();
 });

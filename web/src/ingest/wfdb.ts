@@ -26,6 +26,9 @@
  * digitisation right".
  */
 
+import { assetUrl, CORPUS_PACKED } from "../app/site.ts";
+import { gunzip, PACKED_EXT, unpack } from "./packed.ts";
+
 /** Mirrors the Rust reader in `crates/ecg-core/tests/common/mod.rs`. */
 export interface WfdbRecord {
   fsHz: number;
@@ -62,7 +65,7 @@ function canonicalLead(name: string): string {
   }
 }
 
-interface SignalSpec {
+export interface SignalSpec {
   gain: number;
   baseline: number;
   name: string;
@@ -78,7 +81,7 @@ interface SignalSpec {
  * Line 1 is `record nsig fs nsamp`; then one line per signal, of which we need
  * `filename format gain(baseline)/units ... description`.
  */
-function parseHeader(text: string): {
+export function parseHeader(text: string): {
   fsHz: number;
   nSamples: number;
   datName: string;
@@ -216,20 +219,42 @@ export function initValuesMatch(rec: WfdbRecord, headerText: string): boolean {
   );
 }
 
-/** Fetch and decode one record by PTB-XL `ecg_id`, from the dev corpus mount. */
-export async function fetchRecord(ecgId: number, base = "/corpus"): Promise<WfdbRecord> {
+/**
+ * Fetch a header and its signal file together.
+ *
+ * A deployed build serves the signal packed (`.dat.gz`), a development server
+ * serves it raw; which one is a fact about the build, not something to probe
+ * for. Probing would cost every record in development a 404 before its real
+ * request, so `CORPUS_PACKED` decides and a wrong answer is a loud 404 rather
+ * than a slow one.
+ */
+async function fetchPair(
+  heaUrl: string,
+  sigUrl: string,
+  whatsMissing: (status: string) => string,
+): Promise<WfdbRecord> {
+  const url = CORPUS_PACKED ? `${sigUrl}${PACKED_EXT}` : sigUrl;
+  const [hea, sig] = await Promise.all([fetch(assetUrl(heaUrl)), fetch(assetUrl(url))]);
+  if (!hea.ok || !sig.ok) throw new Error(whatsMissing(`${hea.status}/${sig.status}`));
+
+  const bytes = new Uint8Array(await sig.arrayBuffer());
+  const raw = CORPUS_PACKED ? unpack(await gunzip(bytes)) : bytes;
+  return decodeWfdb(
+    await hea.text(),
+    raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer,
+  );
+}
+
+/** Fetch and decode one record by PTB-XL `ecg_id`, from the corpus mount. */
+export async function fetchRecord(ecgId: number, base = "corpus"): Promise<WfdbRecord> {
   const name = `${String(ecgId).padStart(5, "0")}_hr`;
-  const [hea, dat] = await Promise.all([
-    fetch(`${base}/records500/${name}.hea`),
-    fetch(`${base}/records500/${name}.dat`),
-  ]);
-  if (!hea.ok || !dat.ok) {
-    throw new Error(
-      `record ${ecgId} not in the local corpus (${hea.status}/${dat.status}). ` +
-        `Run \`npm run fetch:ptbxl\` to populate it.`,
-    );
-  }
-  return decodeWfdb(await hea.text(), await dat.arrayBuffer());
+  return fetchPair(
+    `${base}/records500/${name}.hea`,
+    `${base}/records500/${name}.dat`,
+    (status) =>
+      `record ${ecgId} not in the local corpus (${status}). ` +
+      `Run \`npm run fetch:ptbxl\` to populate it.`,
+  );
 }
 
 /**
@@ -245,15 +270,14 @@ export async function fetchAtlasRecord(caseId: string): Promise<WfdbRecord> {
 
   if (source === "ptbxl") return fetchRecord(Number(ref));
 
-  const base = `/corpus-challenge/${source}/${ref}`;
-  const [hea, sig] = await Promise.all([fetch(`${base}.hea`), fetch(`${base}.mat`)]);
-  if (!hea.ok || !sig.ok) {
-    throw new Error(
-      `${caseId} not in the local corpus (${hea.status}/${sig.status}). ` +
-        `Run \`npm run fetch:challenge\` to populate it.`,
-    );
-  }
-  return decodeWfdb(await hea.text(), await sig.arrayBuffer());
+  const base = `corpus-challenge/${source}/${ref}`;
+  return fetchPair(
+    `${base}.hea`,
+    `${base}.mat`,
+    (status) =>
+      `${caseId} not in the local corpus (${status}). ` +
+      `Run \`npm run fetch:challenge\` to populate it.`,
+  );
 }
 
 /** One serial pair, as `tools/fetch-ptbxl.ts` writes them. */
@@ -267,8 +291,8 @@ export interface SerialPair {
   siteChanged: boolean;
 }
 
-export async function fetchPairs(base = "/corpus"): Promise<SerialPair[]> {
-  const res = await fetch(`${base}/serial-pairs.json`);
+export async function fetchPairs(base = "corpus"): Promise<SerialPair[]> {
+  const res = await fetch(assetUrl(`${base}/serial-pairs.json`));
   if (!res.ok) {
     throw new Error(
       `no serial-pairs.json at ${base} (${res.status}). Run \`npm run fetch:ptbxl\`.`,

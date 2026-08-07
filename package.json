@@ -20,7 +20,9 @@
     "check": "tsc --noEmit && cargo clippy --workspace --all-targets",
     "postinstall": "echo 'Reminder: install with --ignore-scripts. See docs/decisions/0006-node-toolchain.md'",
     "fetch:ptbxl": "vite-node tools/fetch-ptbxl.ts",
-    "fetch:challenge": "vite-node tools/fetch-challenge2021.ts"
+    "fetch:challenge": "vite-node tools/fetch-challenge2021.ts",
+    "stage:corpus": "vite-node tools/stage-corpus.ts",
+    "build:site": "npm run build && npm run stage:corpus"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

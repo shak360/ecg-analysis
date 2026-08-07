@@ -55,11 +55,80 @@ export function loopExtent(v: VcgSnapshot, from: number, to: number): number {
   return Math.max(m, 0.1) * 1.15;
 }
 
-/** The span of the loop actually worth drawing: QRS onset through T offset. */
+/**
+ * The mean QRS vector — which is what "the axis" is.
+ *
+ * The frontal-plane axis a reader quotes is the direction of this vector
+ * projected onto X and Y, so the loop and the axis are not two facts about a
+ * beat but one fact drawn two ways. Showing it on the loop is the only way that
+ * is visible: a reader given a shape and, separately, a number has to take on
+ * trust that they describe the same thing.
+ *
+ * Summed over the QRS rather than taken at the R peak, for the reason
+ * `measure.rs` gives about `net_area`: an integral barely moves when one sample
+ * is clipped, and a peak moves a lot.
+ */
+export function meanQrsVector(
+  v: VcgSnapshot,
+): { x: number; y: number; z: number; frontalDeg: number } | null {
+  if (!v.x.length || v.qrsOnset < 0 || v.qrsOffset <= v.qrsOnset) return null;
+  const from = Math.max(0, v.qrsOnset);
+  const to = Math.min(v.x.length, v.qrsOffset);
+  let x = 0, y = 0, z = 0;
+  for (let i = from; i < to; i++) {
+    x += v.x[i]!;
+    y += v.y[i]!;
+    z += v.z[i]!;
+  }
+  const n = Math.max(1, to - from);
+  x /= n;
+  y /= n;
+  z /= n;
+  if (Math.hypot(x, y) < 1e-6) return null;
+  // Clockwise-positive from lead I, the hexaxial convention: canvas y and
+  // Frank Y both grow downward, so the sign passes straight through.
+  return { x, y, z, frontalDeg: (Math.atan2(y, x) * 180) / Math.PI };
+}
+
+/**
+ * The span of the loop actually worth drawing.
+ *
+ * On the averaged loop that is QRS onset through T offset, because the frame is
+ * one beat and those are its edges. On the raw loop the frame is the whole
+ * recording and the fiducials index a beat that is not there, so the span is
+ * every sample — the cursor walks the record, not a beat.
+ */
 export function loopSpan(v: VcgSnapshot): { from: number; to: number } {
+  if (v.mode === "raw") return { from: 0, to: v.x.length };
   const from = v.qrsOnset >= 0 ? v.qrsOnset : 0;
   const to = v.tOffset >= 0 ? v.tOffset : v.frameLen;
   return { from: Math.min(from, to), to: Math.max(from, to) };
+}
+
+/**
+ * The window one beat occupies on the raw loop.
+ *
+ * The same span the ensemble frame covers — 200 ms before the R peak to 600 ms
+ * after — so a beat drawn here and a beat drawn averaged are the same stretch
+ * of cardiac cycle and can be compared.
+ */
+export function beatWindow(v: VcgSnapshot, r: number): { from: number; to: number } {
+  const before = Math.round(0.2 * v.fsHz);
+  const after = Math.round(0.6 * v.fsHz);
+  return {
+    from: Math.max(0, r - before),
+    to: Math.min(v.x.length, r + after),
+  };
+}
+
+/** Which beat the cursor is inside, or null between beats. */
+export function beatAt(v: VcgSnapshot, at: number): number | null {
+  let best: number | null = null;
+  for (const r of v.beatSamples) {
+    const w = beatWindow(v, r);
+    if (at >= w.from && at < w.to) best = r;
+  }
+  return best;
 }
 
 export interface LoopTheme {
@@ -183,9 +252,39 @@ export function drawVcgLoops(
     };
 
     // The QRS and T portions, faint, as context.
-    const qrsTo = v.qrsOffset >= 0 ? v.qrsOffset : span.to;
-    if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.4);
-    if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.4);
+    if (v.mode === "raw") {
+      // Every beat, each its own loop. Drawn faint and overlaid, so the spread
+      // between them *is* the picture — an averaged loop is built to remove
+      // exactly this and cannot show an ectopic beat at all.
+      const here = beatAt(v, at);
+      for (const r of v.beatSamples) {
+        const w = beatWindow(v, r);
+        ctx.globalAlpha = r === here ? 0.95 : 0.28;
+        path(w.from, w.to, r === here ? th.qrs : th.faint, r === here ? 1.6 : 1);
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      const qrsTo = v.qrsOffset >= 0 ? v.qrsOffset : span.to;
+      if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.4);
+      if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.4);
+    }
+
+    // The mean QRS vector, so the axis is on the picture rather than only in a
+    // number somewhere else on the page.
+    const mean = v.mode === "raw" ? null : meanQrsVector(v);
+    if (mean) {
+      const m = projectPlane(plane, mean.x, mean.y, mean.z);
+      ctx.strokeStyle = th.ink;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      ctx.moveTo(sx(0), sy(0));
+      ctx.lineTo(sx(m.u), sy(m.v));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
 
     // The comet: the same path re-drawn bright over the last TAIL_MS.
     ctx.globalAlpha = 0.95;
@@ -666,8 +765,16 @@ export function drawVcg3d(
     ctx.globalAlpha = 1;
   };
 
-  if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.8);
-  if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.8);
+  if (v.mode === "raw") {
+    const here = beatAt(v, at);
+    for (const r of v.beatSamples) {
+      const w = beatWindow(v, r);
+      path(w.from, w.to, r === here ? th.qrs : th.faint, r === here ? 2 : 1);
+    }
+  } else {
+    if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.8);
+    if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.8);
+  }
 
   const tailFrom = Math.max(span.from, at - Math.round((TAIL_MS / 1000) * v.fsHz));
   path(tailFrom, Math.min(at + 1, span.to), th.cursor, 3);

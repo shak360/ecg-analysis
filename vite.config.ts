@@ -100,7 +100,17 @@ function fixtures(): Plugin {
   };
 }
 
+/**
+ * Where the site is served from.
+ *
+ * A GitHub project page lives at `/<repo>/`, not at a domain root, so every
+ * absolute URL the app emits has to be prefixed. `SITE_BASE` carries that in
+ * from CI; it defaults to `/` so a local `npm run build` still previews.
+ */
+const base = process.env.SITE_BASE ?? "/";
+
 export default defineConfig({
+  base,
   root: webRoot,
   publicDir: false,
   plugins: [
@@ -137,6 +147,16 @@ export default defineConfig({
       ],
     },
   },
+  // Vite bundles workers as an IIFE by default, which cannot code-split, so
+  // every dynamic import inside the worker gets inlined. That put all 477 KB of
+  // pdf.js into the worker bundle — downloaded by the atlas and the quiz, which
+  // start a worker on load and can never open a PDF. ES workers split, so the
+  // PDF path stays a separate chunk fetched only when a PDF is actually
+  // analysed. `build.target` below already requires Firefox 114 for module
+  // workers on the main thread, so this asks nothing new of a browser.
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: resolve(root, "dist"),
     emptyOutDir: true,
@@ -164,7 +184,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(webRoot, "index.html"),
-        vcg: resolve(webRoot, "vcg.html"),
         compare: resolve(webRoot, "compare.html"),
         quiz: resolve(webRoot, "quiz.html"),
         ptbxl: resolve(webRoot, "ptbxl.html"),

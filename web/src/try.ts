@@ -10,6 +10,7 @@
  * no ensemble beat, and no registration. Timing is safe to show because it
  * depends only on paper speed, which the grid pitch pins exactly.
  */
+import { assetUrl } from "./app/site.ts";
 import init, { analyze_strip } from "../wasm/ecg_core.js";
 import { extractPageGeometry, POINTS_PER_MM } from "./ingest/pdf-paths.ts";
 import { classifyPolylines } from "./ingest/classify.ts";
@@ -197,7 +198,7 @@ async function loadBytes(): Promise<{ bytes: Uint8Array; label: string }> {
     return { bytes: new Uint8Array(await file.arrayBuffer()), label: file.name };
   }
   const name = $<HTMLSelectElement>("fixture").value;
-  const res = await fetch(`/fixtures/synthetic/${name}.pdf`);
+  const res = await fetch(assetUrl(`fixtures/synthetic/${name}.pdf`));
   if (!res.ok) throw new Error(`could not load fixture (${res.status})`);
   return { bytes: new Uint8Array(await res.arrayBuffer()), label: name };
 }

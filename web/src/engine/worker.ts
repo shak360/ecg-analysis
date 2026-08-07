@@ -69,7 +69,7 @@ self.addEventListener("message", (e: MessageEvent<Request>) => {
           return;
         }
         case "vcg": {
-          const vcg = core.vcg(req.studyId);
+          const vcg = core.vcg(req.studyId, req.mode);
           reply({ kind: "vcgDerived", id: req.id, vcg }, vcgTransfers(vcg));
           return;
         }

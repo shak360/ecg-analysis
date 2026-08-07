@@ -17,10 +17,34 @@ import init, {
   vcg_lead_axes_json,
   vcg_planes_json,
 } from "../../wasm/ecg_core.js";
-import { extractPageGeometry } from "../ingest/pdf-paths.ts";
-import { classifyPolylines } from "../ingest/classify.ts";
-import { calibrateGain } from "../ingest/calibrate.ts";
-import { checkIdentities, detectLayout, sampleUniform, toPhysical } from "../ingest/layout.ts";
+/**
+ * The PDF ingest path is loaded on first use, not at import time.
+ *
+ * It reaches pdf.js, which is 477 KB — larger than everything else the app
+ * ships put together. Every page that touches the engine was paying for it,
+ * including the atlas and the quiz, which read WFDB records and have no way to
+ * open a PDF at all. Static imports here meant the corpus pages downloaded and
+ * parsed a PDF engine before they could draw their first tracing.
+ *
+ * Module evaluation is cached, so only the first `analyse()` waits.
+ */
+async function pdfIngest() {
+  const [paths, classify, calibrate, layout] = await Promise.all([
+    import("../ingest/pdf-paths.ts"),
+    import("../ingest/classify.ts"),
+    import("../ingest/calibrate.ts"),
+    import("../ingest/layout.ts"),
+  ]);
+  return {
+    extractPageGeometry: paths.extractPageGeometry,
+    classifyPolylines: classify.classifyPolylines,
+    calibrateGain: calibrate.calibrateGain,
+    checkIdentities: layout.checkIdentities,
+    detectLayout: layout.detectLayout,
+    sampleUniform: layout.sampleUniform,
+    toPhysical: layout.toPhysical,
+  };
+}
 import type {
   Assumptions,
   ComparisonSnapshot,
@@ -34,6 +58,7 @@ import type {
   SnapshotTrace,
   StudySummary,
   LeadAxis,
+  VcgMode,
   VcgPlane,
   VcgRefusal,
   VcgSnapshot,
@@ -81,6 +106,16 @@ export class EngineCore {
   ): Promise<StudySummary> {
     await this.ready();
     this.release([studyId]);
+
+    const {
+      calibrateGain,
+      checkIdentities,
+      classifyPolylines,
+      detectLayout,
+      extractPageGeometry,
+      sampleUniform,
+      toPhysical,
+    } = await pdfIngest();
 
     // pdf.js takes ownership of the buffer it is handed, so give it a copy —
     // the original has to survive for a re-run under different assumptions.
@@ -392,11 +427,11 @@ export class EngineCore {
    * into every `analysed` reply, which would make four pages that never want a
    * loop pay to structured-clone one.
    */
-  vcg(studyId: string): VcgSnapshot {
+  vcg(studyId: string, mode: VcgMode = "averaged"): VcgSnapshot {
     const held = this.#studies.get(studyId);
     if (!held) throw new Error(`study ${studyId} is not loaded in the engine`);
 
-    const v = held.analysis.vcg();
+    const v = mode === "raw" ? held.analysis.vcg_raw() : held.analysis.vcg();
     try {
       const refusal = JSON.parse(v.refusal_json() as string) as VcgRefusal | null;
 
@@ -428,6 +463,8 @@ export class EngineCore {
         alignmentSpreadMs: v.alignment_spread_ms as number,
         planes: JSON.parse(vcg_planes_json() as string) as VcgPlane[],
         leadAxes: JSON.parse(vcg_lead_axes_json() as string) as LeadAxis[],
+        beatSamples: Array.from((v.beat_samples ?? []) as Uint32Array),
+        mode,
       };
     } finally {
       // A wasm-bindgen struct holds heap memory until it is freed.

@@ -23,6 +23,7 @@
  * territories is not a test. Same kind, and where possible the same diagnostic
  * class, so the choice is between things that actually look alike.
  */
+import { assetUrl } from "./app/site.ts";
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printout.ts";
@@ -515,7 +516,7 @@ async function boot(): Promise<void> {
   // validated the label. Widening the pool here would quietly grade people
   // against as-published labels while the page still promised otherwise.
   try {
-    const res = await fetch("/corpus/atlas.json");
+    const res = await fetch(assetUrl("corpus/atlas.json"));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     entries = (await res.json()) as Entry[];
   } catch {
