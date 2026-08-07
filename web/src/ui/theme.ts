@@ -36,12 +36,23 @@ export function isDark(attr: string | undefined, osPrefersDark: boolean): boolea
   return osPrefersDark;
 }
 
-/** Whether this document should be drawn dark right now. */
+/**
+ * Whether this document should be drawn dark right now.
+ *
+ * Both globals are guarded because the geometry tests call the renderers under
+ * bare Node, with no DOM at all. The previous expression got away without a
+ * guard by accident: it evaluated `matchMedia` first, the stub returned false,
+ * and `&&` short-circuited before anything touched `document`. Reading the
+ * attribute first — which is the entire fix — removed that accident, so the
+ * absence has to be handled rather than relied upon.
+ *
+ * No DOM means nobody has expressed a preference, so: light.
+ */
 export function darkTheme(): boolean {
-  return isDark(
-    document.documentElement.dataset.theme,
-    // `matchMedia` is absent under a bare Node test runner; treat that as light
-    // rather than throwing, since an explicit attribute answers first anyway.
-    typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches,
-  );
+  const attr = typeof document === "undefined"
+    ? undefined
+    : document.documentElement.dataset.theme;
+  const osDark = typeof matchMedia === "function" &&
+    matchMedia("(prefers-color-scheme: dark)").matches;
+  return isDark(attr, osDark);
 }
