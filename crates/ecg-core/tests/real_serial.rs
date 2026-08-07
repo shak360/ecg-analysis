@@ -603,3 +603,62 @@ mod serde_free {
         Json { axis }
     }
 }
+
+/// How many records yield a loop when nothing is averaged.
+///
+/// The averaged path refuses 15% of the corpus as non-stationary, and that gate
+/// exists only because an average of unlike beats describes none of them. Take
+/// the leads as recorded and the question does not arise — so this is the
+/// measure of what the averaging was actually costing.
+///
+///   cargo test -p ecg-core --test real_serial -- --ignored --nocapture survey_vcg_raw
+#[test]
+#[ignore = "needs the fetched corpus; run deliberately"]
+fn survey_vcg_raw_vs_averaged() {
+    if !common::corpus_available() {
+        eprintln!("no corpus on disk — skipping");
+        return;
+    }
+
+    let mut total = 0usize;
+    let mut avg_ok = 0usize;
+    let mut raw_ok = 0usize;
+    let mut raw_only = 0usize;
+    let mut beats: Vec<usize> = Vec::new();
+    let mut codes: std::collections::BTreeMap<String, usize> = Default::default();
+
+    let code_of = |json: &str| -> String {
+        json.split("\"code\":\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("?").to_string()
+    };
+
+    for id in common::all_record_ids() {
+        let Ok(rec) = common::read_by_id(id) else { continue };
+        let Some(study) = common::build_study(&rec) else { continue };
+        total += 1;
+
+        let a = study.vcg().refusal_json() == "null";
+        let r = study.vcg_raw();
+        let r_ok = r.refusal_json() == "null";
+        if a { avg_ok += 1 }
+        if r_ok {
+            raw_ok += 1;
+            beats.push(r.beat_samples().len());
+            if !a { raw_only += 1 }
+        } else {
+            *codes.entry(code_of(&r.refusal_json())).or_default() += 1;
+        }
+    }
+
+    beats.sort_unstable();
+    println!("\nover {total} records");
+    println!("  averaged loop drawn   {avg_ok} ({:.1}%)", 100.0 * avg_ok as f64 / total as f64);
+    println!("  raw loop drawn        {raw_ok} ({:.1}%)", 100.0 * raw_ok as f64 / total as f64);
+    println!("  raw draws where averaged refused: {raw_only}");
+    if !beats.is_empty() {
+        println!("  beats per record: median {}, max {}", beats[beats.len() / 2], beats[beats.len() - 1]);
+    }
+    println!("  raw refusals:");
+    for (c, n) in &codes {
+        println!("    {c:<26} {n}");
+    }
+}

@@ -238,6 +238,86 @@ pub fn kors(
     Ok(Vcg { x_mv: project(&KORS_X), y_mv: project(&KORS_Y), z_mv: project(&KORS_Z) })
 }
 
+/// Derive X/Y/Z from the *conditioned continuous signals*, beat by beat.
+///
+/// # Why this exists beside `kors`
+///
+/// `kors` reads the ensemble beat, which averages every beat in the window into
+/// one. That is necessary for a study whose leads are not simultaneous — a 3x4
+/// printout's twelve panels are four different 2.5 s columns, and the
+/// R-anchored frame is the only thing that puts them on a shared clock.
+///
+/// For a record whose leads *were* recorded together, averaging is not
+/// necessary and costs two things. It hides beat-to-beat variation, which for
+/// an ectopic beat or a run of ventricular tachycardia is the entire finding.
+/// And it forces a stationarity gate — the ten seconds must be one rhythm for
+/// the average to describe a beat — which is why those rhythms are refused.
+///
+/// So this takes the leads as recorded and transforms each sample where it
+/// stands. No average, therefore no assumption that the beats were alike, and
+/// therefore no stationarity gate: the loop simply shows what happened,
+/// including that the beats differed.
+///
+/// Simultaneity is still required and still checked. It is the one assumption
+/// the transform genuinely cannot do without.
+pub fn kors_raw(
+    signals: &[(String, Vec<f32>)],
+    offsets_s: &[f64],
+    baselined: &[bool],
+) -> Result<Vcg, VcgRefusal> {
+    let mut idx = [usize::MAX; 8];
+    let mut missing = Vec::new();
+    for (k, want) in KORS_LEADS.iter().enumerate() {
+        match signals.iter().position(|(n, _)| n == want) {
+            Some(i) => idx[k] = i,
+            None => missing.push((*want).to_string()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(VcgRefusal::LeadsMissing(missing));
+    }
+
+    let first = offsets_s[idx[0]];
+    if idx.iter().any(|&i| (offsets_s[i] - first).abs() > 1e-9) {
+        return Err(VcgRefusal::NotSimultaneous {
+            offsets_s: idx.iter().map(|&i| (signals[i].0.clone(), offsets_s[i])).collect(),
+        });
+    }
+
+    let unbaselined: Vec<String> = idx
+        .iter()
+        .filter(|&&i| !baselined[i])
+        .map(|&i| signals[i].0.clone())
+        .collect();
+    if !unbaselined.is_empty() {
+        return Err(VcgRefusal::BaselineNotEstablished(unbaselined));
+    }
+
+    // The shortest lead bounds the transform: a sample is only a vector where
+    // every contributing lead has one.
+    let n = idx.iter().map(|&i| signals[i].1.len()).min().unwrap_or(0);
+    if n == 0 {
+        return Err(VcgRefusal::FrameLengthMismatch {
+            lead: signals[idx[0]].0.clone(),
+            len: 0,
+        });
+    }
+
+    let project = |row: &[f32; 8]| -> Vec<f32> {
+        (0..n)
+            .map(|s| {
+                let mut acc = 0.0f32;
+                for (k, &c) in row.iter().enumerate() {
+                    acc += c * signals[idx[k]].1[s];
+                }
+                acc
+            })
+            .collect()
+    };
+
+    Ok(Vcg { x_mv: project(&KORS_X), y_mv: project(&KORS_Y), z_mv: project(&KORS_Z) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

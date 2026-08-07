@@ -267,7 +267,7 @@ export type Request =
     fsHz: number;
   }
   | { kind: "compare"; id: string; studyIds: string[] }
-  | { kind: "vcg"; id: string; studyId: string }
+  | { kind: "vcg"; id: string; studyId: string; mode: VcgMode }
   | { kind: "release"; id: string; studyIds: string[] };
 
 export type Response =
@@ -376,7 +376,25 @@ export interface VcgSnapshot {
   planes: VcgPlane[];
   /** Where each of the twelve leads points, for the compass. */
   leadAxes: LeadAxis[];
+  /**
+   * R-peak sample indices, when the loop was taken from the recording as it
+   * stands. Empty for the averaged loop, which is one beat by construction.
+   */
+  beatSamples: number[];
+  /** Which of the two the caller asked for. */
+  mode: VcgMode;
 }
+
+/**
+ * Averaged, or every beat.
+ *
+ * `"averaged"` combines the window's beats into one and needs the rhythm to
+ * have held steady for that to describe anything. `"raw"` transforms the leads
+ * as recorded, so beat-to-beat variation is visible rather than averaged away —
+ * which is the whole finding for an ectopic beat or a run of VT, and is why
+ * that mode carries no stationarity gate.
+ */
+export type VcgMode = "averaged" | "raw";
 
 /**
  * One lead's positive direction, in the loop's own frame.

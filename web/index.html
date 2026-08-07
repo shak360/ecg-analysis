@@ -136,7 +136,11 @@
         <div id="pane-loop" hidden>
       <div class="panel__toolbar">
         <span class="panel__title">Playback</span>
-        <button type="button" class="btn btn--ghost" id="play">Play</button>
+          <div class="seg" role="group" aria-label="How the loop is built">
+            <button type="button" class="seg__btn" id="mode-averaged" aria-pressed="true">Averaged beat</button>
+            <button type="button" class="seg__btn" id="mode-raw" aria-pressed="false">Every beat</button>
+          </div>
+          <button type="button" class="btn btn--ghost" id="play">Play</button>
         <label class="field field--inline">
           <span class="field__label">Speed</span>
           <select id="speed" class="select">

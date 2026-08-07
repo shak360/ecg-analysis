@@ -70,11 +70,18 @@ export interface VcgViewElements {
   reset: HTMLButtonElement;
   /** Gets `vcg--focus` when the loop takes the whole panel. */
   focusHost: HTMLElement;
+  /** Averaged beat, or every beat as recorded. */
+  modeAveraged: HTMLButtonElement;
+  modeRaw: HTMLButtonElement;
 }
 
 export interface VcgView {
   /** Show a snapshot, or `null` to clear. */
   show(v: VcgSnapshot | null): void;
+  /** Which mode the reader has chosen. */
+  mode(): "averaged" | "raw";
+  /** Told when the reader switches, so the host can fetch the other loop. */
+  onModeChange(fn: (mode: "averaged" | "raw") => void): void;
   /** Repaint at the current cursor — after a theme change or a resize. */
   redraw(): void;
   /** Stop playback, for when the view is hidden. */
@@ -87,6 +94,8 @@ export function mountVcgView(el: VcgViewElements, opts: { dark: () => boolean })
   let playing = false;
   let lastFrameMs: number | null = null;
   let view: View3d = defaultView();
+  let mode: "averaged" | "raw" = "averaged";
+  let onMode: (m: "averaged" | "raw") => void = () => {};
 
   function render(): void {
     if (!snapshot || !snapshot.x.length) return;
@@ -285,6 +294,17 @@ export function mountVcgView(el: VcgViewElements, opts: { dark: () => boolean })
     render();
   });
 
+  for (const [btn, m] of [[el.modeAveraged, "averaged"], [el.modeRaw, "raw"]] as const) {
+    btn.addEventListener("click", () => {
+      if (mode === m) return;
+      mode = m;
+      el.modeAveraged.setAttribute("aria-pressed", String(m === "averaged"));
+      el.modeRaw.setAttribute("aria-pressed", String(m === "raw"));
+      setPlaying(false);
+      onMode(m);
+    });
+  }
+
   el.play.addEventListener("click", () => setPlaying(!playing));
   el.scrub.addEventListener("input", () => {
     setPlaying(false);
@@ -353,5 +373,9 @@ export function mountVcgView(el: VcgViewElements, opts: { dark: () => boolean })
     },
     redraw: render,
     pause: () => setPlaying(false),
+    mode: () => mode,
+    onModeChange(fn) {
+      onMode = fn;
+    },
   };
 }

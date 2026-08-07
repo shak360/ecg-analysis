@@ -27,7 +27,7 @@ use crate::dsp::resample::{
 };
 use crate::fiducial::{fiducials, r_index, GlobalFiducials, Unmeasurable, FRAME_LEN};
 use crate::measure::{measure_study, LeadMeasurements};
-use crate::vcg::{kors, Stationarity, VcgRefusal};
+use crate::vcg::{kors, kors_raw, Stationarity, VcgRefusal};
 use crate::serial::gate::{
     gate_all, pair_blockers, ConfounderScreens, CoverageEvidence, FilterEvidence, GainEvidence,
     IdentityEvidence, LeadEvidence, LeadVerdict, PairEvidence, RhoGain, Screen, StudyEvidence,
@@ -461,6 +461,7 @@ impl StudyBuilder {
             rho_min,
             shift_mean_ms,
             rr_cv,
+            beat_samples: strip_beats.iter().map(|b| b.r_sample as u32).collect(),
             hr_bpm,
             qrs_onset: f.qrs_onset.map(|v| v as i32).unwrap_or(-1),
             qrs_offset: f.qrs_offset.map(|v| v as i32).unwrap_or(-1),
@@ -511,6 +512,12 @@ pub struct StudyAnalysis {
     shift_mean_ms: Vec<f32>,
     /// Coefficient of variation of RR across the strip; NaN when unmeasurable.
     rr_cv: f64,
+    /// R-peak sample indices from the rhythm strip, on the conditioned grid.
+    ///
+    /// The strip is the study's sole timing authority, so these are where the
+    /// beats are for every lead that shares its clock — which is what lets a
+    /// loop drawn from the raw signals be cut into one loop per beat.
+    beat_samples: Vec<u32>,
     hr_bpm: f64,
     qrs_onset: i32,
     qrs_offset: i32,
@@ -749,6 +756,7 @@ impl StudyAnalysis {
                 refusal: None,
                 notes,
                 alignment_spread_ms: spread,
+                beat_samples: Vec::new(),
             },
             Err(r) => VcgLoops {
                 x_mv: Vec::new(),
@@ -760,6 +768,7 @@ impl StudyAnalysis {
                 refusal: Some(r),
                 notes,
                 alignment_spread_ms: spread,
+                beat_samples: Vec::new(),
             },
         }
     }
@@ -778,6 +787,48 @@ impl StudyAnalysis {
     #[wasm_bindgen(getter = rho_min)]
     pub fn rho_min_measured(&self) -> f32 {
         self.rho_min.iter().copied().fold(f32::INFINITY, f32::min)
+    }
+
+    /// The vectorcardiogram taken from the recording as it stands, no averaging.
+    ///
+    /// Returns the loop over the whole conditioned window plus the R-peak
+    /// indices, so a reader can be shown one loop per beat and see how much the
+    /// beats actually differed — which an averaged loop is built to hide.
+    ///
+    /// Refuses for missing leads, non-simultaneous panels and an unestablished
+    /// baseline, exactly as the averaged path does. It does *not* apply the
+    /// stationarity gate: that gate exists because an average of unlike beats
+    /// describes none of them, and there is no average here.
+    pub fn vcg_raw(&self) -> VcgLoops {
+        let signals: Vec<(String, Vec<f32>)> =
+            self.names.iter().cloned().zip(self.signals.iter().cloned()).collect();
+
+        match kors_raw(&signals, &self.offsets, &self.baselined) {
+            Ok(v) => VcgLoops {
+                x_mv: v.x_mv,
+                y_mv: v.y_mv,
+                z_mv: v.z_mv,
+                qrs_onset: self.qrs_onset,
+                qrs_offset: self.qrs_offset,
+                t_offset: self.t_offset,
+                refusal: None,
+                notes: Vec::new(),
+                alignment_spread_ms: 0.0,
+                beat_samples: self.beat_samples.clone(),
+            },
+            Err(r) => VcgLoops {
+                x_mv: Vec::new(),
+                y_mv: Vec::new(),
+                z_mv: Vec::new(),
+                qrs_onset: -1,
+                qrs_offset: -1,
+                t_offset: -1,
+                refusal: Some(r),
+                notes: Vec::new(),
+                alignment_spread_ms: 0.0,
+                beat_samples: Vec::new(),
+            },
+        }
     }
 
     fn index_of(&self, lead: &str) -> Option<usize> {
@@ -1517,10 +1568,17 @@ pub struct VcgLoops {
     refusal: Option<VcgRefusal>,
     notes: Vec<String>,
     alignment_spread_ms: f32,
+    /// Empty for the averaged loop, which is one beat by construction.
+    beat_samples: Vec<u32>,
 }
 
 #[wasm_bindgen]
 impl VcgLoops {
+    #[wasm_bindgen(getter)]
+    pub fn beat_samples(&self) -> Vec<u32> {
+        self.beat_samples.clone()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn x_mv(&self) -> Vec<f32> {
         self.x_mv.clone()

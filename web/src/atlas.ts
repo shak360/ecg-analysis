@@ -73,8 +73,8 @@ let vcg: VcgView | null = null;
  * something else takes its place.
  */
 let heldStudy: string | null = null;
-/** Whether the loop has been asked for on the case currently open. */
-let loopFetched = false;
+/** Which loop has been fetched for the case currently open, if any. */
+let loopFetched: "averaged" | "raw" | null = null;
 
 // ---------------------------------------------------------------------------
 // The finding list
@@ -122,7 +122,7 @@ async function openCase(code: string, e: Entry): Promise<void> {
     heldStudy = null;
     void engine.release([stale]).catch(() => {});
   }
-  loopFetched = false;
+  loopFetched = null;
   vcg?.show(null);
 
   $("case-placeholder").hidden = false;
@@ -436,11 +436,12 @@ async function showView(which: "tracing" | "loop"): Promise<void> {
     vcg?.show(null);
     return;
   }
-  if (!loopFetched) {
-    loopFetched = true;
+  const want = vcg?.mode() ?? "averaged";
+  if (loopFetched !== want) {
+    loopFetched = want;
     const mine = ticket;
     try {
-      const snapshot = await engine.vcg(heldStudy);
+      const snapshot = await engine.vcg(heldStudy, want);
       if (mine !== ticket) return;
       vcg?.show(snapshot);
     } catch {
@@ -475,12 +476,18 @@ vcg = mountVcgView({
   expand: $<HTMLButtonElement>("expand-view"),
   reset: $<HTMLButtonElement>("reset-view"),
   focusHost: $("case-panel"),
+  modeAveraged: $<HTMLButtonElement>("mode-averaged"),
+  modeRaw: $<HTMLButtonElement>("mode-raw"),
 }, {
   dark: () =>
     document.documentElement.dataset.theme === "dark" ||
     (matchMedia("(prefers-color-scheme: dark)").matches &&
       document.documentElement.dataset.theme !== "light"),
 });
+
+// Switching how the loop is built asks the engine for the other one; the same
+// study is still loaded, so it is a second call rather than a re-ingest.
+vcg.onModeChange(() => void showView("loop"));
 
 async function boot(): Promise<void> {
   const status = $("engine-status");

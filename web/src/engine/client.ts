@@ -17,6 +17,7 @@ import {
   type Request,
   type Response,
   type StudySummary,
+  type VcgMode,
   type VcgSnapshot,
 } from "./protocol.ts";
 
@@ -49,7 +50,7 @@ export interface Engine {
   ): Promise<StudySummary>;
   compare(studyIds: string[]): Promise<ComparisonSnapshot>;
   /** One study's vectorcardiogram, or the reason it has none. */
-  vcg(studyId: string): Promise<VcgSnapshot>;
+  vcg(studyId: string, mode?: VcgMode): Promise<VcgSnapshot>;
   release(studyIds: string[]): Promise<void>;
   /** Where the compute is actually running, for the status bar. */
   readonly where: "worker" | "inline";
@@ -95,9 +96,9 @@ export class InlineEngine implements Engine {
     return this.#core.compare(studyIds);
   }
 
-  async vcg(studyId: string): Promise<VcgSnapshot> {
+  async vcg(studyId: string, mode: VcgMode = "averaged"): Promise<VcgSnapshot> {
     await this.ready();
-    return this.#core.vcg(studyId);
+    return this.#core.vcg(studyId, mode);
   }
 
   release(studyIds: string[]): Promise<void> {
@@ -188,8 +189,8 @@ export class WorkerEngine implements Engine {
     return r.snapshot;
   }
 
-  async vcg(studyId: string): Promise<VcgSnapshot> {
-    const r = await this.#send({ kind: "vcg", studyId });
+  async vcg(studyId: string, mode: VcgMode = "averaged"): Promise<VcgSnapshot> {
+    const r = await this.#send({ kind: "vcg", studyId, mode });
     if (r.kind !== "vcgDerived") throw new Error(`unexpected reply ${r.kind}`);
     return r.vcg;
   }

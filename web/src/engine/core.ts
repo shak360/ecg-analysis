@@ -34,6 +34,7 @@ import type {
   SnapshotTrace,
   StudySummary,
   LeadAxis,
+  VcgMode,
   VcgPlane,
   VcgRefusal,
   VcgSnapshot,
@@ -392,11 +393,11 @@ export class EngineCore {
    * into every `analysed` reply, which would make four pages that never want a
    * loop pay to structured-clone one.
    */
-  vcg(studyId: string): VcgSnapshot {
+  vcg(studyId: string, mode: VcgMode = "averaged"): VcgSnapshot {
     const held = this.#studies.get(studyId);
     if (!held) throw new Error(`study ${studyId} is not loaded in the engine`);
 
-    const v = held.analysis.vcg();
+    const v = mode === "raw" ? held.analysis.vcg_raw() : held.analysis.vcg();
     try {
       const refusal = JSON.parse(v.refusal_json() as string) as VcgRefusal | null;
 
@@ -428,6 +429,8 @@ export class EngineCore {
         alignmentSpreadMs: v.alignment_spread_ms as number,
         planes: JSON.parse(vcg_planes_json() as string) as VcgPlane[],
         leadAxes: JSON.parse(vcg_lead_axes_json() as string) as LeadAxis[],
+        beatSamples: Array.from((v.beat_samples ?? []) as Uint32Array),
+        mode,
       };
     } finally {
       // A wasm-bindgen struct holds heap memory until it is freed.
