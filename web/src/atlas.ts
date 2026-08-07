@@ -17,6 +17,7 @@
  * marked as such — a learner should be able to see where the two disagree, which
  * is impossible if the page quietly merges them.
  */
+import { darkTheme } from "./ui/theme.ts";
 import { createEngine } from "./engine/client.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import {
@@ -479,10 +480,7 @@ vcg = mountVcgView({
   modeAveraged: $<HTMLButtonElement>("mode-averaged"),
   modeRaw: $<HTMLButtonElement>("mode-raw"),
 }, {
-  dark: () =>
-    document.documentElement.dataset.theme === "dark" ||
-    (matchMedia("(prefers-color-scheme: dark)").matches &&
-      document.documentElement.dataset.theme !== "light"),
+  dark: () => darkTheme(),
 });
 
 // Switching how the loop is built asks the engine for the other one; the same

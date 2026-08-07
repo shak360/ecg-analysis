@@ -10,6 +10,7 @@
  * no ensemble beat, and no registration. Timing is safe to show because it
  * depends only on paper speed, which the grid pitch pins exactly.
  */
+import { darkTheme } from "./ui/theme.ts";
 import { assetUrl } from "./app/site.ts";
 import init, { analyze_strip } from "../wasm/ecg_core.js";
 import { extractPageGeometry, POINTS_PER_MM } from "./ingest/pdf-paths.ts";
@@ -107,8 +108,7 @@ function drawStrip(canvas: HTMLCanvasElement, a: Analysis, mmPerSec: number, mmP
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
-    document.documentElement.dataset.theme !== "light";
+  const dark = darkTheme();
 
   // Grid, at true millimetre scale.
   ctx.fillStyle = dark ? "#12151a" : "#fffafa";

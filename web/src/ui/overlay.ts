@@ -13,6 +13,8 @@
  *   overlaying it on the beats invites reading it as another lead.
  */
 
+import { darkTheme } from "./theme.ts";
+
 /** One study's contribution to a lead panel. */
 export interface OverlayTrace {
   label: string;
@@ -227,8 +229,7 @@ export function drawOverlay(
   leads: OverlayLead[],
   opts: OverlayOptions = DEFAULT_OVERLAY,
 ): OverlayResult {
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
-    document.documentElement.dataset.theme !== "light";
+  const dark = darkTheme();
   const th = theme(dark);
 
   const dpr = globalThis.devicePixelRatio || 1;

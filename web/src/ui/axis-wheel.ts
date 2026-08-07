@@ -19,6 +19,8 @@
  * keeping with the rest of the atlas.
  */
 
+import { darkTheme } from "./theme.ts";
+
 /** Lead name to its hexaxial angle in degrees, clockwise-positive from lead I. */
 const LIMB_AXES: readonly (readonly [string, number])[] = [
   ["I", 0],
@@ -47,8 +49,7 @@ export interface AxisWheelOptions {
  * be read as one.
  */
 export function drawAxisWheel(canvas: HTMLCanvasElement, opts: AxisWheelOptions): void {
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
-    document.documentElement.dataset.theme !== "light";
+  const dark = darkTheme();
   const ink = dark ? "#e8eaee" : "#16191d";
   const faint = dark ? "#3d444f" : "#c9ced6";
   const muted = dark ? "#a2aab6" : "#5c646f";

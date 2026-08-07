@@ -22,6 +22,8 @@
  * copy of the scale, is exactly the kind of duplicate that drifts.
  */
 
+import { darkTheme } from "./theme.ts";
+
 export interface CaliperScale {
   /** Pixels per millimetre, as `drawPrintout` computed it. */
   pxPerMm: number;
@@ -131,8 +133,7 @@ export function attachCalipers(
     const { pxPerMm, mmPerSec, mmPerMv, panels } = getScale();
     const ms = (Math.abs(b.x - a.x) / pxPerMm / mmPerSec) * 1000;
     const mv = Math.abs(b.y - a.y) / pxPerMm / mmPerMv;
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
-      document.documentElement.dataset.theme !== "light";
+    const dark = darkTheme();
     const ink = dark ? "#7dd3fc" : "#0369a1";
     const band = dark ? "rgba(125,211,252,0.16)" : "rgba(3,105,161,0.15)";
 
@@ -274,7 +275,7 @@ export function attachCalipers(
     ctx.restore();
 
     ctx.save();
-    ctx.strokeStyle = matchMedia("(prefers-color-scheme: dark)").matches ? "#7dd3fc" : "#0369a1";
+    ctx.strokeStyle = darkTheme() ? "#7dd3fc" : "#0369a1";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(p.x, p.y, MAG_R, 0, Math.PI * 2);

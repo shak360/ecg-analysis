@@ -16,6 +16,8 @@
  * beat view — the same recording drawn twice, a year apart, on one page.
  */
 
+import { darkTheme } from "./theme.ts";
+
 /** One study's signals for the printout. */
 export interface PrintoutStudy {
   label: string;
@@ -130,8 +132,7 @@ export function drawPrintout(
   studies: PrintoutStudy[],
   opts: PrintoutOptions = DEFAULT_PRINTOUT,
 ): PrintoutScale {
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches &&
-    document.documentElement.dataset.theme !== "light";
+  const dark = darkTheme();
   const th = theme(dark);
 
   const dpr = globalThis.devicePixelRatio || 1;
