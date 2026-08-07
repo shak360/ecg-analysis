@@ -425,3 +425,101 @@ fn survey_vcg_refusals() {
         println!("    {code:<24} {n:>5} ({:.1}%)", 100.0 * *n as f64 / total as f64);
     }
 }
+
+/// Does the derived frame agree with the leads it was derived from?
+///
+/// The strongest check available on the Kors transform's *signs*, and it needs
+/// no reference VCG: each orthogonal axis has a scalar lead that points nearly
+/// along it, so the two must move together.
+///
+///   X is left-positive  and V6 points left      -> corr(X, V6)  > 0
+///   Y is inferior-pos.  and aVF points inferior -> corr(Y, aVF) > 0
+///   Z is posterior-pos. and V2 points anterior  -> corr(Z, V2)  < 0
+///
+/// The Z line is the one worth having. A flipped Z draws a loop that is a
+/// mirror image front-to-back — smooth, plausible, and the wrong diagnosis —
+/// and nothing else in the pipeline would notice.
+///
+///   cargo test -p ecg-core --test real_serial -- --ignored --nocapture survey_vcg_frame
+#[test]
+#[ignore = "needs the fetched corpus; run deliberately"]
+fn survey_vcg_frame_signs() {
+    if !common::corpus_available() {
+        eprintln!("no corpus on disk — skipping");
+        return;
+    }
+
+    fn corr(a: &[f32], b: &[f32]) -> f64 {
+        let n = a.len().min(b.len());
+        if n < 8 {
+            return f64::NAN;
+        }
+        let (ma, mb) = (
+            a[..n].iter().map(|&v| v as f64).sum::<f64>() / n as f64,
+            b[..n].iter().map(|&v| v as f64).sum::<f64>() / n as f64,
+        );
+        let (mut num, mut da, mut db) = (0.0, 0.0, 0.0);
+        for i in 0..n {
+            let (x, y) = (a[i] as f64 - ma, b[i] as f64 - mb);
+            num += x * y;
+            da += x * x;
+            db += y * y;
+        }
+        if da <= 0.0 || db <= 0.0 { f64::NAN } else { num / (da * db).sqrt() }
+    }
+
+    let mut agree = [0usize; 3];
+    let mut total = 0usize;
+    let mut sums = [0.0f64; 3];
+
+    for id in common::all_record_ids() {
+        let Ok(rec) = common::read_by_id(id) else { continue };
+        let Some(study) = common::build_study(&rec) else { continue };
+        let v = study.vcg();
+        if v.refusal_json() != "null" {
+            continue;
+        }
+        let (on, off) = (v.qrs_onset(), v.qrs_offset());
+        if on < 0 || off <= on {
+            continue;
+        }
+        let (a, b) = (on as usize, off as usize);
+        let cut = |s: &[f32]| s[a.min(s.len())..b.min(s.len())].to_vec();
+
+        let (Some(v6), Some(avf), Some(v2)) =
+            (study.beat("V6"), study.beat("aVF"), study.beat("V2"))
+        else {
+            continue;
+        };
+
+        let cx = corr(&cut(&v.x_mv()), &cut(&v6));
+        let cy = corr(&cut(&v.y_mv()), &cut(&avf));
+        let cz = corr(&cut(&v.z_mv()), &cut(&v2));
+        if !cx.is_finite() || !cy.is_finite() || !cz.is_finite() {
+            continue;
+        }
+
+        total += 1;
+        sums[0] += cx;
+        sums[1] += cy;
+        sums[2] += cz;
+        if cx > 0.0 { agree[0] += 1 }
+        if cy > 0.0 { agree[1] += 1 }
+        if cz < 0.0 { agree[2] += 1 }
+    }
+
+    println!("\nframe signs over {total} records with a loop");
+    let names = [
+        ("X vs V6  (expect +)", 0),
+        ("Y vs aVF (expect +)", 1),
+        ("Z vs V2  (expect -)", 2),
+    ];
+    for (label, k) in names {
+        println!(
+            "  {label}   mean r {:+.3}   as expected in {} of {total} ({:.1}%)",
+            sums[k] / total as f64,
+            agree[k],
+            100.0 * agree[k] as f64 / total as f64,
+        );
+    }
+}

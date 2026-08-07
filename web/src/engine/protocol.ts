@@ -374,6 +374,22 @@ export interface VcgSnapshot {
   /** Largest inter-lead alignment difference, milliseconds. */
   alignmentSpreadMs: number;
   planes: VcgPlane[];
+  /** Where each of the twelve leads points, for the compass. */
+  leadAxes: LeadAxis[];
+}
+
+/**
+ * One lead's positive direction, in the loop's own frame.
+ *
+ * `approximate` is true for the precordial six: their real directions depend on
+ * the chest they were recorded from, so the diagram must not present them with
+ * the same authority as the limb leads, whose angles are definitional.
+ */
+export interface LeadAxis {
+  lead: string;
+  v: [number, number, number];
+  limb: boolean;
+  approximate: boolean;
 }
 
 /**

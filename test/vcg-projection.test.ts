@@ -11,9 +11,26 @@
  * numbers: leftward must go right on screen, inferior must go down.
  */
 import { expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 
-import { loopExtent, loopSpan, projectPlane } from "../web/src/ui/vcg-loops.ts";
-import type { VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
+import {
+  arcball,
+  axisEndLabels,
+  defaultView,
+  loopExtent,
+  loopSpan,
+  project3d,
+  projectPlane,
+  reorthonormalise,
+  rotFromYawPitch,
+  rotIdentity,
+  rotFromPlane,
+  rotMul,
+} from "../web/src/ui/vcg-loops.ts";
+
+/** A view at the named orientation, for the readable cases below. */
+const at = (yaw: number, pitch: number) => ({ rot: rotFromYawPitch(yaw, pitch) });
+import type { LeadAxis, VcgPlane, VcgSnapshot } from "../web/src/engine/protocol.ts";
 
 /** The plane definitions as the engine emits them. */
 const PLANES: VcgPlane[] = [
@@ -38,6 +55,30 @@ const PLANES: VcgPlane[] = [
 ];
 
 const byId = (id: string) => PLANES.find((p) => p.id === id)!;
+
+/**
+ * The lead directions, read out of `config.rs` at test time.
+ *
+ * Parsed rather than copied, for the reason `criteria-doc.test.ts` gives about
+ * the criteria table: a copy passes forever while the constant it claims to
+ * check drifts underneath it. These are anatomical directions where a sign error
+ * points a lead at the opposite wall of the chest, so the test has to be reading
+ * the real thing.
+ */
+const LEAD_AXES: LeadAxis[] = (() => {
+  const rs = readFileSync(new URL("../crates/ecg-core/src/config.rs", import.meta.url), "utf8");
+  const block = /pub const LEAD_AXES[^=]*= \[([\s\S]*?)\];/.exec(rs);
+  if (!block) throw new Error("LEAD_AXES not found in config.rs");
+  const rows = [...block[1]!.matchAll(/\("([^"]+)", \[([-\d.]+), ([-\d.]+), ([-\d.]+)\]\)/g)];
+  if (rows.length !== 12) throw new Error(`expected 12 lead axes, parsed ${rows.length}`);
+  return rows.map((r) => ({
+    lead: r[1]!,
+    v: [Number(r[2]), Number(r[3]), Number(r[4])] as [number, number, number],
+    limb: !r[1]!.startsWith("V"),
+    approximate: r[1]!.startsWith("V"),
+  }));
+})();
+
 
 test("a leftward vector goes right on screen in both planes that show X", () => {
   // X is left-positive; canvas u grows rightward. Anatomical left is drawn to
@@ -114,6 +155,7 @@ function snap(over: Partial<VcgSnapshot> = {}): VcgSnapshot {
     notes: [],
     alignmentSpreadMs: 0,
     planes: PLANES,
+    leadAxes: [],
     ...over,
   };
 }
@@ -144,4 +186,329 @@ test("the drawn span runs QRS onset to T offset, and survives missing fiducials"
   const noQrs = loopSpan(snap({ qrsOnset: -1 }));
   expect(noQrs.from).toBeGreaterThanOrEqual(0);
   expect(noQrs.to).toBeGreaterThan(noQrs.from);
+});
+
+// --- the loop in space -----------------------------------------------------
+
+test("with no rotation the 3D view is exactly the frontal plane", () => {
+  // The two pictures must agree where they overlap. If they did not, a reader
+  // turning the 3D loop back to square would find it disagreeing with the panel
+  // directly above it, and neither would be obviously the wrong one.
+  const flat = projectPlane(byId("frontal"), 0.7, -0.4, 0.9);
+  const solid = project3d(0.7, -0.4, 0.9, at(0, 0));
+  expect(solid.u).toBeCloseTo(flat.u, 9);
+  expect(solid.v).toBeCloseTo(flat.v, 9);
+});
+
+test("depth is the axis pointing away, and only that", () => {
+  // Unrotated, Z is depth and neither X nor Y contributes to it.
+  expect(project3d(0, 0, 1, at(0, 0)).depth).toBeCloseTo(1, 9);
+  expect(project3d(1, 0, 0, at(0, 0)).depth).toBeCloseTo(0, 9);
+  expect(project3d(0, 1, 0, at(0, 0)).depth).toBeCloseTo(0, 9);
+});
+
+test("a quarter turn of yaw brings the posterior axis into view", () => {
+  // Turn the body a quarter turn and what was pointing away is now across the
+  // screen — this is what makes the horizontal plane fall out of the 3D view.
+  const p = project3d(0, 0, 1, at(Math.PI / 2, 0));
+  expect(p.u).toBeCloseTo(1, 9);
+  expect(p.depth).toBeCloseTo(0, 9);
+});
+
+test("rotation preserves length, so no view can inflate a vector", () => {
+  // The projection is orthographic and the rotation is rigid; a loop must not
+  // get bigger because of where the reader turned it. This is the property that
+  // would break if a perspective divide were ever added.
+  const v: [number, number, number] = [0.6, -0.9, 0.35];
+  const norm = Math.hypot(...v);
+  for (const yaw of [0, 0.7, -1.9, 3.0]) {
+    for (const pitch of [0, 0.4, -1.1]) {
+      const p = project3d(v[0], v[1], v[2], at(yaw, pitch));
+      expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(norm, 6);
+    }
+  }
+});
+
+test("turning all the way round returns to where it started", () => {
+  const a = project3d(0.3, 0.8, -0.5, at(0.4, 0.2));
+  const b = project3d(0.3, 0.8, -0.5, at(0.4 + 2 * Math.PI, 0.2));
+  expect(b.u).toBeCloseTo(a.u, 6);
+  expect(b.v).toBeCloseTo(a.v, 6);
+});
+
+
+// --- the third degree of freedom -------------------------------------------
+
+/** Is this matrix a rotation — orthonormal rows, right-handed? */
+function isRotation(m: readonly number[]): boolean {
+  const row = (i: number) => [m[i * 3]!, m[i * 3 + 1]!, m[i * 3 + 2]!];
+  const dot = (a: number[], b: number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+  const [r0, r1, r2] = [row(0), row(1), row(2)];
+  const unit = [r0, r1, r2].every((r) => Math.abs(Math.hypot(...r) - 1) < 1e-9);
+  const perp = Math.abs(dot(r0, r1)) < 1e-9 && Math.abs(dot(r0, r2)) < 1e-9 &&
+    Math.abs(dot(r1, r2)) < 1e-9;
+  // Right-handed: r0 x r1 == r2, not -r2, so no view is a mirror image. A
+  // mirrored loop reverses rotation sense, which is a different diagnosis.
+  const cross = [
+    r0[1]! * r1[2]! - r0[2]! * r1[1]!,
+    r0[2]! * r1[0]! - r0[0]! * r1[2]!,
+    r0[0]! * r1[1]! - r0[1]! * r1[0]!,
+  ];
+  return unit && perp && dot(cross, r2) > 0.999;
+}
+
+test("a drag across the rim produces roll, which yaw and pitch cannot", () => {
+  // The whole reason this stopped being two angles. A yaw/pitch gimbal welds the
+  // body's vertical axis to the screen's vertical, so the loop can face any
+  // direction but never tilt. Rolling means the vertical axis leaves the screen's
+  // vertical plane — that is exactly what no (yaw, pitch) pair can do.
+  const roll = arcball({ x: 0.9, y: -0.45 }, { x: 0.45, y: 0.9 });
+  const tilted = project3d(0, 1, 0, { rot: roll });
+  expect(Math.abs(tilted.u), "the vertical axis never left the screen's vertical")
+    .toBeGreaterThan(0.1);
+
+  // And confirm the gimbal really cannot: under any yaw/pitch, the body's
+  // vertical axis stays in the screen's vertical plane, so its `u` is zero.
+  for (const yaw of [0, 0.9, -2.2, 3.1]) {
+    for (const pitch of [0, 0.5, -1.2]) {
+      expect(Math.abs(project3d(0, 1, 0, at(yaw, pitch)).u)).toBeLessThan(1e-9);
+    }
+  }
+});
+
+test("an arcball drag is always a rotation, never a mirror or a stretch", () => {
+  for (const [a, b] of [
+    [{ x: 0, y: 0 }, { x: 0.4, y: 0.2 }],
+    [{ x: -0.7, y: 0.3 }, { x: 0.6, y: -0.8 }],
+    [{ x: 1.4, y: 0.2 }, { x: -1.1, y: 0.9 }], // both outside the sphere
+    [{ x: 0.2, y: 0.2 }, { x: 0.2, y: 0.2 }], // no movement at all
+  ] as const) {
+    expect(isRotation(arcball(a, b)), `${JSON.stringify(a)}→${JSON.stringify(b)}`).toBe(true);
+  }
+});
+
+test("a still pointer rotates by nothing", () => {
+  // `acos` of a dot product that floating point nudged past 1 would be NaN, and
+  // a NaN matrix erases the loop. The clamp is what stops a click doing that.
+  const m = arcball({ x: 0.3, y: -0.6 }, { x: 0.3, y: -0.6 });
+  expect(m.every(Number.isFinite)).toBe(true);
+  expect(m).toEqual(rotIdentity());
+});
+
+test("thousands of drags do not let the loop drift out of shape", () => {
+  // Composing matrices accumulates error; unchecked it becomes a shear, and the
+  // loop would slowly stretch into a shape the patient does not have.
+  let m = rotIdentity();
+  for (let i = 0; i < 4000; i++) {
+    m = reorthonormalise(rotMul(arcball({ x: 0.11, y: 0.07 }, { x: 0.17, y: -0.05 }), m));
+  }
+  expect(isRotation(m), "the accumulated view is no longer a rotation").toBe(true);
+
+  const before = Math.hypot(0.6, -0.9, 0.35);
+  const p = project3d(0.6, -0.9, 0.35, { rot: m });
+  expect(Math.hypot(p.u, p.v, p.depth)).toBeCloseTo(before, 6);
+});
+
+
+// --- looking down a plane --------------------------------------------------
+
+test("snapping to a plane reproduces that plane exactly", () => {
+  // The strongest form of this claim: for every plane, and for arbitrary
+  // vectors, the 3D view at the snapped rotation and the flat panel agree to
+  // floating point. A snap that merely looked close would leave the reader
+  // comparing two pictures that disagree slightly for no stated reason.
+  const vs: [number, number, number][] = [
+    [1, 0, 0], [0, 1, 0], [0, 0, 1], [0.63, -0.21, 0.48], [-0.9, 0.4, -0.15],
+  ];
+  for (const plane of PLANES) {
+    const rot = rotFromPlane(plane);
+    for (const [x, y, z] of vs) {
+      const flat = projectPlane(plane, x, y, z);
+      const solid = project3d(x, y, z, { rot });
+      expect(solid.u, `${plane.id} u`).toBeCloseTo(flat.u, 9);
+      expect(solid.v, `${plane.id} v`).toBeCloseTo(flat.v, 9);
+    }
+  }
+});
+
+test("every plane snap is a right-handed rotation, so none mirrors the loop", () => {
+  // The third row is a cross product precisely so this holds. If a snap were
+  // left-handed the loop would come out mirrored, and a mirrored loop runs the
+  // other way round — which is a different diagnosis, not a different view.
+  for (const plane of PLANES) {
+    expect(isRotation(rotFromPlane(plane)), plane.id).toBe(true);
+  }
+});
+
+test("the frontal snap is the identity, since that is where the 3D view starts", () => {
+  expect([...rotFromPlane(byId("frontal"))]).toEqual([...rotIdentity()]);
+});
+
+test("no two planes snap to the same view", () => {
+  const seen = PLANES.map((p) => rotFromPlane(p).join(","));
+  expect(new Set(seen).size).toBe(PLANES.length);
+});
+
+// --- which way the body faces ----------------------------------------------
+
+test("the default view looks at the patient from in front", () => {
+  // Asked directly, and worth pinning: at the opening orientation anterior must
+  // come *toward* the reader and posterior go away, because that is what looking
+  // at a patient means. A default that opened from behind would mirror every
+  // loop's rotation sense relative to what a clinician expects, and nothing else
+  // in the picture would say so.
+  const v = defaultView();
+  expect(project3d(0, 0, -1, v).depth, "anterior must come toward the viewer")
+    .toBeLessThan(0);
+  expect(project3d(0, 0, 1, v).depth, "posterior must go away from the viewer")
+    .toBeGreaterThan(0);
+});
+
+test("both ends of every axis are named", () => {
+  // An orthographic projection has no perspective cue, so a line through the
+  // origin looks the same whichever end points at you. Labelling only the
+  // positive end left the word "posterior" floating on an axis with no way to
+  // tell it was the far end — which read as posterior coming out of the screen.
+  const labels = axisEndLabels();
+  for (const pair of [["left", "right"], ["inferior", "superior"], ["posterior", "anterior"]]) {
+    for (const end of pair) {
+      expect(labels, `${end} is never drawn`).toContain(end);
+    }
+  }
+  expect(labels).toHaveLength(6);
+});
+
+test("each plane snap puts anterior where its own panel says it is", () => {
+  // One concrete fact per plane, each taken from that panel's own labels rather
+  // than from a rule I assumed applied to all three. My first attempt asserted
+  // "anterior is to the right" everywhere and failed on the horizontal panel,
+  // where anterior is *up* — the panel was right and the test was wrong.
+  const frontal = rotFromPlane(byId("frontal"));
+  expect(project3d(0, 0, -1, { rot: frontal }).depth, "frontal looks from the front")
+    .toBeLessThan(0);
+
+  // Horizontal: posterior is labelled downward, so anterior is up the screen.
+  const horizontal = rotFromPlane(byId("horizontal"));
+  expect(project3d(0, 0, -1, { rot: horizontal }).v).toBeLessThan(0);
+
+  // Left sagittal: anterior is labelled to the right.
+  const sagittal = rotFromPlane(byId("sagittal"));
+  expect(project3d(0, 0, -1, { rot: sagittal }).u).toBeGreaterThan(0);
+});
+
+test("anterior and posterior always land on opposite sides of the origin", () => {
+  for (const plane of [...PLANES.map(rotFromPlane), defaultView().rot]) {
+    const a = project3d(0, 0, -1, { rot: plane });
+    const p = project3d(0, 0, 1, { rot: plane });
+    expect(a.u).toBeCloseTo(-p.u, 9);
+    expect(a.v).toBeCloseTo(-p.v, 9);
+    expect(a.depth).toBeCloseTo(-p.depth, 9);
+  }
+});
+
+// --- the two fixed reference compasses -------------------------------------
+
+test("the frontal reference faces the patient: left right, inferior down", () => {
+  // This is the hexaxial diagram every reader already knows, so it is the one
+  // that must be beyond argument. Facing a patient puts their left on your
+  // right.
+  const rot = rotFromPlane(byId("frontal"));
+  expect(project3d(1, 0, 0, { rot }).u, "patient's left is to the reader's right")
+    .toBeGreaterThan(0);
+  expect(project3d(0, 1, 0, { rot }).v, "inferior is down the screen")
+    .toBeGreaterThan(0);
+});
+
+test("the transverse reference puts anterior up and posterior down", () => {
+  // The question this whole diagram exists to settle. A transverse section is
+  // conventionally drawn as a CT slice is — anterior at the top, the patient's
+  // left on the reader's right, which is the view from the feet.
+  const rot = rotFromPlane(byId("horizontal"));
+  expect(project3d(0, 0, -1, { rot }).v, "anterior must be up the screen")
+    .toBeLessThan(0);
+  expect(project3d(0, 0, 1, { rot }).v, "posterior must be down the screen")
+    .toBeGreaterThan(0);
+  expect(project3d(1, 0, 0, { rot }).u, "patient's left is to the reader's right")
+    .toBeGreaterThan(0);
+});
+
+test("V1 and V2 point anteriorly, V6 points left", () => {
+  // The lead directions themselves, independent of any view. If these were
+  // wrong every compass would be wrong together and consistently, which is the
+  // hardest kind of error to notice.
+  const axis = (lead: string) => LEAD_AXES.find((a) => a.lead === lead)!;
+  for (const lead of ["V1", "V2"]) {
+    expect(axis(lead).v[2], `${lead} must point anteriorly (negative Z)`).toBeLessThan(0);
+  }
+  expect(axis("V6").v[0], "V6 points to the patient's left").toBeGreaterThan(0.9);
+  expect(Math.abs(axis("V6").v[2]), "V6 is not an anterior lead").toBeLessThan(0.1);
+  // V1 is rightward as well as anterior; V6 is leftward. That spread is the
+  // reason there are six of them.
+  expect(axis("V1").v[0]).toBeLessThan(0);
+  // Limb leads carry no front-back component at all.
+  for (const lead of ["I", "II", "III", "aVR", "aVL", "aVF"]) {
+    expect(axis(lead).v[2], `${lead} is a frontal-plane lead`).toBe(0);
+  }
+});
+
+// --- which way a drag turns it ---------------------------------------------
+
+test("dragging right sends the near side away, as a physical object would", () => {
+  // Grab a globe at the front and pull right: the right-hand side goes away and
+  // the left comes round to face you. A control that turns against the hand
+  // teaches a mirrored model of which way the object faces, and every judgement
+  // about anterior and posterior is then made inside that model.
+  const start = defaultView();
+  const before = project3d(1, 0, 0, start); // the patient's left, on the screen's right
+  expect(before.u, "this test assumes patient-left is drawn to the right").toBeGreaterThan(0);
+
+  const rot = reorthonormalise(rotMul(arcball({ x: 0, y: 0 }, { x: 0.4, y: 0 }), start.rot));
+  expect(project3d(1, 0, 0, { rot }).depth, "a rightward drag must push the screen-right side away")
+    .toBeGreaterThan(before.depth);
+});
+
+test("dragging down sends the bottom away, by the same argument", () => {
+  // The half of this that was missed the first time. Both drags were inverted
+  // by one sign in `onSphere`; fixing the horizontal at the call site left this
+  // one wrong, and the test written alongside it asserted the wrong behaviour as
+  // deliberate — a test can pin a bug just as firmly as it pins a fix.
+  const start = defaultView();
+  const before = project3d(0, 1, 0, start); // the patient's feet, at the screen bottom
+  expect(before.v, "this test assumes inferior is drawn downward").toBeGreaterThan(0);
+
+  const rot = reorthonormalise(rotMul(arcball({ x: 0, y: 0 }, { x: 0, y: 0.4 }), start.rot));
+  expect(project3d(0, 1, 0, { rot }).depth, "a downward drag must push the screen-bottom away")
+    .toBeGreaterThan(before.depth);
+});
+
+test("both drags turn the same way round, so neither axis is the odd one out", () => {
+  // The failure mode this exists for: one axis fixed and the other not. Each
+  // drag must send the side it pulls from away, and the two must agree.
+  const start = defaultView();
+  const cases: [string, [number, number], [number, number, number]][] = [
+    ["right", [0.4, 0], [1, 0, 0]],
+    ["left", [-0.4, 0], [-1, 0, 0]],
+    ["down", [0, 0.4], [0, 1, 0]],
+    ["up", [0, -0.4], [0, -1, 0]],
+  ];
+  for (const [name, drag, side] of cases) {
+    const before = project3d(side[0], side[1], side[2], start);
+    const rot = reorthonormalise(
+      rotMul(arcball({ x: 0, y: 0 }, { x: drag[0], y: drag[1] }), start.rot),
+    );
+    const after = project3d(side[0], side[1], side[2], { rot });
+    expect(after.depth, `dragging ${name} must push that side away`)
+      .toBeGreaterThan(before.depth);
+  }
+});
+
+test("a drag is still a rotation, not a mirror", () => {
+  for (const [a, b] of [
+    [[0, 0], [0.5, 0.2]],
+    [[-0.6, 0.4], [0.7, -0.5]],
+    [[1.3, 0.1], [-1.2, 0.8]],
+  ] as const) {
+    expect(isRotation(arcball({ x: a[0], y: a[1] }, { x: b[0], y: b[1] })), `${a} -> ${b}`)
+      .toBe(true);
+  }
 });

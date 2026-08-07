@@ -14,6 +14,7 @@ import init, {
   serial_findings_json,
   st_verdicts_json,
   StudyBuilder,
+  vcg_lead_axes_json,
   vcg_planes_json,
 } from "../../wasm/ecg_core.js";
 import { extractPageGeometry } from "../ingest/pdf-paths.ts";
@@ -32,6 +33,7 @@ import type {
   SerialFinding,
   SnapshotTrace,
   StudySummary,
+  LeadAxis,
   VcgPlane,
   VcgRefusal,
   VcgSnapshot,
@@ -425,6 +427,7 @@ export class EngineCore {
         notes: Array.from(v.notes as string[]),
         alignmentSpreadMs: v.alignment_spread_ms as number,
         planes: JSON.parse(vcg_planes_json() as string) as VcgPlane[],
+        leadAxes: JSON.parse(vcg_lead_axes_json() as string) as LeadAxis[],
       };
     } finally {
       // A wasm-bindgen struct holds heap memory until it is freed.

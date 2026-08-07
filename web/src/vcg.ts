@@ -18,7 +18,21 @@ import type { VcgSnapshot } from "./engine/protocol.ts";
 import { type Entry, firstWindow, loadCorpusIndex } from "./app/corpus.ts";
 import { fetchAtlasRecord } from "./ingest/wfdb.ts";
 import { mountCasePicker } from "./ui/case-picker.ts";
-import { drawBeatGrid, drawVcgLoops, loopSpan } from "./ui/vcg-loops.ts";
+import {
+  arcball,
+  defaultView,
+  drawBeatGrid,
+  drawVcg3d,
+  drawVcgLoops,
+  drawLeadCompass,
+  loopSpan,
+  planeAt,
+  reorthonormalise,
+  rotFromPlane,
+  rotIdentity,
+  rotMul,
+  type View3d,
+} from "./ui/vcg-loops.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -41,6 +55,8 @@ let playing = false;
 let lastFrameMs: number | null = null;
 /** Guards against a slow case landing after the reader moved on. */
 let ticket = 0;
+/** Where the reader has turned the loop to, and how far in. */
+let view: View3d = defaultView();
 
 const dark = () =>
   document.documentElement.dataset.theme === "dark" ||
@@ -50,10 +66,41 @@ const dark = () =>
 function render(): void {
   if (!snapshot) return;
   drawBeatGrid($<HTMLCanvasElement>("beats"), snapshot, cursor, LEAD_ORDER, { dark: dark() });
-  drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, {
+  const shown = {
     dark: dark(),
     showQrs: $<HTMLInputElement>("show-qrs").checked,
     showT: $<HTMLInputElement>("show-t").checked,
+  };
+  drawVcgLoops($<HTMLCanvasElement>("loops"), snapshot, cursor, shown);
+  drawVcg3d($<HTMLCanvasElement>("space"), snapshot, cursor, view, shown);
+  // The cursor's vector, shared by all three compasses so they agree.
+  const here = cursor < snapshot.x.length
+    ? { x: snapshot.x[cursor]!, y: snapshot.y[cursor]!, z: snapshot.z[cursor]! }
+    : null;
+
+  // The two fixed references. Their rotations come from the plane definitions
+  // the engine supplies, so they cannot drift from the panels above them.
+  const planeRot = (id: string) => {
+    const p = snapshot!.planes.find((q) => q.id === id);
+    return p ? { rot: rotFromPlane(p) } : { rot: rotIdentity() };
+  };
+  drawLeadCompass($<HTMLCanvasElement>("compass-limb"), snapshot.leadAxes, planeRot("frontal"), {
+    dark: shown.dark,
+    only: (a) => a.limb,
+    vector: here,
+    caption: "facing the patient",
+  });
+  drawLeadCompass($<HTMLCanvasElement>("compass-prec"), snapshot.leadAxes, planeRot("horizontal"), {
+    dark: shown.dark,
+    only: (a) => !a.limb,
+    vector: here,
+    caption: "from below",
+  });
+
+  // And the one that follows the loop.
+  drawLeadCompass($<HTMLCanvasElement>("compass"), snapshot.leadAxes, view, {
+    dark: shown.dark,
+    vector: here,
   });
 
   // Milliseconds relative to the R peak, which is what a reader is actually
@@ -238,6 +285,120 @@ async function openCase(_code: string, e: Entry): Promise<void> {
     $("vcg-status").textContent = "";
   }
 }
+
+/**
+ * Make a canvas turn the loop.
+ *
+ * An arcball, not a pair of angles: the pointer is mapped onto a virtual sphere
+ * over the canvas and the drag becomes a rotation about whatever axis the
+ * gesture implies. Dragging through the middle tips it; dragging around the rim
+ * rolls it, which is the third degree of freedom a yaw/pitch gimbal cannot
+ * reach at all.
+ *
+ * Attached to every canvas that shows the orientation, not just the loop. The
+ * compass and the loop are two pictures of one rotation, so either should be
+ * able to drive it — being able to see a diagram turn but not turn it is an
+ * arbitrary restriction once the machinery exists.
+ */
+function attachArcball(canvas: HTMLCanvasElement): void {
+  /**
+   * Pointer position in units of the canvas's radius from its centre.
+   *
+   * Taken straight. Which way a drag turns the loop is decided in `onSphere`,
+   * where the sign belongs — see the note there about why the intuitive one is
+   * wrong.
+   */
+  const ball = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    const radius = Math.min(r.width, r.height) / 2;
+    return {
+      x: (e.clientX - (r.left + r.width / 2)) / radius,
+      y: (e.clientY - (r.top + r.height / 2)) / radius,
+    };
+  };
+
+  let last: { x: number; y: number } | null = null;
+
+  canvas.addEventListener("pointerdown", (e) => {
+    last = ball(e);
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!last) return;
+    const now = ball(e);
+    // Composed onto the current view and re-orthonormalised every time, so a
+    // long drag cannot accumulate a shear.
+    view = { ...view, rot: reorthonormalise(rotMul(arcball(last, now), view.rot)) };
+    last = now;
+    render();
+  });
+  for (const ev of ["pointerup", "pointercancel"]) {
+    canvas.addEventListener(ev, () => {
+      last = null;
+    });
+  }
+
+  // The same three axes from the keyboard, because a control that only answers
+  // to a drag is a control some readers do not have. Shift rolls.
+  canvas.addEventListener("keydown", (e) => {
+    const d = 0.14;
+    const turn: Record<string, [number, number]> = {
+      ArrowLeft: [-d, 0],
+      ArrowRight: [d, 0],
+      ArrowUp: [0, -d],
+      ArrowDown: [0, d],
+    };
+    const t = turn[e.key];
+    if (!t) return;
+    e.preventDefault();
+    const from = e.shiftKey ? { x: 0.85, y: 0 } : { x: 0, y: 0 };
+    const to = e.shiftKey ? { x: 0.85, y: t[0] || t[1] } : { x: t[0], y: t[1] };
+    view = { ...view, rot: reorthonormalise(rotMul(arcball(from, to), view.rot)) };
+    render();
+  });
+
+  // Wheel to push in on a small loop. Clamped: past about 6x the trace is wider
+  // than the panel and the reader is looking at a fragment with no context.
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const next = view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    view = { ...view, zoom: Math.min(6, Math.max(0.5, next)) };
+    render();
+  }, { passive: false });
+}
+
+attachArcball($<HTMLCanvasElement>("space"));
+attachArcball($<HTMLCanvasElement>("compass"));
+
+/**
+ * Click a plane panel to look straight down it.
+ *
+ * The three flat panels are three particular orientations of the same object,
+ * so a click on one is the most direct way to ask the 3D view for that
+ * orientation — and having asked, the reader can drag away from it and see how
+ * far they have turned.
+ */
+$("loops").addEventListener("click", (e) => {
+  if (!snapshot) return;
+  const plane = planeAt($<HTMLCanvasElement>("loops"), e.clientX, e.clientY, snapshot.planes);
+  if (!plane) return;
+  view = { ...view, rot: rotFromPlane(plane) };
+  $("vcg-status").textContent = `Looking down the ${plane.label.toLowerCase()} plane`;
+  render();
+});
+
+$("reset-view").addEventListener("click", () => {
+  view = defaultView();
+  render();
+});
+
+// A bigger canvas for the same loop, since a drag deserves room.
+$("expand-view").addEventListener("click", () => {
+  const on = $("case-panel").classList.toggle("vcg--focus");
+  $("expand-view").setAttribute("aria-pressed", String(on));
+  $("expand-view").textContent = on ? "Show planes" : "Focus";
+  render();
+});
 
 $("play").addEventListener("click", () => setPlaying(!playing));
 $("scrub").addEventListener("input", () => {

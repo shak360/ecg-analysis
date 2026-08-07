@@ -1162,3 +1162,103 @@ summary:focus-visible {
   accent-color: var(--accent);
 }
 .scrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The loop in space sits under its own projections, because the three flat
+   panels stay the clinical reading and this is what makes them legible. */
+.vcg-space { margin-top: var(--s-3); }
+.vcg-space .panel__title { display: flex; align-items: center; gap: var(--s-2); }
+/* Square, and capped: the drawing is a sphere of directions, so it sizes to the
+   smaller edge either way — an unbounded width just centres it in empty space. */
+.vcg-space canvas {
+  width: 100%;
+  max-width: 460px;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.vcg-space canvas:active { cursor: grabbing; }
+.vcg-space canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Focus: the loop takes the page, because a gesture with three degrees of
+   freedom wants room to use them. The planes are still the clinical reading, so
+   this is a mode the reader asks for and leaves, not a new default. */
+.vcg--focus .vcg-split { grid-template-columns: minmax(0, 1fr); }
+.vcg--focus .vcg-split__ecg,
+.vcg--focus #loops,
+.vcg--focus .vcg-split__loops > .panel__title:first-child { display: none; }
+.vcg--focus .vcg-space { margin-top: 0; }
+.vcg--focus .vcg-space canvas { max-width: min(72vh, 100%); margin: 0 auto; }
+
+/* The compass sits beside the loop, not under it: they show the same rotation,
+   and a reader comparing them should not have to scroll between them. */
+.vcg-space__row { display: block; }
+.vcg-compass canvas { width: 100%; display: block; }
+.vcg-compass .note { margin-top: var(--s-1); font-size: var(--fs-xs); }
+@media (max-width: 900px) {
+  .vcg-space__row { grid-template-columns: minmax(0, 1fr); }
+}
+/* A panel you can click to look down should say so by feel, not only in text. */
+#loops { cursor: pointer; }
+
+/* The compass is its own box beside the loop: two fixed references on top, the
+   turning one beneath. The fixed pair is what makes the turning one readable —
+   a diagram of directions is only useful against directions you already know. */
+/* Its own box under the tracings: the compass explains the leads above it, so
+   it belongs with them rather than wedged beside the loop. */
+.vcg-compass {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-3);
+  margin-top: var(--s-4);
+  background: var(--bg-sunken);
+}
+/* The big one: it is the diagram a reader works in, and it drives the loop, so
+   it gets the room a control deserves rather than the room a legend needs. */
+.vcg-compass__turning { max-width: 460px; }
+.vcg-compass__turning canvas { cursor: grab; touch-action: none; }
+.vcg-compass__turning canvas:active { cursor: grabbing; }
+.vcg-compass__turning canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vcg-compass__fixed {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+  max-width: 620px;
+}
+.vcg-compass .note { margin: 0 0 var(--s-1); font-size: var(--fs-xs); }
+
+/* A hint riding inside a panel title is not part of the title.
+   `.panel__title` is uppercase with wide tracking, and `.panel__count` nested
+   inside it inherited both — so "click one to look down it" arrived as
+   CLICK ONE TO LOOK DOWN IT, shouting an aside. It reads as prose now. */
+.panel__title .panel__count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* The vector page's three regions — planes, loop, compass — share one card
+   treatment so the eye groups them, instead of a bordered box beside two
+   floating canvases. */
+.vcg-split__ecg,
+.vcg-split__loops > .vcg-space,
+.vcg-split__loops > canvas {
+  border-radius: var(--radius);
+}
+.vcg-space {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-3);
+  background: var(--bg-sunken);
+}
+.vcg-space canvas { margin: 0 auto; }
+.vcg-space .panel__title { margin-bottom: var(--s-2); }
+.vcg-compass__fixed > div { min-width: 0; }
+.vcg-compass canvas { border-radius: var(--radius-sm); }
+
+/* Controls in a title row sit on the baseline of the words, not above them. */
+.vcg-space .panel__title,
+.vcg-compass .panel__title { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.vcg-space .panel__title .btn { margin-left: auto; }
+.vcg-space .panel__title .btn + .btn { margin-left: 0; }
