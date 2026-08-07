@@ -33,6 +33,7 @@ import {
   drawVcg3d,
   drawVcgLoops,
   loopSpan,
+  meanQrsVector,
   planeAt,
   reorthonormalise,
   rotFromPlane,
@@ -133,7 +134,13 @@ export function mountVcgView(el: VcgViewElements, opts: { dark: () => boolean })
       : snapshot.tOffset >= 0 && cursor <= snapshot.tOffset
       ? "ST–T"
       : "after T";
-    el.readout.textContent = `${ms >= 0 ? "+" : ""}${ms.toFixed(0)} ms from R · ${phase}`;
+    // The loop's own frontal axis, beside the cursor. It is the direction of
+    // the dashed mean-QRS vector on the panels, so the number and the picture
+    // are the same fact rather than two the reader must reconcile.
+    const mean = meanQrsVector(snapshot);
+    const axis = mean ? ` · mean QRS axis ${mean.frontalDeg.toFixed(0)}°` : "";
+    el.readout.textContent =
+      `${ms >= 0 ? "+" : ""}${ms.toFixed(0)} ms from R · ${phase}${axis}`;
   }
 
   function setCursor(i: number): void {

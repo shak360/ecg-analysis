@@ -55,6 +55,41 @@ export function loopExtent(v: VcgSnapshot, from: number, to: number): number {
   return Math.max(m, 0.1) * 1.15;
 }
 
+/**
+ * The mean QRS vector — which is what "the axis" is.
+ *
+ * The frontal-plane axis a reader quotes is the direction of this vector
+ * projected onto X and Y, so the loop and the axis are not two facts about a
+ * beat but one fact drawn two ways. Showing it on the loop is the only way that
+ * is visible: a reader given a shape and, separately, a number has to take on
+ * trust that they describe the same thing.
+ *
+ * Summed over the QRS rather than taken at the R peak, for the reason
+ * `measure.rs` gives about `net_area`: an integral barely moves when one sample
+ * is clipped, and a peak moves a lot.
+ */
+export function meanQrsVector(
+  v: VcgSnapshot,
+): { x: number; y: number; z: number; frontalDeg: number } | null {
+  if (!v.x.length || v.qrsOnset < 0 || v.qrsOffset <= v.qrsOnset) return null;
+  const from = Math.max(0, v.qrsOnset);
+  const to = Math.min(v.x.length, v.qrsOffset);
+  let x = 0, y = 0, z = 0;
+  for (let i = from; i < to; i++) {
+    x += v.x[i]!;
+    y += v.y[i]!;
+    z += v.z[i]!;
+  }
+  const n = Math.max(1, to - from);
+  x /= n;
+  y /= n;
+  z /= n;
+  if (Math.hypot(x, y) < 1e-6) return null;
+  // Clockwise-positive from lead I, the hexaxial convention: canvas y and
+  // Frank Y both grow downward, so the sign passes straight through.
+  return { x, y, z, frontalDeg: (Math.atan2(y, x) * 180) / Math.PI };
+}
+
 /** The span of the loop actually worth drawing: QRS onset through T offset. */
 export function loopSpan(v: VcgSnapshot): { from: number; to: number } {
   const from = v.qrsOnset >= 0 ? v.qrsOnset : 0;
@@ -186,6 +221,23 @@ export function drawVcgLoops(
     const qrsTo = v.qrsOffset >= 0 ? v.qrsOffset : span.to;
     if (opts.showQrs) path(span.from, qrsTo, th.qrs, 1.4);
     if (opts.showT && v.qrsOffset >= 0) path(qrsTo, span.to, th.t, 1.4);
+
+    // The mean QRS vector, so the axis is on the picture rather than only in a
+    // number somewhere else on the page.
+    const mean = meanQrsVector(v);
+    if (mean) {
+      const m = projectPlane(plane, mean.x, mean.y, mean.z);
+      ctx.strokeStyle = th.ink;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      ctx.moveTo(sx(0), sy(0));
+      ctx.lineTo(sx(m.u), sy(m.v));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
 
     // The comet: the same path re-drawn bright over the last TAIL_MS.
     ctx.globalAlpha = 0.95;

@@ -19,6 +19,7 @@ import {
   defaultView,
   loopExtent,
   loopSpan,
+  meanQrsVector,
   project3d,
   projectPlane,
   reorthonormalise,
@@ -511,4 +512,46 @@ test("a drag is still a rotation, not a mirror", () => {
     expect(isRotation(arcball({ x: a[0], y: a[1] }, { x: b[0], y: b[1] })), `${a} -> ${b}`)
       .toBe(true);
   }
+});
+
+// --- the axis is the loop ---------------------------------------------------
+
+test("the mean QRS vector points where the samples do", () => {
+  // "The axis" is the direction of this vector, so it has to be the vector the
+  // panels draw and not a separately computed number that happens to sit beside
+  // them.
+  const s = snap();
+  for (let i = 2; i < 8; i++) { // inside the QRS window of the fixture
+    s.x[i] = 0.8;
+    s.y[i] = 0.8;
+  }
+  const m = meanQrsVector(s)!;
+  expect(m).not.toBeNull();
+  expect(m.frontalDeg).toBeCloseTo(45, 5); // equal left and inferior
+  expect(m.x).toBeGreaterThan(0);
+  expect(m.y).toBeGreaterThan(0);
+});
+
+test("a leftward-inferior beat gives an axis in the normal range", () => {
+  // The everyday case, stated in the units a reader quotes: leftward and
+  // inferior is roughly +30 to +60, which is what a normal ECG reports.
+  const s = snap();
+  for (let i = 2; i < 8; i++) {
+    s.x[i] = 1.0;
+    s.y[i] = 0.6;
+  }
+  const m = meanQrsVector(s)!;
+  expect(m.frontalDeg).toBeGreaterThan(0);
+  expect(m.frontalDeg).toBeLessThan(90);
+});
+
+test("an isoelectric QRS has no axis rather than an arbitrary one", () => {
+  // atan2(0, 0) is 0, which would draw a confident arrow at lead I on a beat
+  // with no frontal vector at all.
+  expect(meanQrsVector(snap())).toBeNull();
+});
+
+test("a beat with no measurable QRS window has no axis", () => {
+  expect(meanQrsVector(snap({ qrsOnset: -1 }))).toBeNull();
+  expect(meanQrsVector(snap({ qrsOffset: -1 }))).toBeNull();
 });

@@ -523,3 +523,83 @@ fn survey_vcg_frame_signs() {
         );
     }
 }
+
+/// Does the loop agree with the axis on the wheel?
+///
+/// They are computed by different routes and never checked against each other.
+/// `measure_study` takes `atan2(net area aVF, net area I)` — two leads. The
+/// loop's frontal plane is X against Y, each a Kors combination of eight. If
+/// those two disagreed, one of the two numbers a reader sees would be wrong and
+/// nothing in the codebase would say which.
+///
+///   cargo test -p ecg-core --test real_serial -- --ignored --nocapture survey_axis
+#[test]
+#[ignore = "needs the fetched corpus; run deliberately"]
+fn survey_axis_against_loop() {
+    if !common::corpus_available() {
+        eprintln!("no corpus on disk — skipping");
+        return;
+    }
+
+    let mut diffs: Vec<f64> = Vec::new();
+    for id in common::all_record_ids() {
+        let Ok(rec) = common::read_by_id(id) else { continue };
+        let Some(study) = common::build_study(&rec) else { continue };
+        let v = study.vcg();
+        if v.refusal_json() != "null" {
+            continue;
+        }
+        let (on, off) = (v.qrs_onset(), v.qrs_offset());
+        if on < 0 || off <= on {
+            continue;
+        }
+        let (a, b) = (on as usize, off as usize);
+
+        // The mean QRS vector in the frontal plane: the loop's own axis.
+        let (x, y) = (v.x_mv(), v.y_mv());
+        let sx: f32 = x[a.min(x.len())..b.min(x.len())].iter().sum();
+        let sy: f32 = y[a.min(y.len())..b.min(y.len())].iter().sum();
+        if sx.abs() < 1e-6 && sy.abs() < 1e-6 {
+            continue;
+        }
+        let loop_axis = (sy as f64).atan2(sx as f64).to_degrees();
+
+        let m: serde_free::Json = serde_free::parse(&study.measurements_json());
+        let Some(wheel) = m.axis else { continue };
+
+        // Signed difference wrapped into (-180, 180].
+        let mut d = loop_axis - wheel;
+        while d > 180.0 { d -= 360.0 }
+        while d <= -180.0 { d += 360.0 }
+        diffs.push(d);
+    }
+
+    diffs.sort_by(|p, q| p.partial_cmp(q).unwrap());
+    let n = diffs.len();
+    let pick = |f: f64| diffs[((n - 1) as f64 * f) as usize];
+    let within = |deg: f64| diffs.iter().filter(|d| d.abs() <= deg).count();
+    println!("\naxis on the wheel vs the loop's frontal QRS vector, {n} records");
+    println!("  median {:+.1}°   p05 {:+.1}°   p95 {:+.1}°", pick(0.5), pick(0.05), pick(0.95));
+    println!("  within 10°: {} ({:.1}%)", within(10.0), 100.0 * within(10.0) as f64 / n as f64);
+    println!("  within 20°: {} ({:.1}%)", within(20.0), 100.0 * within(20.0) as f64 / n as f64);
+    println!("  beyond 45°: {}", n - within(45.0));
+}
+
+/// The smallest JSON reader that will serve one field, so this survey does not
+/// pull a dependency in for `axis`.
+mod serde_free {
+    pub struct Json {
+        pub axis: Option<f64>,
+    }
+    pub fn parse(s: &str) -> Json {
+        let axis = s.split("\"axis\":").nth(1).and_then(|rest| {
+            let v: String = rest
+                .chars()
+                .skip_while(|c| c.is_whitespace())
+                .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == '.' || *c == 'e')
+                .collect();
+            v.parse::<f64>().ok()
+        });
+        Json { axis }
+    }
+}
