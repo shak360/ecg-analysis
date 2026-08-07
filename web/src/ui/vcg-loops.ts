@@ -394,9 +394,18 @@ export function reorthonormalise(m: Rot): Rot {
   return [...r0, ...r1, ...r2];
 }
 
-/** The starting oblique, chosen so the loop reads as solid on arrival. */
+/**
+ * The starting oblique.
+ *
+ * Deliberately gentle. Enough turn that the loop reads as a solid object rather
+ * than one of the flat panels, and no more — because the thing a reader needs
+ * to recognise first is that they are looking at the patient from the front,
+ * with the chest and its precordial leads toward them. A steeper opening angle
+ * had anterior at depth -0.77, still the near end but far from obviously so,
+ * and it invited exactly the opposite reading.
+ */
 export function defaultRot(): Rot {
-  return rotFromYawPitch(-0.62, -0.34);
+  return rotFromYawPitch(-0.42, -0.26);
 }
 
 /** The old two-angle construction, kept because it names a view readably. */
@@ -563,10 +572,38 @@ export function drawVcg3d(
     }
     ctx.setLineDash([]);
 
-    // Both ends labelled, the near one in ink and the far one faint, so the
-    // label and the line agree about which is which.
+    // Both ends labelled, the near one in ink and the far one faint, and each
+    // marked with the convention every physics diagram uses for a vector
+    // leaving or entering the page: a filled dot for out of the screen, a cross
+    // for into it. It is the one notation that answers "is this pointing at me"
+    // without the reader having to infer it from a foreshortened line.
     for (const [end, label] of [[pos, ax.plus], [neg, ax.minus]] as const) {
       const near = end.depth < 0;
+      const x = sx(end.u);
+      const y = sy(end.v);
+      const along = Math.abs(end.depth) / extent; // 1 when straight at the reader
+
+      if (along > 0.55) {
+        ctx.strokeStyle = near ? th.muted : th.grid;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.stroke();
+        if (near) {
+          ctx.fillStyle = th.muted;
+          ctx.beginPath();
+          ctx.arc(x, y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(x - 3.5, y - 3.5);
+          ctx.lineTo(x + 3.5, y + 3.5);
+          ctx.moveTo(x + 3.5, y - 3.5);
+          ctx.lineTo(x - 3.5, y + 3.5);
+          ctx.stroke();
+        }
+      }
+
       ctx.fillStyle = near ? th.ink : th.faint;
       ctx.fillText(label, sx(end.u * 1.12), sy(end.v * 1.12));
     }

@@ -287,7 +287,7 @@ async function openCase(_code: string, e: Entry): Promise<void> {
 }
 
 /**
- * Turn the loop.
+ * Make a canvas turn the loop.
  *
  * An arcball, not a pair of angles: the pointer is mapped onto a virtual sphere
  * over the canvas and the drag becomes a rotation about whatever axis the
@@ -295,26 +295,29 @@ async function openCase(_code: string, e: Entry): Promise<void> {
  * rolls it, which is the third degree of freedom a yaw/pitch gimbal cannot
  * reach at all.
  *
- * Pointer capture, so a drag that leaves the canvas keeps rotating — letting go
- * outside the box is how a gesture ends, not a cancellation.
+ * Attached to every canvas that shows the orientation, not just the loop. The
+ * compass and the loop are two pictures of one rotation, so either should be
+ * able to drive it — being able to see a diagram turn but not turn it is an
+ * arbitrary restriction once the machinery exists.
  */
-{
-  const space = $<HTMLCanvasElement>("space");
-
+function attachArcball(canvas: HTMLCanvasElement): void {
   /** Pointer position in units of the canvas's radius from its centre. */
   const ball = (e: PointerEvent) => {
-    const r = space.getBoundingClientRect();
+    const r = canvas.getBoundingClientRect();
     const radius = Math.min(r.width, r.height) / 2;
-    return { x: (e.clientX - (r.left + r.width / 2)) / radius, y: (e.clientY - (r.top + r.height / 2)) / radius };
+    return {
+      x: (e.clientX - (r.left + r.width / 2)) / radius,
+      y: (e.clientY - (r.top + r.height / 2)) / radius,
+    };
   };
 
   let last: { x: number; y: number } | null = null;
 
-  space.addEventListener("pointerdown", (e) => {
+  canvas.addEventListener("pointerdown", (e) => {
     last = ball(e);
-    space.setPointerCapture(e.pointerId);
+    canvas.setPointerCapture(e.pointerId);
   });
-  space.addEventListener("pointermove", (e) => {
+  canvas.addEventListener("pointermove", (e) => {
     if (!last) return;
     const now = ball(e);
     // Composed onto the current view and re-orthonormalised every time, so a
@@ -324,14 +327,14 @@ async function openCase(_code: string, e: Entry): Promise<void> {
     render();
   });
   for (const ev of ["pointerup", "pointercancel"]) {
-    space.addEventListener(ev, () => {
+    canvas.addEventListener(ev, () => {
       last = null;
     });
   }
 
   // The same three axes from the keyboard, because a control that only answers
   // to a drag is a control some readers do not have. Shift rolls.
-  space.addEventListener("keydown", (e) => {
+  canvas.addEventListener("keydown", (e) => {
     const d = 0.14;
     const turn: Record<string, [number, number]> = {
       ArrowLeft: [-d, 0],
@@ -350,13 +353,16 @@ async function openCase(_code: string, e: Entry): Promise<void> {
 
   // Wheel to push in on a small loop. Clamped: past about 6x the trace is wider
   // than the panel and the reader is looking at a fragment with no context.
-  space.addEventListener("wheel", (e) => {
+  canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     const next = view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12);
     view = { ...view, zoom: Math.min(6, Math.max(0.5, next)) };
     render();
   }, { passive: false });
 }
+
+attachArcball($<HTMLCanvasElement>("space"));
+attachArcball($<HTMLCanvasElement>("compass"));
 
 /**
  * Click a plane panel to look straight down it.
