@@ -1191,12 +1191,7 @@ summary:focus-visible {
 
 /* The compass sits beside the loop, not under it: they show the same rotation,
    and a reader comparing them should not have to scroll between them. */
-.vcg-space__row {
-  display: grid;
-  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
-  gap: var(--s-3);
-  align-items: start;
-}
+.vcg-space__row { display: block; }
 .vcg-compass canvas { width: 100%; display: block; }
 .vcg-compass .note { margin-top: var(--s-1); font-size: var(--fs-xs); }
 @media (max-width: 900px) {
@@ -1208,16 +1203,21 @@ summary:focus-visible {
 /* The compass is its own box beside the loop: two fixed references on top, the
    turning one beneath. The fixed pair is what makes the turning one readable —
    a diagram of directions is only useful against directions you already know. */
+/* Its own box under the tracings: the compass explains the leads above it, so
+   it belongs with them rather than wedged beside the loop. */
 .vcg-compass {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--s-2);
+  padding: var(--s-3);
+  margin-top: var(--s-4);
   background: var(--bg-sunken);
 }
+.vcg-compass__turning { max-width: 320px; }
 .vcg-compass__fixed {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--s-2);
-  margin-bottom: var(--s-2);
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+  max-width: 620px;
 }
 .vcg-compass .note { margin: 0 0 var(--s-1); font-size: var(--fs-xs); }

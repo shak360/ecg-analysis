@@ -112,6 +112,42 @@
         <div class="vcg-split__ecg">
           <p class="panel__title">Averaged beat, twelve leads</p>
           <canvas id="beats"></canvas>
+
+          <section class="vcg-compass" aria-labelledby="compass-h">
+            <p class="panel__title" id="compass-h">Lead compass</p>
+
+            <div class="vcg-compass__fixed">
+              <div>
+                <p class="note">Frontal · limb leads</p>
+                <canvas id="compass-limb"
+                        aria-label="The six limb leads on the frontal plane, facing the patient."></canvas>
+              </div>
+              <div>
+                <p class="note">Transverse · precordial</p>
+                <canvas id="compass-prec"
+                        aria-label="The six precordial leads on the transverse plane, viewed from below."></canvas>
+              </div>
+            </div>
+
+            <p class="note">Turned with the loop</p>
+            <div class="vcg-compass__turning">
+              <canvas id="compass"
+                      aria-label="All twelve lead directions, in the loop's current orientation."></canvas>
+            </div>
+
+            <p class="note">
+              The two panels above never move: they are the reference. The one
+              below follows the loop. Limb leads solid, precordial dashed —
+              the limb angles are definitional, the precordial ones a textbook
+              approximation to a direction that depends on the chest.
+            </p>
+            <p class="note">
+              <strong>A normal QRS points left, inferior and slightly posterior</strong>
+              — away from anterior, not along it. That is the same fact as the rS in
+              V1 and the tall R in V6 on the tracing above: the vector runs away from
+              V1, which sits anteriorly and to the right.
+            </p>
+          </section>
         </div>
         <div class="vcg-split__loops">
           <p class="panel__title">
@@ -127,34 +163,6 @@
               <button type="button" class="btn btn--ghost" id="reset-view">Reset view</button>
             </p>
             <div class="vcg-space__row">
-              <section class="vcg-compass" aria-labelledby="compass-h">
-                <p class="panel__title" id="compass-h">Lead compass</p>
-
-                <div class="vcg-compass__fixed">
-                  <div>
-                    <p class="note">Frontal · limb leads</p>
-                    <canvas id="compass-limb"
-                            aria-label="The six limb leads on the frontal plane, facing the patient."></canvas>
-                  </div>
-                  <div>
-                    <p class="note">Transverse · precordial</p>
-                    <canvas id="compass-prec"
-                            aria-label="The six precordial leads on the transverse plane, viewed from below."></canvas>
-                  </div>
-                </div>
-
-                <p class="note">Turned with the loop</p>
-                <canvas id="compass"
-                        aria-label="All twelve lead directions, in the loop's current orientation."></canvas>
-
-                <p class="note">
-                  The two panels above never move: they are the reference. The one
-                  below follows the loop. Limb leads solid, precordial dashed —
-                  the limb angles are definitional, the precordial ones a textbook
-                  approximation to a direction that depends on the chest.
-                </p>
-              </section>
-
               <canvas id="space" tabindex="0"
                       aria-label="The vector loop in three dimensions. Drag, or use the arrow keys, to rotate."></canvas>
             </div>
