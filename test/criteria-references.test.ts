@@ -13,6 +13,7 @@
  * missing key renders as no link at all, which looks identical to a source that
  * genuinely has none.
  */
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 
 import { CRITERIA } from "../web/src/criteria/index.ts";
@@ -34,9 +35,16 @@ test("every reference is cited by something", () => {
   const used = new Set(CRITERIA.flatMap((e) => e.refs));
   const orphans = Object.keys(REFERENCES).filter((k) => !used.has(k));
 
-  // These are cited by prose outside the criteria — the transform note and the
-  // corpus attribution — rather than by a CriterionEntry.
+  // These three are cited outside the criteria panel rather than by a
+  // `CriterionEntry`: Kors on the vector-loop view, Fridericia on the QTc row,
+  // PTB-XL in the atlas disclaimer. They are listed rather than excused, so a
+  // reference that quietly stops being used anywhere still shows up here.
   expect(orphans.sort()).toEqual(["fridericia-1920", "kors-1990", "wagner-2020-ptbxl"]);
+  for (const k of orphans) {
+    const cited = ["web/src/ui/vcg-view.ts", "web/src/ui/measurements.ts", "web/index.html"]
+      .some((f) => readFileSync(f, "utf8").includes(k) || readFileSync(f, "utf8").includes(REFERENCES[k]!.doi ?? "\u0000"));
+    expect(cited, `${k} is cited by no criterion and by no page`).toBe(true);
+  }
 });
 
 test("identifiers are well formed", () => {
@@ -116,4 +124,26 @@ test("every entry that names a journal has something to click", () => {
     .filter((e) => e.refs.length === 0 && !/Minnesota Code/.test(e.title))
     .map((e) => e.title);
   expect(untagged).toEqual([]);
+});
+
+test("the DOIs hardcoded into page markup match the verified ones", () => {
+  // HTML cannot import `references.json`, so the two links written directly
+  // into `index.html` — the corpus paper and the axis claim — are the one place
+  // an identifier is duplicated. Duplicated is fine; drifting is not, and it
+  // would drift silently, since a stale DOI still resolves to *a* paper.
+  const html = readFileSync("web/index.html", "utf8");
+  const inMarkup = [...html.matchAll(/https:\/\/doi\.org\/([^"\s]+)/g)].map((m) => m[1]!);
+  expect(inMarkup.length).toBeGreaterThan(0);
+
+  const verified = new Set(Object.values(REFERENCES).map((r) => r.doi).filter(Boolean));
+  for (const doi of inMarkup) expect(verified, doi).toContain(doi);
+});
+
+test("every page link carries rel=noopener with its target=_blank", () => {
+  // A `target="_blank"` without it hands the opened page a handle back to this
+  // one. Cheap to get wrong by hand, and these links go to publishers.
+  const html = readFileSync("web/index.html", "utf8");
+  const blanks = [...html.matchAll(/<a\b[^>]*target="_blank"[^>]*>/g)].map((m) => m[0]);
+  expect(blanks.length).toBeGreaterThan(0);
+  for (const tag of blanks) expect(tag, tag.slice(0, 80)).toContain('rel="noopener"');
 });

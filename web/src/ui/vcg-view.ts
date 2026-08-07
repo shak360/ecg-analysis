@@ -24,6 +24,7 @@
  * stay visible to `test/page-wiring.test.ts` in the page's own entry module.
  */
 
+import { citeLink } from "./cite.ts";
 import type { VcgSnapshot } from "../engine/protocol.ts";
 import {
   arcball,
@@ -335,6 +336,26 @@ export function mountVcgView(el: VcgViewElements, opts: { dark: () => boolean })
 
   function renderNotes(v: VcgSnapshot): void {
     el.notes.innerHTML = "";
+
+    // Name the derivation, every time the loop is shown.
+    //
+    // These planes are not recorded. They are three leads reconstructed from
+    // twelve by a published regression, and which regression it is changes what
+    // a reader sees: Kors, inverse-Dower and Frank's own orthogonal leads give
+    // visibly different loops from the same beat, differing most in the
+    // horizontal plane where rotation is read. A loop presented without its
+    // method looks like a measurement, and it is a model.
+    const method = document.createElement("p");
+    method.className = "note";
+    method.append(
+      "X, Y and Z are reconstructed from the twelve recorded leads by the Kors " +
+        "regression, not recorded directly — a different transform gives a " +
+        "different loop from the same beat. ",
+    );
+    const link = citeLink("kors-1990", "Kors et al., Eur Heart J 1990");
+    if (link) method.append(link);
+    el.notes.appendChild(method);
+
     for (const n of v.notes) {
       const p = document.createElement("p");
       p.className = "note";

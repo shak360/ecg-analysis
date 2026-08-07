@@ -35,6 +35,7 @@
  * uses, and nothing errors — the numbers just disagree. The prose below names
  * conditions, never magnitudes.
  */
+import { citeHtml } from "./cite.ts";
 import type {
   CalibrationSummary,
   LeadVerdict,
@@ -475,16 +476,21 @@ export function measurementsHtml(view: MeasurementsView): string {
     `<th scope="col">${i === 0 ? "ref · " : ""}${esc(s.name.replace(/\.pdf$/i, ""))}</th>`
   ).join("");
 
-  const globalRows: [string, (m: Measures) => string][] = [
+  // Both corrections are shown because they disagree, and the row label is the
+  // only place the page says which formula produced a number. Fridericia's is
+  // linked: it is a 1920 result the reader is being asked to trust, and the
+  // English translation is the copy they can actually reach. Bazett's 1920
+  // paper has no PubMed record to link to.
+  const globalRows: [string, (m: Measures) => string, string?][] = [
     ["Heart rate", (m) => num(m.hr, 0, "bpm")],
     ["QRS duration", (m) => num(m.qrs, 0, "ms")],
     ["QT", (m) => num(m.qt, 0, "ms")],
-    ["QTc (Fridericia)", (m) => num(m.qtcF, 0, "ms")],
+    ["QTc (Fridericia)", (m) => num(m.qtcF, 0, "ms"), "fridericia-1920"],
     ["QTc (Bazett)", (m) => num(m.qtcB, 0, "ms")],
     ["Frontal axis", (m) => num(m.axis, 0, "°")],
   ];
-  const globals = globalRows.map(([name, fn]) =>
-    `<tr><th scope="row">${name}</th>${
+  const globals = globalRows.map(([name, fn, ref]) =>
+    `<tr><th scope="row">${name}${ref ? ` ${citeHtml(ref, "source")}` : ""}</th>${
       studies.map((s) => `<td>${fn(s.measurements)}</td>`).join("")
     }</tr>`
   ).join("");

@@ -1017,6 +1017,11 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
    Indented to the same 15px as the prose above so they read as part of the
    citation rather than as a new section, and listed one per line because a
    reader scanning for a particular paper is scanning a column, not a sentence. */
+/* An inline source link in prose. Underlined only on interaction, because a
+   paragraph carrying two of these should still read as a paragraph. */
+.cite { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.cite:hover, .cite:focus-visible { text-decoration: underline; }
+
 .evidence__refs {
   margin: 0 0 6px 15px; padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 3px; max-width: 92ch;
