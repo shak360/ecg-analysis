@@ -25,7 +25,6 @@
 
     <nav class="nav" aria-label="Main">
       <a class="nav__link nav__link--current" href="./index.html" aria-current="page">Atlas</a>
-      <a class="nav__link" href="./vcg.html">Vector loop</a>
       <a class="nav__link" href="./quiz.html">Test yourself</a>
       <a class="nav__link" href="./ptbxl.html">Serial pairs</a>
       <a class="nav__link" href="./compare.html">Compare</a>
@@ -103,6 +102,11 @@
     <div id="case-panel" class="page-main" hidden>
       <section class="panel">
         <div class="panel__toolbar">
+          <span class="panel__toolbar__label">View</span>
+          <div class="seg" role="group" aria-label="How to draw this case">
+            <button type="button" class="seg__btn" id="view-tracing" aria-pressed="true">Tracing</button>
+            <button type="button" class="seg__btn" id="view-loop" aria-pressed="false">Vector loop</button>
+          </div>
           <span class="panel__toolbar__label">Display</span>
           <label class="field field--inline">
           <span class="field__label">Gain</span>
@@ -121,10 +125,103 @@
           </label>
         </div>
 
-        <canvas id="printout"></canvas>
-        <div class="key">
-          <span>25 mm/s · standard 3×4 with rhythm strips</span>
-          <span>drawn from the recorded samples, not a photograph</span>
+        <div id="pane-tracing">
+          <canvas id="printout"></canvas>
+          <div class="key">
+            <span>25 mm/s · standard 3×4 with rhythm strips</span>
+            <span>drawn from the recorded samples, not a photograph</span>
+          </div>
+        </div>
+
+        <div id="pane-loop" hidden>
+      <div class="panel__toolbar">
+        <span class="panel__title">Playback</span>
+        <button type="button" class="btn btn--ghost" id="play">Play</button>
+        <label class="field field--inline">
+          <span class="field__label">Speed</span>
+          <select id="speed" class="select">
+            <option value="0.25">¼×</option>
+            <option value="0.5" selected>½×</option>
+            <option value="1">1× real time</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="show-qrs" checked> QRS</label>
+        <label class="check"><input type="checkbox" id="show-t" checked> T</label>
+        <span class="panel__count" id="cursor-readout"></span>
+      </div>
+
+      <input type="range" id="scrub" class="scrub" min="0" max="400" value="0"
+             aria-label="Position within the averaged beat">
+
+      <div class="vcg-split" id="split">
+        <div class="vcg-split__ecg">
+          <p class="panel__title">Averaged beat, twelve leads</p>
+          <canvas id="beats"></canvas>
+
+          <section class="vcg-compass" aria-labelledby="compass-h">
+            <p class="panel__title" id="compass-h">Lead compass</p>
+
+            <div class="vcg-compass__fixed">
+              <div>
+                <p class="note">Frontal · limb leads</p>
+                <canvas id="compass-limb"
+                        aria-label="The six limb leads on the frontal plane, facing the patient."></canvas>
+              </div>
+              <div>
+                <p class="note">Transverse · precordial</p>
+                <canvas id="compass-prec"
+                        aria-label="The six precordial leads on the transverse plane, viewed from below."></canvas>
+              </div>
+            </div>
+
+            <p class="note">Turned with the loop — drag this too</p>
+            <div class="vcg-compass__turning">
+              <canvas id="compass" tabindex="0"
+                      aria-label="All twelve lead directions, in the loop's current orientation. Drag, or use the arrow keys, to rotate."></canvas>
+            </div>
+
+            <p class="note">
+              The two panels above never move: they are the reference. The one
+              below follows the loop. Limb leads solid, precordial dashed —
+              the limb angles are definitional, the precordial ones a textbook
+              approximation to a direction that depends on the chest.
+            </p>
+            <p class="note">
+              A ring with a dot is an axis coming <strong>out of the screen at
+              you</strong>; a ring with a cross is one going away. On the opening
+              view you are facing the patient's chest, so V1 and V2 — the leads
+              nearest the front of it — are marked coming toward you.
+            </p>
+            <p class="note">
+              <strong>A normal QRS points left, inferior and slightly posterior</strong>
+              — away from anterior, not along it. That is the same fact as the rS in
+              V1 and the tall R in V6 on the tracing above: the vector runs away from
+              V1, which sits anteriorly and to the right.
+            </p>
+          </section>
+        </div>
+        <div class="vcg-split__loops">
+          <p class="panel__title">
+            Planes
+            <span class="panel__count">click one to look down it</span>
+          </p>
+          <canvas id="loops"></canvas>
+          <div class="vcg-space">
+            <p class="panel__title">
+              In space
+              <span class="panel__count">drag to turn · shift-arrows roll · wheel zooms</span>
+              <button type="button" class="btn btn--ghost" id="expand-view" aria-pressed="false">Focus</button>
+              <button type="button" class="btn btn--ghost" id="reset-view">Reset view</button>
+            </p>
+            <div class="vcg-space__row">
+              <canvas id="space" tabindex="0"
+                      aria-label="The vector loop in three dimensions. Drag, or use the arrow keys, to rotate."></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+          <div id="vcg-refusal" hidden></div>
+          <div id="vcg-notes"></div>
         </div>
       </section>
       <div id="case-labels" class="findings"></div>

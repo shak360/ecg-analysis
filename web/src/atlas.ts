@@ -31,7 +31,8 @@ import { DEFAULT_PRINTOUT, drawPrintout, type PrintoutStudy } from "./ui/printou
 import { CRITERIA, entriesFor, evaluateEntry } from "./criteria/index.ts";
 import { evidenceHtml } from "./ui/evidence.ts";
 import { mountTools } from "./ui/tools.ts";
-import { glossReport, looksGerman } from "./ui/report-gloss.ts";
+import { mountVcgView, type VcgView } from "./ui/vcg-view.ts";
+import { translateReport } from "./ui/report-gloss.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -61,6 +62,19 @@ let lastScale: {
 let lastAxis: number | null = null;
 /** Guards against an older case landing after a newer one. */
 let ticket = 0;
+/** The vector-loop view of the same case, mounted once and fed per case. */
+let vcg: VcgView | null = null;
+/**
+ * The engine keeps a case loaded until the next one is opened.
+ *
+ * The tracing needs the study only long enough to measure it, but the loop is
+ * derived on demand — so releasing it the moment the printout was drawn meant
+ * switching views had to re-ingest the record. Held instead, and released when
+ * something else takes its place.
+ */
+let heldStudy: string | null = null;
+/** Whether the loop has been asked for on the case currently open. */
+let loopFetched = false;
 
 // ---------------------------------------------------------------------------
 // The finding list
@@ -101,6 +115,15 @@ async function openCase(code: string, e: Entry): Promise<void> {
   // Which finding is open is the picker's state now, and the evidence view is
   // told the code directly, so nothing here needs to mirror it.
   const mine = ++ticket;
+
+  // The previous case's study goes back to the engine before this one arrives.
+  if (heldStudy) {
+    const stale = heldStudy;
+    heldStudy = null;
+    void engine.release([stale]).catch(() => {});
+  }
+  loopFetched = false;
+  vcg?.show(null);
 
   $("case-placeholder").hidden = false;
   $("case-panel").hidden = true;
@@ -150,7 +173,7 @@ async function openCase(code: string, e: Entry): Promise<void> {
       renderEvidence(code, e, summary);
       renderReport(summary);
       render();
-      await engine.release([`atlas-${e.id}`]);
+      heldStudy = `atlas-${e.id}`;
     } else {
       // Say which half failed. "No lead produced a usable beat" against a blank
       // page reads as though the record is missing; against the labels and the
@@ -206,20 +229,24 @@ function renderLabels(e: Entry): void {
     rep.textContent = `Cardiologist's report: ${e.report}`;
     item.appendChild(rep);
 
-    // 636 of the 1,046 reports here are German — PTB-XL is a German hospital's
-    // archive — so for most cases the one line written by the person who
-    // actually read the tracing is unusable to a reader without German.
+    // 664 of these reports are German and 62 are Swedish — PTB-XL is a German
+    // hospital's archive, and some of its reports are not in German at all. For
+    // most cases the one line written by the person who actually read the
+    // tracing is unusable to a reader without those languages.
     //
-    // The original stays above, always. This is a term-by-term gloss, and it is
-    // labelled as one: word order is the German, compounds it was never taught
-    // are left alone, and negation is not resolved. A reader can work with that;
-    // what they could not work with is a fluent sentence containing a term this
-    // tool invented.
-    if (looksGerman(e.report)) {
-      const { text, unknown } = glossReport(e.report);
+    // The original stays above, always. What follows is a translation of the
+    // phrases the table knows, labelled with the language it came from: whole
+    // clauses are translated as units so the word order is English, anything
+    // unrecognised is left exactly as written, and the gaps are named. A reader
+    // can work with that; what they could not work with is a fluent sentence
+    // containing a term this tool invented.
+    const tr = translateReport(e.report);
+    if (tr.language === "de" || tr.language === "sv") {
+      const { text, unknown, language } = tr;
       const gl = document.createElement("div");
       gl.className = "note note--gloss";
-      gl.textContent = `Term-by-term gloss (not a translation; German word order kept): ${text}`;
+      const from = language === "sv" ? "Swedish" : "German";
+      gl.textContent = `Translated from ${from}: ${text}`;
       item.appendChild(gl);
 
       if (unknown.length) {
@@ -374,11 +401,85 @@ function renderReport(summary: any): void {
  */
 $("scale").addEventListener("change", render);
 $("layout").addEventListener("change", render);
-globalThis.addEventListener("resize", render);
+globalThis.addEventListener("resize", () => {
+  render();
+  vcg?.redraw();
+});
 $("theme-toggle").addEventListener("click", () => {
   const root = document.documentElement;
   root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
   render();
+  vcg?.redraw();
+});
+
+/**
+ * Two ways of drawing one case, behind a switch rather than behind a link.
+ *
+ * The loop is derived on demand and only once per case: it is a second call
+ * into the engine against a study it is already holding, so a reader who never
+ * opens it never pays for it, and one who switches back and forth pays once.
+ */
+async function showView(which: "tracing" | "loop"): Promise<void> {
+  const loop = which === "loop";
+  $("pane-tracing").hidden = loop;
+  $("pane-loop").hidden = !loop;
+  $("view-tracing").setAttribute("aria-pressed", String(!loop));
+  $("view-loop").setAttribute("aria-pressed", String(loop));
+
+  if (!loop) {
+    vcg?.pause();
+    render();
+    return;
+  }
+
+  if (!heldStudy) {
+    vcg?.show(null);
+    return;
+  }
+  if (!loopFetched) {
+    loopFetched = true;
+    const mine = ticket;
+    try {
+      const snapshot = await engine.vcg(heldStudy);
+      if (mine !== ticket) return;
+      vcg?.show(snapshot);
+    } catch {
+      // A study the engine no longer holds is not an error worth a banner —
+      // the reader sees the empty view and the tracing is one click away.
+      vcg?.show(null);
+    }
+  } else {
+    vcg?.redraw();
+  }
+}
+
+$("view-tracing").addEventListener("click", () => void showView("tracing"));
+$("view-loop").addEventListener("click", () => void showView("loop"));
+
+vcg = mountVcgView({
+  split: $("split"),
+  beats: $<HTMLCanvasElement>("beats"),
+  loops: $<HTMLCanvasElement>("loops"),
+  space: $<HTMLCanvasElement>("space"),
+  compass: $<HTMLCanvasElement>("compass"),
+  compassLimb: $<HTMLCanvasElement>("compass-limb"),
+  compassPrec: $<HTMLCanvasElement>("compass-prec"),
+  play: $<HTMLButtonElement>("play"),
+  speed: $<HTMLSelectElement>("speed"),
+  showQrs: $<HTMLInputElement>("show-qrs"),
+  showT: $<HTMLInputElement>("show-t"),
+  scrub: $<HTMLInputElement>("scrub"),
+  readout: $("cursor-readout"),
+  refusal: $("vcg-refusal"),
+  notes: $("vcg-notes"),
+  expand: $<HTMLButtonElement>("expand-view"),
+  reset: $<HTMLButtonElement>("reset-view"),
+  focusHost: $("case-panel"),
+}, {
+  dark: () =>
+    document.documentElement.dataset.theme === "dark" ||
+    (matchMedia("(prefers-color-scheme: dark)").matches &&
+      document.documentElement.dataset.theme !== "light"),
 });
 
 async function boot(): Promise<void> {
