@@ -78,9 +78,21 @@ jobs:
           key: corpus-${{ hashFiles('tools/fetch-ptbxl.ts', 'tools/fetch-challenge2021.ts') }}
           restore-keys: corpus-
 
+      # Three invocations, not two. `fetch:ptbxl` has two selection modes and
+      # runs the serial-pairs one by default: without `--atlas` it fetches
+      # records and writes `serial-pairs.json` but never writes `atlas.json`,
+      # which is the index the atlas itself reads. They cannot be combined —
+      # the tool exits after writing an index precisely so one selection cannot
+      # overwrite the other's.
+      #
+      # Getting this wrong published a site with 313 of 1,207 cases and a green
+      # tick, because the staging step treated a missing index as "this corpus
+      # was not fetched, carry on". It now fails instead, so this cannot recur
+      # silently — but the ordering is still load-bearing and worth stating.
       - name: Fetch the corpus from PhysioNet
         if: steps.corpus.outputs.cache-hit != 'true'
         run: |
+          npm run fetch:ptbxl -- --atlas
           npm run fetch:ptbxl
           npm run fetch:challenge
 

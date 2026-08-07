@@ -115,6 +115,7 @@ async function main(): Promise<void> {
   let bytesIn = 0;
   let bytesOut = 0;
   const missing: string[] = [];
+  const perSource = new Map<string, number>();
 
   for (const source of SOURCES) {
     const dir = join(root, source.dir);
@@ -123,7 +124,22 @@ async function main(): Promise<void> {
     try {
       index = JSON.parse(readFileSync(join(dir, "atlas.json"), "utf8")) as { id: string }[];
     } catch {
-      console.warn(`  ${source.dir}: no atlas.json, skipping this source entirely`);
+      // Not a warning. This tool only ever runs to produce a deployable site,
+      // and a corpus whose index is absent is not "a corpus this machine did
+      // not fetch" — it is most of the site missing.
+      //
+      // Skipping with a warning is what published 313 of 1,207 cases behind a
+      // green tick: `npm run fetch:ptbxl` writes `serial-pairs.json` and only
+      // writes `atlas.json` when given `--atlas`, so CI fetched 149 MB of
+      // PTB-XL records and produced no index for them. Everything downstream
+      // was correct about a corpus that was three quarters absent.
+      console.error(`\n${source.dir}/atlas.json is missing.`);
+      console.error("  Nothing from this corpus can be staged without it, so the site would");
+      console.error("  deploy with a picker full of cases it cannot load.");
+      console.error(source.dir.includes("ptbxl")
+        ? "  Run `npm run fetch:ptbxl -- --atlas` (the bare form writes only the pair index)."
+        : "  Run `npm run fetch:challenge`.");
+      process.exitCode = 1;
       continue;
     }
 
@@ -177,6 +193,7 @@ async function main(): Promise<void> {
       writeFileSync(join(outDir, p.hea), outHeader);
       writeFileSync(`${dest}${PACKED_EXT}`, packed);
       staged++;
+      perSource.set(source.mount, (perSource.get(source.mount) ?? 0) + 1);
     }
   }
 
@@ -198,6 +215,9 @@ async function main(): Promise<void> {
   }
 
   const mb = (b: number) => `${(b / 1e6).toFixed(1)} MB`;
+  // Per source, not just the total: an aggregate looks healthy while one corpus
+  // is entirely absent, which is exactly the failure this reporting missed.
+  for (const [name, n] of perSource) console.log(`  ${name.padEnd(18)} ${n} records`);
   console.log(`staged ${staged} records (${trimmed} trimmed to ${ATLAS_WINDOW_S}s)`);
   console.log(`  ${mb(bytesIn)} on disk -> ${mb(bytesOut)} served  (${(bytesIn / bytesOut).toFixed(1)}x)`);
   if (skipped) {
