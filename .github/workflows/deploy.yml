@@ -68,15 +68,23 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # Keyed on the fetch tools and the corpus size cap, because those are the
-      # only things that change what lands in `data/`.
+      # Keyed on the fetch tools *and on this file*, because what lands in
+      # `data/` depends as much on how the tools are invoked as on the tools.
+      #
+      # Hashing only the tools meant a cache saved by a run with the wrong fetch
+      # commands stayed valid forever: correcting the commands did not change
+      # the key, so the broken corpus was restored and the fix never ran. The
+      # cache outlived the mistake that made it.
+      #
+      # `restore-keys` is deliberately gone with it. A partial-prefix hit is
+      # what silently substitutes an older corpus for the one this build asked
+      # for, and re-fetching 374 MB is cheap next to publishing the wrong data.
       - name: Restore the corpus
         id: corpus
         uses: actions/cache@v4
         with:
           path: data
-          key: corpus-${{ hashFiles('tools/fetch-ptbxl.ts', 'tools/fetch-challenge2021.ts') }}
-          restore-keys: corpus-
+          key: corpus-${{ hashFiles('tools/fetch-ptbxl.ts', 'tools/fetch-challenge2021.ts', '.github/workflows/deploy.yml') }}
 
       # Three invocations, not two. `fetch:ptbxl` has two selection modes and
       # runs the serial-pairs one by default: without `--atlas` it fetches
