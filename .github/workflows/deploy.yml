@@ -1,0 +1,114 @@
+# Publish the site to GitHub Pages.
+#
+# Separate from `ci.yml` because it fails for a different reason than the tests
+# do — almost always PhysioNet being slow or down, which says nothing about the
+# code — and because it must not run on every branch.
+#
+# Three things this job has to know:
+#
+#   1. **The corpus is not in the repository.** `data/` is 429 MB and gitignored,
+#      so CI fetches it from PhysioNet and caches it. That fetch is ~2,400 HTTP
+#      requests and takes a while cold; the cache key is the fetch tools, so it
+#      only happens again when the tools change. `restore-keys` means a partial
+#      hit still saves most of it.
+#   2. **A project page is not served from the domain root.** It lives at
+#      `/<repo>/`, so `SITE_BASE` has to be set or every asset URL 404s. It comes
+#      from the `configure-pages` step rather than being hardcoded, so a rename
+#      or a move to a custom domain does not silently break the build.
+#   3. **`npm run build` is not enough.** It builds the app but not the corpus.
+#      `build:site` also runs `tools/stage-corpus.ts`, which trims each record to
+#      the ten seconds the atlas displays and packs it — 429 MB of WFDB becomes
+#      about 30 MB of servable files. Without that step the site deploys with an
+#      empty picker.
+#
+# `--ignore-scripts` on install, per decision 0006.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages needs to write; nothing else here does.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one midway — a half-finished Pages
+# upload is a broken site rather than an unchanged one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site and stage the corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install the Rust toolchain and wasm-pack
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-unknown-unknown
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Keyed on the fetch tools and the corpus size cap, because those are the
+      # only things that change what lands in `data/`.
+      - name: Restore the corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: corpus-${{ hashFiles('tools/fetch-ptbxl.ts', 'tools/fetch-challenge2021.ts') }}
+          restore-keys: corpus-
+
+      - name: Fetch the corpus from PhysioNet
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: |
+          npm run fetch:ptbxl
+          npm run fetch:challenge
+
+      - name: Build the WASM module
+        run: npm run wasm
+
+      - name: Generate the synthetic fixtures
+        run: npm run fixtures
+
+      # `stage-corpus` exits non-zero if the atlas index names a record that is
+      # not on disk, which is the one failure that would otherwise deploy a
+      # picker full of cases that 404 when clicked.
+      - name: Build
+        env:
+          SITE_BASE: ${{ steps.pages.outputs.base_path }}/
+        run: npm run build:site
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

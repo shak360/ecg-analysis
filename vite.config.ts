@@ -100,7 +100,17 @@ function fixtures(): Plugin {
   };
 }
 
+/**
+ * Where the site is served from.
+ *
+ * A GitHub project page lives at `/<repo>/`, not at a domain root, so every
+ * absolute URL the app emits has to be prefixed. `SITE_BASE` carries that in
+ * from CI; it defaults to `/` so a local `npm run build` still previews.
+ */
+const base = process.env.SITE_BASE ?? "/";
+
 export default defineConfig({
+  base,
   root: webRoot,
   publicDir: false,
   plugins: [

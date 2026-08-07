@@ -5,6 +5,7 @@
  * extractor recovered on the right. If the two pictures differ, extraction is
  * wrong — which is a far faster feedback loop than reading coordinate dumps.
  */
+import { assetUrl } from "./app/site.ts";
 import { getDocument } from "./pdfjs.js";
 import { extractPageGeometry, POINTS_PER_MM } from "./ingest/pdf-paths.ts";
 import { classifyPolylines } from "./ingest/classify.ts";
@@ -65,7 +66,7 @@ async function run(): Promise<void> {
   report.textContent = "Loading…";
 
   try {
-    const res = await fetch(`/fixtures/synthetic/${name}.pdf`);
+    const res = await fetch(assetUrl(`fixtures/synthetic/${name}.pdf`));
     if (!res.ok) throw new Error(`fixture fetch failed: ${res.status}`);
     const bytes = new Uint8Array(await res.arrayBuffer());
 

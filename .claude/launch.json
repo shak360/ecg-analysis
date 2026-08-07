@@ -6,6 +6,19 @@
       "runtimeExecutable": "./scripts/dev-server.sh",
       "runtimeArgs": [],
       "port": 8080
+    },
+    {
+      "name": "ecg-site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--port",
+        "4173",
+        "--strictPort"
+      ],
+      "port": 4173,
+      "url": "http://localhost:4173"
     }
   ]
 }
