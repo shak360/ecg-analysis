@@ -304,26 +304,15 @@ function attachArcball(canvas: HTMLCanvasElement): void {
   /**
    * Pointer position in units of the canvas's radius from its centre.
    *
-   * **The horizontal axis is inverted, deliberately.** Taken straight, a drag to
-   * the right brought the side of the body already on the screen's right around
-   * *toward* the reader — the object turning against the hand pushing it. Grab a
-   * globe at the front, pull right, and the right-hand side goes away while the
-   * left comes round to face you; that is the direction a reader expects,
-   * because it is the one a physical object obeys.
-   *
-   * This is not cosmetic. A control that turns the wrong way teaches a mirrored
-   * model of which way the thing is facing, which is exactly how the front-back
-   * axis came to look reversed while every number about it was right.
-   *
-   * Only the horizontal is flipped: negating one screen axis in both the start
-   * and end points leaves the rotation proper — no mirroring of the loop — and
-   * reverses rotation about the vertical while leaving the vertical drag alone.
+   * Taken straight. Which way a drag turns the loop is decided in `onSphere`,
+   * where the sign belongs — see the note there about why the intuitive one is
+   * wrong.
    */
   const ball = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     const radius = Math.min(r.width, r.height) / 2;
     return {
-      x: -(e.clientX - (r.left + r.width / 2)) / radius,
+      x: (e.clientX - (r.left + r.width / 2)) / radius,
       y: (e.clientY - (r.top + r.height / 2)) / radius,
     };
   };
@@ -362,9 +351,8 @@ function attachArcball(canvas: HTMLCanvasElement): void {
     const t = turn[e.key];
     if (!t) return;
     e.preventDefault();
-    // Same inversion as the pointer, so the arrow keys and a drag agree.
-    const from = e.shiftKey ? { x: -0.85, y: 0 } : { x: 0, y: 0 };
-    const to = e.shiftKey ? { x: -0.85, y: t[0] || t[1] } : { x: -t[0], y: t[1] };
+    const from = e.shiftKey ? { x: 0.85, y: 0 } : { x: 0, y: 0 };
+    const to = e.shiftKey ? { x: 0.85, y: t[0] || t[1] } : { x: t[0], y: t[1] };
     view = { ...view, rot: reorthonormalise(rotMul(arcball(from, to), view.rot)) };
     render();
   });

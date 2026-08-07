@@ -453,54 +453,62 @@ test("V1 and V2 point anteriorly, V6 points left", () => {
 
 // --- which way a drag turns it ---------------------------------------------
 
-/**
- * The screen-space mapping the page applies before handing a drag to `arcball`.
- *
- * Kept here as the same expression the page uses, because the property being
- * asserted is about that mapping and not about `arcball` itself — the arcball
- * is symmetric and will happily turn a body either way.
- */
-const grab = (x: number, y: number) => ({ x: -x, y });
-
 test("dragging right sends the near side away, as a physical object would", () => {
   // Grab a globe at the front and pull right: the right-hand side goes away and
-  // the left comes round to face you. Taken straight the arcball does the
-  // opposite, and a control that turns against the hand teaches a mirrored model
-  // of which way the thing is facing — which is how the front-back axis came to
-  // look reversed while every number about it was right.
+  // the left comes round to face you. A control that turns against the hand
+  // teaches a mirrored model of which way the object faces, and every judgement
+  // about anterior and posterior is then made inside that model.
   const start = defaultView();
   const before = project3d(1, 0, 0, start); // the patient's left, on the screen's right
   expect(before.u, "this test assumes patient-left is drawn to the right").toBeGreaterThan(0);
 
-  const rot = reorthonormalise(rotMul(arcball(grab(0, 0), grab(0.4, 0)), start.rot));
-  const after = project3d(1, 0, 0, { rot });
-
-  expect(after.depth, "a rightward drag must push the screen-right side away")
+  const rot = reorthonormalise(rotMul(arcball({ x: 0, y: 0 }, { x: 0.4, y: 0 }), start.rot));
+  expect(project3d(1, 0, 0, { rot }).depth, "a rightward drag must push the screen-right side away")
     .toBeGreaterThan(before.depth);
 });
 
-test("dragging up and down still turns the body the way it did", () => {
-  // Only the horizontal was inverted. Negating one screen axis in both points
-  // leaves a vertical drag untouched, and this is the assertion that says so.
+test("dragging down sends the bottom away, by the same argument", () => {
+  // The half of this that was missed the first time. Both drags were inverted
+  // by one sign in `onSphere`; fixing the horizontal at the call site left this
+  // one wrong, and the test written alongside it asserted the wrong behaviour as
+  // deliberate — a test can pin a bug just as firmly as it pins a fix.
   const start = defaultView();
-  const plain = reorthonormalise(rotMul(arcball({ x: 0, y: 0 }, { x: 0, y: 0.4 }), start.rot));
-  const grabbed = reorthonormalise(rotMul(arcball(grab(0, 0), grab(0, 0.4)), start.rot));
-  for (let i = 0; i < 9; i++) {
-    expect(grabbed[i]!).toBeCloseTo(plain[i]!, 9);
+  const before = project3d(0, 1, 0, start); // the patient's feet, at the screen bottom
+  expect(before.v, "this test assumes inferior is drawn downward").toBeGreaterThan(0);
+
+  const rot = reorthonormalise(rotMul(arcball({ x: 0, y: 0 }, { x: 0, y: 0.4 }), start.rot));
+  expect(project3d(0, 1, 0, { rot }).depth, "a downward drag must push the screen-bottom away")
+    .toBeGreaterThan(before.depth);
+});
+
+test("both drags turn the same way round, so neither axis is the odd one out", () => {
+  // The failure mode this exists for: one axis fixed and the other not. Each
+  // drag must send the side it pulls from away, and the two must agree.
+  const start = defaultView();
+  const cases: [string, [number, number], [number, number, number]][] = [
+    ["right", [0.4, 0], [1, 0, 0]],
+    ["left", [-0.4, 0], [-1, 0, 0]],
+    ["down", [0, 0.4], [0, 1, 0]],
+    ["up", [0, -0.4], [0, -1, 0]],
+  ];
+  for (const [name, drag, side] of cases) {
+    const before = project3d(side[0], side[1], side[2], start);
+    const rot = reorthonormalise(
+      rotMul(arcball({ x: 0, y: 0 }, { x: drag[0], y: drag[1] }), start.rot),
+    );
+    const after = project3d(side[0], side[1], side[2], { rot });
+    expect(after.depth, `dragging ${name} must push that side away`)
+      .toBeGreaterThan(before.depth);
   }
 });
 
-test("the inverted drag is still a rotation, not a mirror", () => {
-  // Negating a screen axis is a reflection, and two reflections make a rotation
-  // — but only if it is done to both ends of the drag. If it were applied to one
-  // the loop would come out mirrored, and a mirrored loop runs the wrong way
-  // round.
+test("a drag is still a rotation, not a mirror", () => {
   for (const [a, b] of [
     [[0, 0], [0.5, 0.2]],
     [[-0.6, 0.4], [0.7, -0.5]],
     [[1.3, 0.1], [-1.2, 0.8]],
   ] as const) {
-    const m = arcball(grab(a[0], a[1]), grab(b[0], b[1]));
-    expect(isRotation(m), `${a} -> ${b}`).toBe(true);
+    expect(isRotation(arcball({ x: a[0], y: a[1] }, { x: b[0], y: b[1] })), `${a} -> ${b}`)
+      .toBe(true);
   }
 });

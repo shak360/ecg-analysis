@@ -423,7 +423,20 @@ export function rotFromYawPitch(yaw: number, pitch: number): Rot {
  */
 function onSphere(dx: number, dy: number): [number, number, number] {
   const d = dx * dx + dy * dy;
-  if (d <= 1) return [dx, dy, Math.sqrt(1 - d)];
+  // The third component is **negative** — into the screen — because that is
+  // which way the view frame's third axis points. The obvious sign here is the
+  // wrong one: a ball resting on the canvas bulges toward the reader, so
+  // `+sqrt(1 - d)` is the intuitive value and gives a frame of (right, down,
+  // toward-viewer). That is left-handed against the view frame's (right, down,
+  // away), and using it reverses the rotation about every axis lying in the
+  // screen plane — so *both* a horizontal and a vertical drag turned the loop
+  // against the hand pushing it.
+  //
+  // Fixed once, here, rather than by negating a screen axis at each call site.
+  // Compensating per-axis works and is exactly how the horizontal got fixed on
+  // its own, leaving the vertical still inverted and a test asserting that as
+  // intended behaviour.
+  if (d <= 1) return [dx, dy, -Math.sqrt(1 - d)];
   const n = Math.sqrt(d);
   return [dx / n, dy / n, 0];
 }
