@@ -93,16 +93,21 @@ jobs:
       # the tool exits after writing an index precisely so one selection cannot
       # overwrite the other's.
       #
-      # Getting this wrong published a site with 313 of 1,207 cases and a green
-      # tick, because the staging step treated a missing index as "this corpus
-      # was not fetched, carry on". It now fails instead, so this cannot recur
-      # silently — but the ordering is still load-bearing and worth stating.
+      # Getting this wrong published a site with only the challenge corpus and a
+      # green tick, because the staging step treated a missing index as "this
+      # corpus was not fetched, carry on". It now fails instead, so this cannot
+      # recur silently — but the ordering is still load-bearing.
+      #
+      # The `--atlas N` counts are explicit and match README.md rather than
+      # riding on the tool's defaults, because N is what decides how large the
+      # published corpus is. Leaving it implicit is how the deployed sample and
+      # the documented one drift apart without either being wrong.
       - name: Fetch the corpus from PhysioNet
         if: steps.corpus.outputs.cache-hit != 'true'
         run: |
-          npm run fetch:ptbxl -- --atlas
+          npm run fetch:ptbxl -- --atlas 6
           npm run fetch:ptbxl
-          npm run fetch:challenge
+          npm run fetch:challenge -- --atlas 4
 
       - name: Build the WASM module
         run: npm run wasm

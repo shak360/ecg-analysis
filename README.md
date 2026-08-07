@@ -2,9 +2,15 @@
 
 **Live at <https://shak360.github.io/ecg-analysis/>** — no install, no account, no backend.
 
-A browsable library of **1,207 real, de-identified ECGs** labelled by the cardiologists who read
-them, drawn from seven open corpora, plus the measurement tooling to interrogate them. Everything
-runs in the browser.
+A browsable library of **real, de-identified ECGs** labelled by the cardiologists who read them,
+drawn from seven open corpora, plus the measurement tooling to interrogate them. Everything runs in
+the browser.
+
+How many cases a given build carries is a parameter, not a property: `--atlas N` selects up to N per
+finding, so the corpus is a *sample* sized when it is fetched rather than a fixed cohort. The
+deployed site states its own count in the Findings bar, and that count is derived from the index it
+actually loaded — it cannot disagree with what you can open. Do not quote a number from this file in
+anything citable; read it off the site.
 
 The site has four parts:
 
@@ -12,7 +18,7 @@ The site has four parts:
 | --- | --- |
 | **Atlas** (home) | 120 findings across seven categories, each with real examples. Browse by what a cardiologist found. |
 | **Test yourself** | Anki-style multiple choice over the human-validated subset. |
-| **Serial pairs** | 604 before/after pairs from PTB-XL patients, for studying change over time. |
+| **Serial pairs** | Before/after pairs from PTB-XL patients, for studying change over time. |
 | **Compare** | Recover tracings from **vector PDFs**, register several studies onto a common voltage and time base, and compare them lead by lead. Scans and photographs are not yet supported. |
 
 Comparing serial ECGs is normally done by eye with two printouts side by side. A 1 mm ST shift is
@@ -127,7 +133,7 @@ npm ci --ignore-scripts   # lifecycle scripts are npm's main supply-chain vector
 
 ### The corpus is not in this repository
 
-`data/` is gitignored, so **a fresh clone has none of the 1,207 ECGs** and the
+`data/` is gitignored, so **a fresh clone has none of the ECGs** and the
 atlas, the quiz and the serial-pairs browser will all come up empty. That is
 deliberate — it is 461 MB, and the gitignore rule that excludes it is the same
 one that stops a real patient PDF being committed by accident. Fetch it:
