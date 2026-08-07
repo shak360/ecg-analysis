@@ -1,5 +1,7 @@
 # ECG Atlas
 
+**Live at <https://shak360.github.io/ecg-analysis/>** — no install, no account, no backend.
+
 A browsable library of **1,207 real, de-identified ECGs** labelled by the cardiologists who read
 them, drawn from seven open corpora, plus the measurement tooling to interrogate them. Everything
 runs in the browser.
@@ -32,8 +34,16 @@ SCP-ECG standard that PTB-XL's labels happen to use.
 
 ## Privacy
 
-Everything runs in the browser. There is no backend and no upload — tracings never leave the machine,
-and nothing is written to disk between sessions.
+Everything runs in the browser. There is no backend and no upload path: a PDF you open on **Compare**
+is parsed in the page and is never sent anywhere, and no tracing you supply leaves the machine.
+
+Two things changed when the site went up, and both are worth stating plainly rather than leaving the
+old sentence to cover them. The **atlas corpus is now downloaded from the site** — it used to be read
+off your own disk through a dev-server mount, so "nothing is fetched at page load" was true locally
+and is not true of a deployed build. Those are open, de-identified, CC BY 4.0 recordings published by
+PhysioNet, so what is being fetched is public data, not yours. And **one thing does persist**: the
+quiz keeps your score in `localStorage` so progress survives a reload. Nothing else is stored — not
+the theme, not any tracing, not any measurement — and the quiz's Reset progress button clears it.
 
 `sample_ECGs/` is gitignored, as are `*.pdf`, `*.png`, and `*.jpg` anywhere in the tree, so real
 patient data cannot be committed by accident. **Gitignoring is not the same as being safe**, though:
