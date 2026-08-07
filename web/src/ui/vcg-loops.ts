@@ -405,7 +405,7 @@ export function reorthonormalise(m: Rot): Rot {
  * and it invited exactly the opposite reading.
  */
 export function defaultRot(): Rot {
-  return rotFromYawPitch(-0.42, -0.26);
+  return rotFromYawPitch(-0.22, -0.14);
 }
 
 /** The old two-angle construction, kept because it names a view readably. */
@@ -853,6 +853,34 @@ export function drawLeadCompass(
     ctx.lineTo(x, y);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // A lead pointing nearly at the reader collapses to a short stub, and a
+    // short stub is the least informative thing a direction diagram can draw.
+    // The out-of-page notation says what the foreshortening cannot: V1 and V2
+    // sit on the front of the chest, so on a front-facing view they are coming
+    // at you, not lying flat.
+    const along = Math.abs(p.depth);
+    if (along > 0.55) {
+      const near = p.depth < 0;
+      ctx.strokeStyle = a.limb ? th.qrs : th.t;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.stroke();
+      if (near) {
+        ctx.fillStyle = a.limb ? th.qrs : th.t;
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(x - 3.5, y - 3.5);
+        ctx.lineTo(x + 3.5, y + 3.5);
+        ctx.moveTo(x + 3.5, y - 3.5);
+        ctx.lineTo(x - 3.5, y + 3.5);
+        ctx.stroke();
+      }
+    }
 
     ctx.fillStyle = a.limb ? th.ink : th.muted;
     ctx.fillText(a.lead, cx + p.u * (r + 8), cy + p.v * (r + 8));
