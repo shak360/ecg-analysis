@@ -334,22 +334,40 @@ export function drawPrintout(
   ctx.globalAlpha = 1;
 
   // Lead labels, at each panel's top-left as a cart prints them.
-  ctx.fillStyle = th.text;
-  ctx.font = `600 ${Math.max(9, 3 * pxPerMm)}px system-ui, sans-serif`;
+  //
+  // A lead no study carries gets a second line saying so. An empty panel under
+  // a lead name is ambiguous — it reads as a flat trace, which is a finding —
+  // and 31 of the 45 Ningbo records in this corpus have at least one channel
+  // that was never recorded. `decodeWfdb` drops those rather than handing on a
+  // column of zeros, so "absent from every study" is exactly the condition.
+  const recorded = (lead: string): boolean =>
+    studies.some((st) => (st.leads.get(lead)?.length ?? 0) > 0) ||
+    (lead === "II" && studies.some((st) => (st.rhythm?.length ?? 0) > 0));
+
+  const labelPanel = (lead: string, lx: number, top: number): void => {
+    ctx.fillStyle = th.text;
+    ctx.font = `600 ${Math.max(9, 3 * pxPerMm)}px system-ui, sans-serif`;
+    ctx.fillText(lead, lx, top + 4 * pxPerMm);
+    if (recorded(lead)) return;
+    ctx.fillStyle = th.muted;
+    ctx.font = `${Math.max(8, 2.4 * pxPerMm)}px ui-monospace, monospace`;
+    ctx.fillText("not recorded", lx, top + 7.4 * pxPerMm);
+  };
+
   if (twelveByOne) {
     LEAD_ORDER.forEach((lead, r) => {
-      ctx.fillText(lead, x0 + 3, y0 + r * rowMm * pxPerMm + 4 * pxPerMm);
+      labelPanel(lead, x0 + 3, y0 + r * rowMm * pxPerMm);
     });
   } else {
     for (let r = 0; r < 3; r++) {
       const top = y0 + r * rowMm * pxPerMm;
       COLUMNS.forEach((col, c) => {
-        ctx.fillText(col[r]!, x0 + c * colW + 3, top + 4 * pxPerMm);
+        labelPanel(col[r]!, x0 + c * colW + 3, top);
       });
     }
     opts.rhythmLeads.forEach((lead, k) => {
       const top = y0 + (3 + k) * rowMm * pxPerMm;
-      ctx.fillText(lead, x0 + 3, top + 4 * pxPerMm);
+      labelPanel(lead, x0 + 3, top);
     });
   }
 

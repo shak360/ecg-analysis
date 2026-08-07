@@ -44,6 +44,13 @@ export interface WfdbRecord {
   };
   /** First sample of each channel as the header declares it, for verification. */
   initValues: number[];
+  /**
+   * Channels the header declares but which carry no signal at all.
+   *
+   * Absent from `leads`, and named here so a caller can say which rather than
+   * leaving a reader to notice three empty panels and guess why.
+   */
+  deadLeads: string[];
 }
 
 /**
@@ -196,19 +203,42 @@ export function decodeWfdb(headerText: string, dat: ArrayBuffer): WfdbRecord {
 
   const raw = new Int16Array(dat, offset, nSamples * nSig);
   const leads = new Map<string, Float32Array>();
+  const deadLeads: string[] = [];
   for (let c = 0; c < nSig; c++) {
     const s = signals[c]!;
     const out = new Float32Array(nSamples);
+    let anySignal = false;
     for (let i = 0; i < nSamples; i++) {
-      out[i] = (raw[i * nSig + c]! - s.baseline) / s.gain;
+      const code = raw[i * nSig + c]!;
+      out[i] = (code - s.baseline) / s.gain;
+      // Compared before scaling: the raw code is what the cart wrote, and a
+      // channel that never left its baseline never wrote anything.
+      if (code !== s.baseline) anySignal = true;
     }
-    leads.set(s.name, out);
+    // A channel identically at baseline for the whole record is not a recording
+    // of zero millivolts. It is a channel that was not recorded — an electrode
+    // that was off, or a lead the exporter padded to keep the matrix square —
+    // and the two are not interchangeable.
+    //
+    // Drawn as a trace it is a flat line, which reads as an isoelectric lead:
+    // a finding. Fed to the Kors transform it is worse, because the regression
+    // has no way to know a term is absent rather than zero and returns a loop
+    // built partly from nothing, with no outward sign. 31 of the 45 Ningbo
+    // records in this corpus have at least one such channel, and in every one
+    // of them it is a lead that transform reads.
+    //
+    // So it is omitted rather than flagged. Every guard downstream already
+    // handles a lead that is not there — `VcgRefusal::LeadsMissing` even says
+    // "not recorded here" — and none of them would have handled a new kind of
+    // present-but-meaningless lead without being taught to.
+    if (anySignal) leads.set(s.name, out);
+    else deadLeads.push(s.name);
   }
 
   // The header's declared first sample per channel, so a caller can verify the
   // offset was right rather than trusting a plausible-looking trace.
   const initValues = signals.map((_, c) => raw[c] ?? NaN);
-  return { fsHz, nSamples, leads, meta, initValues };
+  return { fsHz, nSamples, leads, meta, initValues, deadLeads };
 }
 
 /** Does the decoded signal start where the header says it does? */
