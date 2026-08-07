@@ -1013,6 +1013,18 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 .evidence__standing > p {
   margin: 0 0 6px 15px; line-height: 1.5; max-width: 92ch;
 }
+/* The works a citation names, as links.
+   Indented to the same 15px as the prose above so they read as part of the
+   citation rather than as a new section, and listed one per line because a
+   reader scanning for a particular paper is scanning a column, not a sentence. */
+.evidence__refs {
+  margin: 0 0 6px 15px; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 3px; max-width: 92ch;
+}
+.evidence__refs a { color: var(--accent); text-decoration: none; }
+.evidence__refs a:hover, .evidence__refs a:focus-visible { text-decoration: underline; }
+.evidence__pmid { color: var(--text-faint); }
+
 .evidence__more > summary { color: var(--accent); }
 .evidence__standing { border-top: 1px solid var(--border); padding-top: 4px; }
 

@@ -159,6 +159,16 @@ export interface CriterionEntry {
   year: number;
   /** Short source attribution, shown with every row. */
   source: string;
+  /**
+   * Keys into `references.json` for the works `source` names, in the order it
+   * names them, so a reader can follow the citation instead of retyping it.
+   *
+   * Empty is a real answer and not an omission: the Minnesota Code entries
+   * quote a printed manual, which has no DOI and no PubMed record. Linking
+   * those to something adjacent — a paper *about* the code, say — would send a
+   * reader to a document that does not contain the criterion they clicked.
+   */
+  refs: string[];
   /** The doc's "Guidelines disagree" paragraph, if it has one. */
   disagreement?: string;
   /** The doc's "Not computable from samples" paragraph, if it has one. */

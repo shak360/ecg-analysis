@@ -25,6 +25,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B, Childers R, Deal BJ, Gettes LS. AHA/ACCF/HRS Recommendations for the Standardization and Interpretation of the Electrocardiogram, Part III: Intraventricular Conduction Disturbances. Circulation. 2009;119:e235-e240 (also J Am Coll Cardiol. 2009;53:976-981). FLAG: the primary full text is paywalled (ahajournals and jacc both returned HTTP 403). Every criterion above was verified verbatim against the reproduction of the same text in Table 3 of Kusumoto FM et al., 2018 ACC/AHA/HRS Bradycardia Guideline, Heart Rhythm 2019;16:e227-e279 (open PDF on hrsonline.org), and cross-checked against two independent reproductions.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019"],
     disagreement: "This is the loosest definition in use. (1) It does NOT require QS or rS in V1 — ESC 2013 and MADIT-CRT do. (2) Duration threshold 120 ms vs Strauss 140 ms (men) / 130 ms (women). (3) ESC 2021 keeps 120 ms but adds a mandatory mid-third notch/slur in >= 2 of V1,V2,V5,V6,I,aVL plus R peak time > 60 ms in V5-V6. (4) Applying ESC-2021 vs ESC-2013 to the same cohort of 281 'LBBB' patients: 100% met ESC 2013 but only 12% met ESC 2021 (Calle S et al., Neth Heart J 2022;30:495-498). A teaching tool must not present '>= 120 ms + broad R' as the definition of LBBB.",
     notComputable: "'Notched or slurred' is not quantified anywhere in the 2009 statement — a program must supply its own operational notch/slur definition (see the Xia 2017 entry). The ST-T clause is descriptive, not a decision rule. Separating true complete conduction block from LVH-related QRS widening cannot be done from the samples (Auricchio's His-bundle work showed ~1/3 of patients meeting these criteria have intact His-Purkinje LV activation) — that requires invasive recordings. Rate-dependence and intermittency require multiple beats/prior tracings.",
     rows: [
@@ -85,6 +86,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2011,
     source: "Strauss DG, Selvester RH, Wagner GS. Defining left bundle branch block in the era of cardiac resynchronization therapy. Am J Cardiol. 2011;107(6):927-934. FLAG: paywalled; criteria verified through three independent reproductions (Kong NW et al., Front Physiol 2022;13:962042; Pérez-Riera AR et al., Ann Noninvasive Electrocardiol 2019;24:e12572; Xia X et al., Ann Noninvasive Electrocardiol 2017;22).",
+    refs: ["strauss-2011", "kong-2022", "perez-riera-2019"],
     disagreement: "Directly contradicts the AHA/ACCF/HRS 2009 120 ms threshold, and is the only widely-cited LBBB definition with SEX-SPECIFIC duration thresholds. The 2021 ESC pacing guideline declined to adopt sex-specific cut-offs but acknowledged the issue: 'Simulations accounting for the smaller LV size in female CRT patients predict 9-13 ms lower QRS duration thresholds for females' (Glikson M et al., Eur Heart J 2021;42:3427-3520). The same guideline states plainly that 'ECG criteria of intraventricular conduction disturbance, LBBB, and non-LBBB have not been consistently defined and reported in any of the past CRT studies.'",
     notComputable: "Nothing intrinsically unmeasurable, but 'mid-QRS notching or slurring' is not defined quantitatively in the source paper; an implementation must adopt an explicit detector (thresholds published by Xia 2017 — see separate entry). Notch detection is noise-sensitive: the validated automatic implementation used 1000 Hz signal-averaged ECGs, which PTB-XL (500 Hz, single beats) does not match.",
     rows: [
@@ -129,6 +131,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2013,
     source: "Brignole M et al. 2013 ESC Guidelines on cardiac pacing and cardiac resynchronization therapy. Eur Heart J. 2013;34:2281-2329; Zareba W et al. Effectiveness of CRT by QRS morphology in MADIT-CRT. Circulation. 2011;123:1061-1072. FLAG: verified via multiple concordant reproductions (Calle S, Neth Heart J 2022;30:495-498; Kong NW, Front Physiol 2022) rather than the paywalled originals.",
+    refs: ["brignole-2013", "zareba-2011"],
     disagreement: "Differs from AHA 2009 by adding a V1 requirement and by dropping the R peak time and ST-T criteria; differs from Strauss by not requiring notching and by using a single non-sex-specific duration. MADIT-CRT's 130 ms floor was an enrolment criterion, not a diagnostic threshold — it is frequently misquoted as a general LBBB definition.",
     notComputable: "Notch/slur again unquantified. 'Frequently notched' is not a requirement, so a program must decide whether to treat notching as mandatory (it is not, under this definition).",
     rows: [
@@ -173,6 +176,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2021,
     source: "Glikson M et al. 2021 ESC Guidelines on cardiac pacing and cardiac resynchronization therapy. Eur Heart J. 2021;42:3427-3520 (full open PDF read directly for the sex/QRS-threshold discussion). Criteria itemisation verified via Calle S et al., Neth Heart J. 2022;30:495-498.",
+    refs: ["glikson-2021"],
     disagreement: "ESC 2021 is far more restrictive in practice than ESC 2013 despite the same 120 ms floor: in 281 CRT patients all met ESC 2013 but only 12% met ESC 2021, and among 27 CRT super-responders 100% vs 19% (Calle S 2022). This is the single largest guideline-to-guideline discrepancy in this whole family and should be stated explicitly in any teaching tool.",
     notComputable: "T-wave 'asymmetry' has no threshold given; the frontal/horizontal-plane morphology sub-items in the guideline are qualitative descriptions ('the QRS axis is variable') and are not decidable rules.",
     rows: [
@@ -217,6 +221,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 1982,
     source: "Minnesota Code, ventricular conduction defect section, quoted verbatim from ARIC Study Manual 5: Electrocardiography, Version 1.0, August 1987, Appendix A (NHLBI/ARIC, cscc.unc.edu) — read directly. Current reference: Prineas RJ, Crow RS, Zhang Z-M. The Minnesota Code Manual of Electrocardiographic Findings, 2nd ed., Springer 2010. FLAG: the 2010 edition may differ in detail from the 1987 reprint I verified; the lead list for the R-peak-duration criterion is printed as 'I, II, aVL, V5, V6' in the standard code but the OCR of the ARIC reprint is ambiguous between V1 and V5 for one entry.",
+    refs: [],
     disagreement: "Minnesota requires no morphologic criterion whatsoever beyond R peak duration — so it will label as LBBB many complexes AHA 2009 would not (e.g. dominant R in V1), and it will downgrade to 7-4 anything with a codable Q wave, which AHA 2009 would still call LBBB. Minnesota also uses per-lead rather than global QRS duration.",
     notComputable: "Exclusions are rule-based and computable except for pacing (6-8, artificial pacemaker) which requires spike detection, and complete AV block (6-1) which requires rhythm analysis. No morphology (notch, q-wave, V1 pattern) is required at all.",
     rows: [
@@ -261,6 +266,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B et al. Circulation. 2009;119:e235-e240 / J Am Coll Cardiol. 2009;53:976-981; reproduced verbatim in Kusumoto FM et al., Heart Rhythm 2019;16:e227-e279, Table 3 (read directly). Pediatric age bands additionally cross-checked against Pérez-Riera AR et al., Ann Noninvasive Electrocardiol. 2019;24:e12572. FLAG: one reproduction (wikidoc) gives the ILBBB pediatric bands as 4-16 y / < 4 y; two others give 8-16 y / < 8 y. I could not resolve this against the paywalled original.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019", "perez-riera-2019"],
     disagreement: "Minnesota Code 7-6 sets the ILBBB window at >= 0.10 s and < 0.12 s (i.e. 100-119 ms) versus AHA's 110-119 ms, requires the duration in EACH of I, aVL and V5 or V6, requires absence of any codable Q or QS wave, and does NOT require an LVH pattern or an R-peak-time criterion. ILBBB is widely regarded as a poorly reproducible entity; expect low inter-rater and inter-algorithm agreement on this PTB-XL label.",
     notComputable: "'Presence of left ventricular hypertrophy pattern' is under-specified: it is measurable only after you commit to a particular LVH criterion set, and that choice changes the ILBBB label. Progression from incomplete to complete LBBB requires serial tracings, which a single record cannot provide.",
     rows: [
@@ -305,6 +311,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 1982,
     source: "Minnesota Code 7-6, verbatim from ARIC Study Manual 5: Electrocardiography, Version 1.0, August 1987, Appendix A. Current reference: Prineas/Crow/Zhang, Minnesota Code Manual, 2nd ed., 2010.",
+    refs: [],
     disagreement: "100 ms lower bound vs AHA's 110 ms — a 10 ms window in which Minnesota calls ILBBB and AHA calls normal. No LVH requirement, unlike AHA.",
     notComputable: "None — this code is fully computable, which is why it is used in epidemiology. It is also why Minnesota-coded and AHA-coded ILBBB prevalences are not comparable.",
     rows: [
@@ -333,6 +340,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B et al. Circulation. 2009;119:e235-e240 / J Am Coll Cardiol. 2009;53:976-981. Criteria 1-4 verified verbatim from Kusumoto FM et al., Heart Rhythm 2019;16:e227-e279, Table 3 (read directly). The 'first 3 should be present / criterion 4 when a pure dominant R is present in V1' combination rule appears in the 2009 statement but I could only verify it against secondary reproductions — FLAG.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019"],
     disagreement: "Minnesota Code 7-2-1 defines RBBB differently (see separate entry): it accepts 'R' > R in V1 OR QRS mainly upright' plus R peak duration >= 60 ms in V1/V2, OR S duration > R duration in lead I or II — i.e. it will code RBBB on beats that fail the AHA V1/V2 pattern requirement. Note also that AHA sets the V1 R-peak-time threshold at > 50 ms while Minnesota uses >= 60 ms.",
     notComputable: "Nothing in the core rule. However, RBBB coexisting with LAFB/LPFB, prior MI, or Brugada pattern requires additional logic; and 'the R' is usually wider than the initial R' is a soft descriptor rather than a threshold.",
     rows: [
@@ -393,6 +401,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 1982,
     source: "Minnesota Code 7-2-1/7-2-2, verbatim from ARIC Study Manual 5: Electrocardiography, Version 1.0, August 1987, Appendix A.",
+    refs: [],
     disagreement: "Uses >= 60 ms R peak duration in V1/V2 where AHA 2009 uses > 50 ms in V1; permits diagnosis via lead I/II S-duration alone; no requirement for an rsR'-type pattern.",
     notComputable: "None; exclusions (complete AV block 6-1, WPW 6-4-1, pacemaker 6-8, ventricular rhythms 8-2-1/8-2-2) require rhythm and pacing-spike detection.",
     rows: [
@@ -445,6 +454,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B et al. Circulation. 2009;119:e235-e240; 'Same QRS morphology criteria as complete RBBB but with a QRS duration between 110 and 119 ms' verified verbatim in Kusumoto FM et al., Heart Rhythm 2019;16:e227-e279, Table 3. Pediatric bands from secondary reproductions — FLAG.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019"],
     disagreement: "Minnesota Code 7-3 requires only QRS < 0.12 s in EACH limb lead plus R' > R in V1 or V2 — no lower duration bound at all, so a 90 ms rSr' is coded IRBBB by Minnesota and is normal under AHA. Minnesota additionally has code 7-5 for an R-R' pattern in V1/V2 with R' <= R, which has no AHA equivalent. This is the label in PTB-XL most likely to be inconsistent.",
     notComputable: "The clinically important part — distinguishing IRBBB from the normal-variant rSr' of a thin chest, from high V1/V2 electrode placement, and from Brugada type 2 — is not addressed by the criteria at all. Electrode placement itself is not recoverable from the samples (a negative P wave in V1 is a partial surrogate).",
     rows: [
@@ -500,6 +510,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2012,
     source: "Baranchuk A, Enriquez A, Garcia-Niebla J, Bayes-Genis A, Villuendas R, Bayes de Luna A. Differential diagnosis of rSr' pattern in leads V1-V2: comprehensive review and proposed algorithm. Ann Noninvasive Electrocardiol. 2015;20(1):7-17 (read directly, open access).",
+    refs: ["baranchuk-2015"],
     disagreement: "This is a review-derived algorithm, not a guideline criterion; the AHA/ACCF/HRS statement offers no discriminator at all. Flag to users that IRBBB in PTB-XL will include benign variants.",
     notComputable: "Family history, fever at the time of recording, drug-challenge response, and whether the electrodes were actually placed one or two intercostal spaces high — none recoverable from the samples.",
     rows: [
@@ -560,6 +571,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B et al. Circulation. 2009;119:e235-e240; verified verbatim in Kusumoto FM et al., Heart Rhythm 2019;16:e227-e279, Table 3 and in the ECGpedia transcription of the 2009 table.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019"],
     disagreement: "IMPORTANT: Kusumoto 2018 reproduces the 2009 LAFB criteria with a FIFTH criterion the 2009 list does not contain — 'rS pattern (small r, deep S) in leads II, III and aVF'. Minnesota Code 7-7 uses a different rule again: QRS < 0.12 s in the majority of beats in I, II, III, aVL, aVF, PLUS a Q wave in lead I of amplitude >= 0.25 mm and < 0.03 s duration, PLUS axis <= -45 degrees. Many automated systems and older texts call -30 to -45 degrees LAFB; AHA and Minnesota both require -45. Also note the frontal axis itself is method-dependent (net QRS area vs peak amplitudes vs initial 40 ms) and near the -45 boundary the two methods disagree — state the method used.",
     notComputable: "The exclusion for congenital heart disease with infantile left-axis deviation depends on clinical history and is not computable. Whether a leftward axis reflects fascicular block versus inferior MI, LVH, emphysema or a horizontal heart cannot be settled from the axis alone.",
     rows: [
@@ -604,6 +616,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 1982,
     source: "Minnesota Code 7-7 and 7-8, verbatim from ARIC Study Manual 5: Electrocardiography, Version 1.0, August 1987, Appendix A.",
+    refs: [],
     disagreement: "Minnesota requires a measurable q in lead I (>= 0.25 mm, < 30 ms) which AHA 2009 does not; AHA requires qR and R peak time >= 45 ms in aVL which Minnesota does not. Minnesota provides NO code for left posterior fascicular block at all — a program trained on Minnesota-coded corpora will have no LPFB signal.",
     notComputable: "None — fully computable.",
     rows: [
@@ -648,6 +661,7 @@ export const CONDUCTION: CriterionEntry[] = [
     role: "definition",
     year: 2009,
     source: "Surawicz B et al. Circulation. 2009;119:e235-e240; verified verbatim (including the pediatric caveat) in Kusumoto FM et al., Heart Rhythm 2019;16:e227-e279, Table 3, and in the ECGpedia transcription of the 2009 table.",
+    refs: ["surawicz-2009-partiii", "kusumoto-2019"],
     disagreement: "The AHA axis window (+90 to +180) is far wider than what most textbooks and automated programs use in practice (commonly >= +100 or >= +120 degrees) because +90 to +100 overlaps heavily with normal vertical hearts. Minnesota Code has no LPFB code. There is no consensus threshold — say so.",
     notComputable: "LPFB is explicitly a diagnosis of exclusion: right ventricular hypertrophy and lateral MI must be excluded (partially computable via RVH/Q-wave criteria, but the guideline does not say which), and the common non-cardiac causes of right-axis deviation (tall thin habitus, chronic lung disease, acute pulmonary embolism, sodium-channel-blocker toxicity) are not recoverable from the samples. The pediatric rule requires a PRIOR TRACING — not computable from a single record. Mark LPFB as low-confidence in any automated tool.",
     rows: [

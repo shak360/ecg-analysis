@@ -29,6 +29,7 @@
  * teaching content, and a hidden row reads as a satisfied one.
  */
 
+import { REFERENCES, referenceLabel, referenceUrl } from "../criteria/references.ts";
 import type { CriterionEntry, EntryResult, RowResult } from "../criteria/types.ts";
 import { esc } from "./measurements.ts";
 
@@ -47,6 +48,29 @@ function measuredLine(r: RowResult, unit: string): string {
       // difference between them is exactly the judgement being withheld.
       return `measured ${r.measured!.toFixed(r.measured! < 10 ? 2 : 0)} ${unit}`;
   }
+}
+
+/**
+ * The citation's works, as links.
+ *
+ * Rendered beneath the prose rather than woven into it: the prose is verbatim
+ * bibliographic text including the FLAG notes about what could and could not be
+ * verified, and threading anchors through it would mean editing sentences whose
+ * exactness is the point.
+ *
+ * `rel="noopener"` because these open a publisher's site, and a reference whose
+ * key is missing is skipped rather than rendered as a dead link.
+ */
+function refsHtml(keys: readonly string[] | undefined): string {
+  const found = (keys ?? []).map((k) => [k, REFERENCES[k]] as const).filter(([, r]) => r);
+  if (found.length === 0) return "";
+  const links = found
+    .map(([, r]) =>
+      `<li><a href="${esc(referenceUrl(r!))}" target="_blank" rel="noopener">` +
+      `${esc(referenceLabel(r!))}</a> <span class="evidence__pmid">PMID ${esc(r!.pmid)}</span></li>`,
+    )
+    .join("");
+  return `<ul class="evidence__refs">${links}</ul>`;
 }
 
 function rowHtml(r: RowResult): string {
@@ -75,7 +99,7 @@ function entryHtml(res: EntryResult, i: number): string {
   return `<article class="evidence__entry" data-idx="${i}"${i === 0 ? "" : " hidden"}>` +
     `<h4 class="evidence__title">${esc(e.title)}</h4>` +
     `<details class="evidence__cite"><summary>Source</summary>` +
-    `<p>${esc(e.source)}</p></details>` +
+    `<p>${esc(e.source)}</p>${refsHtml(e.refs)}</details>` +
     res.rows.map(rowHtml).join("") +
     // The prose sits *after* the rows and folded away. It is the most valuable
     // content here and the least scannable — several hundred words of guideline
