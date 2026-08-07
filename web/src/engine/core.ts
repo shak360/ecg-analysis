@@ -17,10 +17,34 @@ import init, {
   vcg_lead_axes_json,
   vcg_planes_json,
 } from "../../wasm/ecg_core.js";
-import { extractPageGeometry } from "../ingest/pdf-paths.ts";
-import { classifyPolylines } from "../ingest/classify.ts";
-import { calibrateGain } from "../ingest/calibrate.ts";
-import { checkIdentities, detectLayout, sampleUniform, toPhysical } from "../ingest/layout.ts";
+/**
+ * The PDF ingest path is loaded on first use, not at import time.
+ *
+ * It reaches pdf.js, which is 477 KB — larger than everything else the app
+ * ships put together. Every page that touches the engine was paying for it,
+ * including the atlas and the quiz, which read WFDB records and have no way to
+ * open a PDF at all. Static imports here meant the corpus pages downloaded and
+ * parsed a PDF engine before they could draw their first tracing.
+ *
+ * Module evaluation is cached, so only the first `analyse()` waits.
+ */
+async function pdfIngest() {
+  const [paths, classify, calibrate, layout] = await Promise.all([
+    import("../ingest/pdf-paths.ts"),
+    import("../ingest/classify.ts"),
+    import("../ingest/calibrate.ts"),
+    import("../ingest/layout.ts"),
+  ]);
+  return {
+    extractPageGeometry: paths.extractPageGeometry,
+    classifyPolylines: classify.classifyPolylines,
+    calibrateGain: calibrate.calibrateGain,
+    checkIdentities: layout.checkIdentities,
+    detectLayout: layout.detectLayout,
+    sampleUniform: layout.sampleUniform,
+    toPhysical: layout.toPhysical,
+  };
+}
 import type {
   Assumptions,
   ComparisonSnapshot,
@@ -82,6 +106,16 @@ export class EngineCore {
   ): Promise<StudySummary> {
     await this.ready();
     this.release([studyId]);
+
+    const {
+      calibrateGain,
+      checkIdentities,
+      classifyPolylines,
+      detectLayout,
+      extractPageGeometry,
+      sampleUniform,
+      toPhysical,
+    } = await pdfIngest();
 
     // pdf.js takes ownership of the buffer it is handed, so give it a copy —
     // the original has to survive for a re-run under different assumptions.

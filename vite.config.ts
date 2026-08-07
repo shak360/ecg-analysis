@@ -147,6 +147,16 @@ export default defineConfig({
       ],
     },
   },
+  // Vite bundles workers as an IIFE by default, which cannot code-split, so
+  // every dynamic import inside the worker gets inlined. That put all 477 KB of
+  // pdf.js into the worker bundle — downloaded by the atlas and the quiz, which
+  // start a worker on load and can never open a PDF. ES workers split, so the
+  // PDF path stays a separate chunk fetched only when a PDF is actually
+  // analysed. `build.target` below already requires Firefox 114 for module
+  // workers on the main thread, so this asks nothing new of a browser.
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: resolve(root, "dist"),
     emptyOutDir: true,
