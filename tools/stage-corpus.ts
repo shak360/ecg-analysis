@@ -27,7 +27,7 @@
  *
  * Run as part of `npm run build:site`; nothing in dev depends on it.
  */
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -109,6 +109,19 @@ function copyTree(from: string, to: string): void {
 }
 
 async function main(): Promise<void> {
+  // Staging writes into `dist/`, and `vite build` has `emptyOutDir: true`, so
+  // running these the wrong way round silently deletes everything this tool
+  // produced. `build:site` orders them correctly; a hand-run gate is where it
+  // goes wrong, and it goes wrong quietly — the corpus is simply not there
+  // afterwards, which looks exactly like a stage that was never run.
+  if (!existsSync(join(OUT, "index.html"))) {
+    console.error("dist/ has no index.html, so `vite build` has not run yet.");
+    console.error("  Staging now would be undone by the build, which empties the directory.");
+    console.error("  Run `npm run build:site`, which does both in the right order.");
+    process.exitCode = 1;
+    return;
+  }
+
   let staged = 0;
   let skipped = 0;
   let trimmed = 0;
@@ -152,8 +165,28 @@ async function main(): Promise<void> {
       }
     }
 
+    // The atlas index is not the whole of what the site serves.
+    //
+    // `serial-pairs.json` names its own before/after records, chosen by a
+    // different selection in the same fetch tool, and 309 of the 1,095 it
+    // references are in no atlas entry. Staging only the atlas index left the
+    // Serial pairs page listing 604 pairs of which more than a quarter 404 when
+    // opened — and, unlike a missing index, that failure is per-case and only
+    // shows up when a reader clicks the wrong one.
+    const wanted = index.map((e) => e.id);
+    for (const extra of source.extras) {
+      if (extra !== "serial-pairs.json") continue;
+      try {
+        const pairs = JSON.parse(readFileSync(join(dir, extra), "utf8")) as
+          { before: number; after: number }[];
+        for (const p of pairs) wanted.push(`ptbxl:${p.before}`, `ptbxl:${p.after}`);
+      } catch {
+        /* absent, and already reported by the copy above */
+      }
+    }
+
     const seen = new Set<string>();
-    for (const { id } of index) {
+    for (const id of wanted) {
       if (seen.has(id)) continue;
       seen.add(id);
       const p = pathsFor(id);
@@ -169,6 +202,7 @@ async function main(): Promise<void> {
         skipped++;
         continue;
       }
+      // fallthrough: the record is on disk and will be staged
       bytesIn += file.byteLength;
 
       const { fsHz, nSamples, signals } = parseHeader(headerText);
