@@ -218,12 +218,30 @@ function renderLabels(e: Entry, trimmedFrom: number | null): void {
   list.textContent = e.findings.map((s) => s.description || s.id).join(" · ");
   box.appendChild(list);
 
+  // Two ways the label above can fail to describe the loop below, both of which
+  // the page would otherwise pass over in silence.
   if (trimmedFrom !== null) {
     const t = document.createElement("p");
     t.className = "note";
     t.textContent =
-      `This record is ${Math.round(trimmedFrom)} s long; the first 10 s were used. ` +
-      `The averaged beat comes from that window only.`;
+      `This record is ${Math.round(trimmedFrom / 60)} minutes long and the first 10 s ` +
+      `were used. The findings above describe the whole recording, so an ` +
+      `intermittent one — a run of ventricular tachycardia, an ectopic beat — ` +
+      `may lie outside this window entirely. The loop describes the window, not ` +
+      `the label.`;
+    box.appendChild(t);
+  }
+
+  const rhythms = e.findings.filter((s) => s.kind === "rhythm");
+  if (rhythms.length > 1) {
+    const t = document.createElement("p");
+    t.className = "note";
+    t.textContent =
+      `This record carries more than one rhythm finding (${
+        rhythms.map((s) => s.description || s.id).join(", ")
+      }). The beat here is an average, and averaging across a change of rhythm ` +
+      `produces a beat belonging to neither — the ensemble keeps whichever ` +
+      `morphology dominated and screens the rest out.`;
     box.appendChild(t);
   }
 }
