@@ -120,3 +120,36 @@ describe.skipIf(!present)("what the vector loop does with a dead channel", () =>
     await engine.release(["ningbo"]);
   }, 30_000);
 });
+
+test("a channel pinned to the converter's limits is not a lead", () => {
+  // `st_petersburg_incart:I0002` V6, in miniature: an input floating between
+  // the supplies rather than a signal. 99.98% of its 462,600 samples sit on
+  // one rail or the other. Drawn it is a full-scale square wave; fed to Kors,
+  // which reads V6, it swamps every real term in the transform.
+  const rail = 32767, floor = -32768;
+  const samples = Int16Array.from([
+    rail, 10, floor, -8, rail, 12, floor, -6, rail, 9, floor, -11,
+  ]);
+  const hea = [
+    "synthetic 2 500 6",
+    "synthetic.dat 16 1000.0(0)/mV 16 0 32767 0 0 V6",
+    "synthetic.dat 16 1000.0(0)/mV 16 0 10 0 0 II",
+  ].join("\n");
+  const rec = decodeWfdb(hea, samples.buffer.slice(0) as ArrayBuffer);
+  expect(rec.deadLeads).toEqual(["V6"]);
+  expect(rec.leads.has("II")).toBe(true);
+});
+
+test("a lead that merely touches a rail once is kept", () => {
+  // The negative control. A genuine deflection can clip a sample or two, and
+  // discarding the lead for that would throw away a real recording.
+  const samples = Int16Array.from([100, 5, 32767, 6, 200, 7, 150, 8, 120, 9, 90, 10]);
+  const hea = [
+    "synthetic 2 500 6",
+    "synthetic.dat 16 1000.0(0)/mV 16 0 100 0 0 V6",
+    "synthetic.dat 16 1000.0(0)/mV 16 0 5 0 0 II",
+  ].join("\n");
+  const rec = decodeWfdb(hea, samples.buffer.slice(0) as ArrayBuffer);
+  expect(rec.deadLeads).toEqual([]);
+  expect(rec.leads.size).toBe(2);
+});

@@ -208,13 +208,27 @@ export function decodeWfdb(headerText: string, dat: ArrayBuffer): WfdbRecord {
     const s = signals[c]!;
     const out = new Float32Array(nSamples);
     let anySignal = false;
+    let atRail = 0;
     for (let i = 0; i < nSamples; i++) {
       const code = raw[i * nSig + c]!;
       out[i] = (code - s.baseline) / s.gain;
       // Compared before scaling: the raw code is what the cart wrote, and a
       // channel that never left its baseline never wrote anything.
       if (code !== s.baseline) anySignal = true;
+      // The extremes of int16 are the converter's limits, not the patient's.
+      if (code === 32767 || code === -32768) atRail++;
     }
+    // A channel that spends most of the recording pinned to a converter limit
+    // is disconnected, not saturated by an enormous signal. `I0002`'s V6 is
+    // 99.98% rail — 172,079 samples at one end, 290,448 at the other, and
+    // almost nothing between — which is an input floating between the supplies.
+    //
+    // It matters more than it looks. Drawn, it is a square wave filling the
+    // panel top to bottom; fed to Kors, which reads V6, it is a term thousands
+    // of times larger than the ECG and the loop becomes that one channel's
+    // noise. Half is a deliberately loose bar: a real lead never reaches it,
+    // and a channel that does is past arguing about.
+    const railed = atRail > nSamples / 2;
     // A channel identically at baseline for the whole record is not a recording
     // of zero millivolts. It is a channel that was not recorded — an electrode
     // that was off, or a lead the exporter padded to keep the matrix square —
@@ -231,7 +245,7 @@ export function decodeWfdb(headerText: string, dat: ArrayBuffer): WfdbRecord {
     // handles a lead that is not there — `VcgRefusal::LeadsMissing` even says
     // "not recorded here" — and none of them would have handled a new kind of
     // present-but-meaningless lead without being taught to.
-    if (anySignal) leads.set(s.name, out);
+    if (anySignal && !railed) leads.set(s.name, out);
     else deadLeads.push(s.name);
   }
 
