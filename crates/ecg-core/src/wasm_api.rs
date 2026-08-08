@@ -27,7 +27,7 @@ use crate::dsp::resample::{
 };
 use crate::fiducial::{fiducials, r_index, GlobalFiducials, Unmeasurable, FRAME_LEN};
 use crate::measure::{measure_study, LeadMeasurements};
-use crate::vcg::{kors, kors_raw, Stationarity, VcgRefusal};
+use crate::vcg::{kors, kors_raw, limb_geometry, LimbGeometry, Stationarity, VcgRefusal};
 use crate::serial::gate::{
     gate_all, pair_blockers, ConfounderScreens, CoverageEvidence, FilterEvidence, GainEvidence,
     IdentityEvidence, LeadEvidence, LeadVerdict, PairEvidence, RhoGain, Screen, StudyEvidence,
@@ -228,6 +228,26 @@ impl StudyBuilder {
         let provenance =
             if from_vector_pdf { Provenance::VectorPdf } else { Provenance::Raster };
         let sigma_prov = if from_vector_pdf { 0.010 } else { 0.040 };
+
+        // Whether these channels are a standard 12-lead, measured on the samples
+        // as they arrived.
+        //
+        // It has to happen here, before anything else touches them. The
+        // Einthoven relations are linear and both stages below are not:
+        // `condition()` applies a slope-limited envelope and a PCHIP
+        // interpolation, and `ensemble()` aligns each lead to its own medoid.
+        // Both are correct and both destroy the relation — on ptbxl:2, whose
+        // raw limb leads agree to better than 1%, the conditioned signals
+        // disagree by 36% and the ensemble beats by 64%. Measured downstream
+        // the gate would refuse nearly every record, for the pipeline rather
+        // than for the recording.
+        let raw: Vec<(String, Vec<f32>)> = self
+            .leads
+            .iter()
+            .map(|l| (l.name.clone(), l.vertices.iter().map(|v| v.v_mv).collect()))
+            .collect();
+        let raw_offsets: Vec<f64> = self.leads.iter().map(|l| l.time_offset_s).collect();
+        let limb = limb_geometry(&raw, &raw_offsets);
 
         // Rate and beat times come from the rhythm strip alone.
         let strip = self.rhythm.as_ref().and_then(|v| condition(v, 100.0));
@@ -453,6 +473,7 @@ impl StudyBuilder {
             names,
             signals,
             offsets,
+            limb,
             rhythm: strip.clone().unwrap_or_default(),
             beats,
             sigmas,
@@ -494,6 +515,9 @@ pub struct StudyAnalysis {
     signals: Vec<Vec<f32>>,
     /// Where each panel's window starts within the record, seconds.
     offsets: Vec<f64>,
+    /// Whether the limb leads are the Einthoven combinations of I and II,
+    /// measured on the raw samples before conditioning could disturb them.
+    limb: LimbGeometry,
     /// The conditioned rhythm strip.
     rhythm: Vec<f32>,
     beats: Vec<Vec<f32>>,
@@ -745,7 +769,21 @@ impl StudyAnalysis {
             ));
         }
 
-        match kors(&beats, &self.offsets, &self.baselined, stationarity) {
+        // A record with none of III/aVR/aVL/aVF is one this transform can still
+        // read — it uses I, II and V1-V6 — but one whose geometry cannot be
+        // cross-checked against Einthoven. That is a different thing from
+        // passing the check, and saying so is cheaper than letting a reader
+        // assume a screen ran.
+        if self.limb == LimbGeometry::NotMeasurable {
+            notes.push(
+                "None of III, aVR, aVL or aVF was recorded, so whether these \
+                 channels are in standard 12-lead geometry could not be checked. \
+                 The transform assumes they are."
+                    .to_string(),
+            );
+        }
+
+        match kors(&beats, &self.offsets, &self.baselined, stationarity, &self.limb) {
             Ok(v) => VcgLoops {
                 x_mv: v.x_mv,
                 y_mv: v.y_mv,
@@ -803,7 +841,7 @@ impl StudyAnalysis {
         let signals: Vec<(String, Vec<f32>)> =
             self.names.iter().cloned().zip(self.signals.iter().cloned()).collect();
 
-        match kors_raw(&signals, &self.offsets, &self.baselined) {
+        match kors_raw(&signals, &self.offsets, &self.baselined, &self.limb) {
             Ok(v) => VcgLoops {
                 x_mv: v.x_mv,
                 y_mv: v.y_mv,

@@ -19,7 +19,7 @@
 //! `docs/decisions/0004-constants-live-in-rust.md` already places on this side
 //! of the boundary.
 
-use crate::config::{KORS_LEADS, KORS_X, KORS_Y, KORS_Z, VCG_RR_CV_MAX};
+use crate::config::{KORS_LEADS, KORS_X, KORS_Y, KORS_Z, VCG_LIMB_IDENTITY_MAX, VCG_RR_CV_MAX};
 
 /// The three orthogonal leads, on the same frame as the ensemble beats they
 /// came from: X left-positive, Y inferior-positive, Z posterior-positive.
@@ -46,6 +46,10 @@ pub enum VcgRefusal {
     NonStationary { rr_cv: f64, rho_min: f32 },
     /// A contributing lead's ensemble was not the canonical frame length.
     FrameLengthMismatch { lead: String, len: usize },
+    /// The limb leads are not the Einthoven combinations of I and II, so these
+    /// twelve channels are not a standard 12-lead and the transform's frame
+    /// does not apply. `residual` is a fraction of the offending lead's RMS.
+    LimbLeadGeometry { relation: String, lead: String, residual: f32 },
 }
 
 impl VcgRefusal {
@@ -57,6 +61,7 @@ impl VcgRefusal {
             Self::BaselineNotEstablished(_) => "BaselineNotEstablished",
             Self::NonStationary { .. } => "NonStationary",
             Self::FrameLengthMismatch { .. } => "FrameLengthMismatch",
+            Self::LimbLeadGeometry { .. } => "LimbLeadGeometry",
         }
     }
 
@@ -115,6 +120,15 @@ impl VcgRefusal {
                  standard frame. Nothing lines them up, so there is no shared \
                  instant to plot."
             ),
+            Self::LimbLeadGeometry { relation, lead, residual } => format!(
+                "Lead {lead} differs from {relation} by {:.0}% of its own \
+                 amplitude. Three electrodes give one plane, so on a standard \
+                 12-lead that relation holds to within rounding; these channels \
+                 are not in that geometry. This transform maps from it, so the \
+                 loop's coordinate frame would not be the one this recording was \
+                 made in.",
+                residual * 100.0,
+            ),
         }
     }
 
@@ -126,6 +140,7 @@ impl VcgRefusal {
                 offsets_s.iter().map(|(n, _)| n.clone()).collect()
             }
             Self::FrameLengthMismatch { lead, .. } => vec![lead.clone()],
+            Self::LimbLeadGeometry { lead, .. } => vec![lead.clone()],
             Self::NonStationary { .. } => Vec::new(),
         }
     }
@@ -149,11 +164,121 @@ pub enum Stationarity {
 /// Returns the loop or the first reason there is none. The checks run in a
 /// deliberate order — see the module docs — and the first match wins, because a
 /// reader given five simultaneous reasons acts on none of them.
+/// The four Einthoven/Goldberger relations, as `(lead, printed form, builder)`.
+///
+/// Written out rather than derived from a matrix because the printed form is
+/// what the refusal sentence shows a reader, and a reader checking the tool
+/// against a textbook is checking this string.
+/// `(lead, the relation as printed, how to build it from I and II)`.
+type LimbIdentity = (&'static str, &'static str, fn(f32, f32) -> f32);
+
+const LIMB_IDENTITIES: [LimbIdentity; 4] = [
+    ("III", "II - I", |i, ii| ii - i),
+    ("aVR", "-(I + II)/2", |i, ii| -(i + ii) / 2.0),
+    ("aVL", "I - II/2", |i, ii| i - ii / 2.0),
+    ("aVF", "II - I/2", |i, ii| ii - i / 2.0),
+];
+
+/// Whether these twelve channels are in standard 12-lead geometry.
+///
+/// Measured outside the transform and handed in, for the same reason
+/// `Stationarity` is: it is a fact about the *recording*, established once from
+/// the conditioned signals, and the transform's job is to act on it rather than
+/// to re-derive it from whatever happens to be in front of it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LimbGeometry {
+    /// The worst of the four relations, and how far off it is as a fraction of
+    /// that lead's own RMS.
+    Measured { relation: String, lead: String, residual: f32 },
+    /// I, II, or all four derived leads were absent, so there was nothing to
+    /// compare. Not a failure: an eight-lead export carrying I, II and V1-V6 is
+    /// a legitimate recording this transform can read.
+    NotMeasurable,
+}
+
+/// Score the limb leads against their definitions.
+///
+/// **Give this the samples as they arrived, before conditioning.** The identity
+/// is linear and every stage between here and the ensemble beat is not:
+///
+///   - each lead's ensemble is aligned to its own medoid, so two leads carry a
+///     relative shift of a few milliseconds — what `alignment_spread_ms`
+///     reports. Scored on the beats, ptbxl:2 reads 64%.
+///   - `condition()` runs a slope-limited envelope and a PCHIP interpolation,
+///     neither of which distributes over a sum. Scored on the conditioned
+///     signal the same record reads 36%.
+///
+/// Its raw limb leads agree to better than 1%. Both later stages are correct
+/// and both destroy the relation, so the check has to happen upstream of them
+/// or it measures the pipeline rather than the recording.
+///
+/// # Why the worst and not the mean
+///
+/// The same reason the stationarity gate reads `rho_min`: one channel out of
+/// place is enough to put the derived vector in the wrong frame, and averaging
+/// it against three correct ones hides exactly the case worth refusing.
+///
+/// Leads whose offset differs from lead I's are skipped: on a 3x4 printout they
+/// are from another window of the recording, so a residual would be measuring
+/// non-simultaneity, which has its own refusal and its own sentence.
+pub fn limb_geometry(signals: &[(String, Vec<f32>)], offsets_s: &[f64]) -> LimbGeometry {
+    let at = |name: &str| signals.iter().position(|(n, _)| n == name);
+    let (Some(i_idx), Some(ii_idx)) = (at("I"), at("II")) else {
+        return LimbGeometry::NotMeasurable;
+    };
+    let reference = offsets_s.get(i_idx).copied().unwrap_or(0.0);
+    let contemporaneous = |k: usize| {
+        (offsets_s.get(k).copied().unwrap_or(0.0) - reference).abs() <= 1e-9
+    };
+    if !contemporaneous(ii_idx) {
+        return LimbGeometry::NotMeasurable;
+    }
+    let (i, ii) = (&signals[i_idx].1, &signals[ii_idx].1);
+
+    let mut worst: Option<(String, String, f32)> = None;
+    for (name, printed, want) in LIMB_IDENTITIES {
+        let Some(k) = at(name).filter(|&k| contemporaneous(k)) else { continue };
+        let got = &signals[k].1;
+        // Sample-by-sample, so the grids must be the same grid. On a printout
+        // each panel is its own digitised polyline with its own vertex count,
+        // and comparing those by index would be measuring nothing.
+        if got.len() != i.len() || got.len() != ii.len() {
+            continue;
+        }
+        let n = got.len();
+        if n == 0 {
+            continue;
+        }
+        let mut se = 0.0f64;
+        let mut sg = 0.0f64;
+        for t in 0..n {
+            let d = f64::from(got[t] - want(i[t], ii[t]));
+            se += d * d;
+            sg += f64::from(got[t]) * f64::from(got[t]);
+        }
+        let scale = (sg / n as f64).sqrt();
+        // A lead with essentially no amplitude has no ratio worth forming; the
+        // dead-channel checks upstream are what speak to that case.
+        if scale < 0.02 {
+            continue;
+        }
+        let rel = ((se / n as f64).sqrt() / scale) as f32;
+        if worst.as_ref().is_none_or(|(_, _, w)| rel > *w) {
+            worst = Some((name.to_string(), printed.to_string(), rel));
+        }
+    }
+    match worst {
+        Some((lead, relation, residual)) => LimbGeometry::Measured { relation, lead, residual },
+        None => LimbGeometry::NotMeasurable,
+    }
+}
+
 pub fn kors(
     beats: &[(String, Vec<f32>)],
     offsets_s: &[f64],
     baselined: &[bool],
     stationarity: Stationarity,
+    geometry: &LimbGeometry,
 ) -> Result<Vcg, VcgRefusal> {
     debug_assert_eq!(beats.len(), offsets_s.len());
     debug_assert_eq!(beats.len(), baselined.len());
@@ -183,6 +308,23 @@ pub fn kors(
                 .map(|&i| (beats[i].0.clone(), offsets_s[i]))
                 .collect(),
         });
+    }
+
+    // Geometry, checked *after* simultaneity and before anything else.
+    //
+    // The order is load-bearing. On a 3x4 printout the limb leads come from
+    // four different 2.5 s windows, so the Einthoven relations fail because the
+    // leads are not contemporaneous rather than because the electrodes were
+    // elsewhere. Running this first would tell a reader their printout is not a
+    // standard 12-lead, which is both wrong and unactionable.
+    if let LimbGeometry::Measured { relation, lead, residual } = geometry {
+        if *residual > VCG_LIMB_IDENTITY_MAX {
+            return Err(VcgRefusal::LimbLeadGeometry {
+                relation: relation.clone(),
+                lead: lead.clone(),
+                residual: *residual,
+            });
+        }
     }
 
     // An arbitrary zero translates the whole loop off the origin, which looks
@@ -264,6 +406,7 @@ pub fn kors_raw(
     signals: &[(String, Vec<f32>)],
     offsets_s: &[f64],
     baselined: &[bool],
+    geometry: &LimbGeometry,
 ) -> Result<Vcg, VcgRefusal> {
     let mut idx = [usize::MAX; 8];
     let mut missing = Vec::new();
@@ -282,6 +425,23 @@ pub fn kors_raw(
         return Err(VcgRefusal::NotSimultaneous {
             offsets_s: idx.iter().map(|&i| (signals[i].0.clone(), offsets_s[i])).collect(),
         });
+    }
+
+    // Geometry, checked *after* simultaneity and before anything else.
+    //
+    // The order is load-bearing. On a 3x4 printout the limb leads come from
+    // four different 2.5 s windows, so the Einthoven relations fail because the
+    // leads are not contemporaneous rather than because the electrodes were
+    // elsewhere. Running this first would tell a reader their printout is not a
+    // standard 12-lead, which is both wrong and unactionable.
+    if let LimbGeometry::Measured { relation, lead, residual } = geometry {
+        if *residual > VCG_LIMB_IDENTITY_MAX {
+            return Err(VcgRefusal::LimbLeadGeometry {
+                relation: relation.clone(),
+                lead: lead.clone(),
+                residual: *residual,
+            });
+        }
     }
 
     let unbaselined: Vec<String> = idx
@@ -334,7 +494,135 @@ mod tests {
     }
 
     fn ok(beats: &[(String, Vec<f32>)]) -> Vcg {
-        kors(beats, &[0.0; 8], &[true; 8], steady()).expect("should derive")
+        let g = limb_geometry(beats, &[0.0; 8]);
+        kors(beats, &[0.0; 8], &[true; 8], steady(), &g).expect("should derive")
+    }
+
+    /// Twelve leads in which the limb leads really are combinations of I and II.
+    ///
+    /// The eight `blank()` leads cannot exercise the geometry gate at all —
+    /// none of III/aVR/aVL/aVF is among them — so the gate needs a fixture that
+    /// can pass it before anything can meaningfully fail it.
+    fn twelve_lead() -> Vec<(String, Vec<f32>)> {
+        let i: Vec<f32> = (0..N).map(|t| (t as f32 * 0.7).sin() * 0.8).collect();
+        let ii: Vec<f32> = (0..N).map(|t| (t as f32 * 0.5).cos() * 1.1).collect();
+        let derive = |f: fn(f32, f32) -> f32| -> Vec<f32> {
+            (0..N).map(|t| f(i[t], ii[t])).collect()
+        };
+        let mut leads = vec![
+            ("I".to_string(), i.clone()),
+            ("II".to_string(), ii.clone()),
+            ("III".to_string(), derive(|a, b| b - a)),
+            ("aVR".to_string(), derive(|a, b| -(a + b) / 2.0)),
+            ("aVL".to_string(), derive(|a, b| a - b / 2.0)),
+            ("aVF".to_string(), derive(|a, b| b - a / 2.0)),
+        ];
+        for (k, v) in ["V1", "V2", "V3", "V4", "V5", "V6"].iter().enumerate() {
+            leads.push((
+                (*v).to_string(),
+                (0..N).map(|t| ((t + k) as f32 * 0.9).sin() * 0.5).collect(),
+            ));
+        }
+        leads
+    }
+
+    fn derive12(leads: &[(String, Vec<f32>)]) -> Result<Vcg, VcgRefusal> {
+        let n = leads.len();
+        kors(leads, &vec![0.0; n], &vec![true; n], steady(), &limb_geometry(leads, &vec![0.0; n]))
+    }
+
+    #[test]
+    fn a_standard_twelve_lead_passes_the_geometry_check() {
+        // The negative control, and it has to come first: a gate that refuses
+        // everything would satisfy every test below it.
+        assert!(derive12(&twelve_lead()).is_ok());
+    }
+
+    #[test]
+    fn a_limb_lead_out_of_its_einthoven_relation_is_refused_and_named() {
+        // Injected rather than asserted: aVR is scaled so it is no longer
+        // -(I + II)/2, and the refusal must say which lead and which relation.
+        //
+        // Scaling by 1.5 leaves a residual of 0.5/1.5 of the *scaled* lead's own
+        // RMS, since the score is relative to the lead being checked.
+        let mut leads = twelve_lead();
+        let k = leads.iter().position(|(n, _)| n == "aVR").unwrap();
+        for v in leads[k].1.iter_mut() {
+            *v *= 1.5;
+        }
+
+        match derive12(&leads) {
+            Err(VcgRefusal::LimbLeadGeometry { relation, lead, residual }) => {
+                assert_eq!(lead, "aVR");
+                assert_eq!(relation, "-(I + II)/2");
+                assert!(
+                    (residual - 1.0 / 3.0).abs() < 0.01,
+                    "residual {residual} should be about 0.333"
+                );
+            }
+            other => panic!("expected LimbLeadGeometry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_small_departure_stays_within_the_threshold() {
+        // The other side of the boundary. 2% is above the corpus median of 0.6%
+        // and well inside `VCG_LIMB_IDENTITY_MAX`, so real rounding noise in a
+        // cart's derived leads must not refuse.
+        let mut leads = twelve_lead();
+        let k = leads.iter().position(|(n, _)| n == "aVF").unwrap();
+        for v in leads[k].1.iter_mut() {
+            *v *= 1.02;
+        }
+        assert!(derive12(&leads).is_ok());
+    }
+
+    #[test]
+    fn simultaneity_is_decided_before_geometry() {
+        // On a 3x4 printout the limb leads are different windows of the
+        // recording, so the Einthoven relations fail *because* of that. The
+        // reader needs to be told about the windows, not told their printout is
+        // not a standard 12-lead.
+        //
+        // Both faults are present here: V1 sits at a different offset and aVR is
+        // broken. The offsets must win.
+        let mut leads = twelve_lead();
+        let k = leads.iter().position(|(n, _)| n == "aVR").unwrap();
+        for v in leads[k].1.iter_mut() {
+            *v *= 1.5;
+        }
+        let n = leads.len();
+        let mut offsets = vec![0.0; n];
+        offsets[leads.iter().position(|(x, _)| x == "V1").unwrap()] = 2.5;
+
+        match kors(&leads, &offsets, &vec![true; n], steady(), &limb_geometry(&leads, &offsets)) {
+            Err(VcgRefusal::NotSimultaneous { .. }) => {}
+            other => panic!("expected NotSimultaneous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_derived_lead_from_another_window_is_not_scored() {
+        // The same reasoning one level down. Where the eight Kors leads *are*
+        // contemporaneous but a derived limb lead is not, that lead says nothing
+        // about geometry and must be skipped rather than counted as a failure.
+        let mut leads = twelve_lead();
+        let k = leads.iter().position(|(n, _)| n == "aVR").unwrap();
+        for v in leads[k].1.iter_mut() {
+            *v *= 1.5;
+        }
+        let n = leads.len();
+        let mut offsets = vec![0.0; n];
+        offsets[k] = 2.5;
+
+        assert!(kors(&leads, &offsets, &vec![true; n], steady(), &limb_geometry(&leads, &offsets)).is_ok());
+    }
+
+    #[test]
+    fn an_eight_lead_export_is_not_refused_for_a_check_it_cannot_take() {
+        // I, II and V1-V6 is everything the transform reads. There is no
+        // cross-check available, which is not the same as failing one.
+        assert!(kors(&blank(), &[0.0; 8], &[true; 8], steady(), &LimbGeometry::NotMeasurable).is_ok());
     }
 
     #[test]
@@ -403,25 +691,39 @@ mod tests {
     #[test]
     fn the_derived_limb_leads_do_not_enter_the_transform() {
         // III, aVR, aVL and aVF are combinations of I and II; reading them would
-        // double-count. Adding arbitrary signal must change nothing.
+        // double-count. Present or absent, the loop must be the same.
+        //
+        // This used to add *arbitrary* signal to those four, which was a
+        // stronger statement about the transform and is no longer a legal
+        // input: the geometry gate refuses limb leads that are not the
+        // Einthoven combinations, so arbitrary values now fail before the
+        // transform is reached. `a_limb_lead_out_of_its_einthoven_relation_is
+        // _refused_and_named` covers that. What is left here is the original
+        // property — the four contribute nothing — stated on a record that is
+        // a standard 12-lead, which is the only kind the transform accepts.
         let mut b = blank();
         for (k, lead) in b.iter_mut().enumerate() {
-            lead.1 = (0..N).map(|s| (k * s) as f32 * 0.01).collect();
+            lead.1 = (0..N).map(|s| ((k + 1) * s) as f32 * 0.01).collect();
         }
         let base = ok(&b);
 
+        let i = b[0].1.clone();
+        let ii = b[1].1.clone();
         let mut extra = b.clone();
-        for name in ["III", "aVR", "aVL", "aVF"] {
-            extra.push((name.to_string(), (0..N).map(|s| s as f32 * 3.0).collect()));
+        for (name, f) in LIMB_IDENTITIES.map(|(n, _, f)| (n, f)) {
+            extra.push((
+                name.to_string(),
+                (0..N).map(|s| f(i[s], ii[s])).collect(),
+            ));
         }
-        let with = kors(&extra, &[0.0; 12], &[true; 12], steady()).expect("should derive");
+        let with = kors(&extra, &[0.0; 12], &[true; 12], steady(), &limb_geometry(&extra, &[0.0; 12])).expect("should derive");
         assert_eq!(base, with);
     }
 
     #[test]
     fn a_missing_lead_is_refused_and_named() {
         let b: Vec<_> = blank().into_iter().filter(|(n, _)| n != "V3").collect();
-        let err = kors(&b, &[0.0; 7], &[true; 7], steady()).unwrap_err();
+        let err = kors(&b, &[0.0; 7], &[true; 7], steady(), &limb_geometry(&b, &[0.0; 7])).unwrap_err();
         assert_eq!(err.code(), "LeadsMissing");
         assert_eq!(err.leads(), vec!["V3"]);
         assert!(err.sentence().contains("V3"));
@@ -433,7 +735,7 @@ mod tests {
         // matters most, and the one a canvas could never make for itself.
         let b = blank();
         let offsets = [0.0, 0.0, 2.5, 2.5, 5.0, 5.0, 7.5, 7.5];
-        let err = kors(&b, &offsets, &[true; 8], steady()).unwrap_err();
+        let err = kors(&b, &offsets, &[true; 8], steady(), &limb_geometry(&b, &offsets)).unwrap_err();
         assert_eq!(err.code(), "NotSimultaneous");
         assert!(err.sentence().contains("never measured at the same instant"));
     }
@@ -443,14 +745,14 @@ mod tests {
         let b = blank();
         let mut based = [true; 8];
         based[3] = false; // V2
-        let err = kors(&b, &[0.0; 8], &based, steady()).unwrap_err();
+        let err = kors(&b, &[0.0; 8], &based, steady(), &limb_geometry(&b, &[0.0; 8])).unwrap_err();
         assert_eq!(err.code(), "BaselineNotEstablished");
         assert_eq!(err.leads(), vec!["V2"]);
     }
 
     #[test]
     fn an_unscreened_rhythm_is_refused_rather_than_assumed_regular() {
-        let err = kors(&blank(), &[0.0; 8], &[true; 8], Stationarity::NotMeasured).unwrap_err();
+        let err = kors(&blank(), &[0.0; 8], &[true; 8], Stationarity::NotMeasured, &limb_geometry(&blank(), &[0.0; 8])).unwrap_err();
         assert_eq!(err.code(), "NonStationary");
         assert!(err.sentence().contains("never screened"));
     }
@@ -461,13 +763,13 @@ mod tests {
         // real record sits just above it. Gating on it refused 92.7% of the
         // corpus for a reason unrelated to stationarity. See VCG_QRS_RHO_NOTE.
         let s = Stationarity::Measured { rr_cv: 0.02, rho_min: 0.951 };
-        assert!(kors(&blank(), &[0.0; 8], &[true; 8], s).is_ok());
+        assert!(kors(&blank(), &[0.0; 8], &[true; 8], s, &limb_geometry(&blank(), &[0.0; 8])).is_ok());
     }
 
     #[test]
     fn a_varying_rate_is_refused() {
         let s = Stationarity::Measured { rr_cv: 0.14, rho_min: 0.99 };
-        let err = kors(&blank(), &[0.0; 8], &[true; 8], s).unwrap_err();
+        let err = kors(&blank(), &[0.0; 8], &[true; 8], s, &limb_geometry(&blank(), &[0.0; 8])).unwrap_err();
         assert_eq!(err.code(), "NonStationary");
         assert!(err.sentence().contains("14%"));
     }
@@ -476,7 +778,7 @@ mod tests {
     fn a_ragged_frame_is_refused_rather_than_truncated() {
         let mut b = blank();
         b[2].1 = vec![0.0; N - 1]; // V1
-        let err = kors(&b, &[0.0; 8], &[true; 8], steady()).unwrap_err();
+        let err = kors(&b, &[0.0; 8], &[true; 8], steady(), &limb_geometry(&b, &[0.0; 8])).unwrap_err();
         assert_eq!(err.code(), "FrameLengthMismatch");
     }
 

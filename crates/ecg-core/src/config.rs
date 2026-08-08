@@ -705,6 +705,40 @@ pub const VCG_RR_CV_MAX: f64 = 0.10;
 /// correlation, or a median rather than a minimum — not a lower threshold.
 pub const VCG_QRS_RHO_NOTE: f32 = 0.98;
 
+/// How far the limb leads may stray from Einthoven before a derived loop is
+/// refused, as a fraction of the lead's own RMS.
+///
+/// Three electrodes define one plane, so III, aVR, aVL and aVF are exact linear
+/// combinations of I and II — `III = II - I`, `aVR = -(I + II)/2`,
+/// `aVL = I - II/2`, `aVF = II - I/2`. A cart computes them, so on a standard
+/// 12-lead they hold to within rounding.
+///
+/// This matters here because the Kors regression is a map *from* that geometry.
+/// Handed channels that are not in it, the transform still returns a loop — a
+/// normal-looking one, with a plausible mean QRS vector — describing a heart in
+/// a coordinate frame the recording does not have, with no outward sign.
+///
+/// # The threshold is a gap in the data, not a round number
+///
+/// Worst of the four relations per record, measured over all 1,207 atlas records
+/// by `tools/survey-leads.ts`:
+///
+/// | | worst-relation residual |
+/// |---|---|
+/// | INCART, all 25 | 13.3% – 234.3% |
+/// | `ptbxl:162` | 46.9% |
+/// | next highest, `chapman_shaoxing:JS00016` | 8.0% |
+/// | every other record | median 0.60%, p95 2.02%, p99 3.57% |
+///
+/// 0.10 sits in the empty band between 8.0% and 13.3%. INCART's twelve channels
+/// are recorded independently from Holter electrode positions, so the standard
+/// names are labels on channels not in the standard geometry; `ptbxl:162` is one
+/// record whose aVR is out by 46.9% while III, aVL and I reconcile at 0.1%.
+///
+/// The gap is real but it is *this* corpus's gap, and a future source could land
+/// inside it. Re-run the survey before trusting this number on new data.
+pub const VCG_LIMB_IDENTITY_MAX: f32 = 0.10;
+
 /// Approximate direction of each lead's positive axis, in the same frame as the
 /// vectorcardiogram: X left-positive, Y inferior-positive, Z posterior-positive.
 ///

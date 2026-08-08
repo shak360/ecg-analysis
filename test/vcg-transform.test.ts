@@ -37,8 +37,16 @@ function simultaneous(fsHz = 500, seconds = 10): Map<string, Float32Array> {
   };
   // Different amplitudes per lead, so X, Y and Z are not degenerate multiples
   // of one another and the loop has a real shape.
+  //
+  // The four derived limb leads are **not** in this table. Giving them their own
+  // scale factors made a fixture that no cart could produce: three electrodes
+  // give one plane, so III, aVR, aVL and aVF are fixed combinations of I and II,
+  // and inventing independent amplitudes for them describes a body with more
+  // than three limbs. It went unnoticed until the geometry gate refused this
+  // fixture at 25%, which is the gate working — the fixture was the thing that
+  // was wrong. They are derived below, as a cart derives them.
   const scale: Record<string, number> = {
-    I: 0.7, II: 1.0, III: 0.4, aVR: -0.8, aVL: 0.2, aVF: 0.7,
+    I: 0.7, II: 1.0,
     V1: -0.5, V2: -0.2, V3: 0.4, V4: 0.9, V5: 1.0, V6: 0.8,
   };
   const leads = new Map<string, Float32Array>();
@@ -61,6 +69,18 @@ function simultaneous(fsHz = 500, seconds = 10): Map<string, Float32Array> {
     }
     leads.set(name, v);
   }
+
+  const I = leads.get("I")!;
+  const II = leads.get("II")!;
+  const derive = (f: (a: number, b: number) => number): Float32Array => {
+    const v = new Float32Array(n);
+    for (let i = 0; i < n; i++) v[i] = f(I[i]!, II[i]!);
+    return v;
+  };
+  leads.set("III", derive((a, b) => b - a));
+  leads.set("aVR", derive((a, b) => -(a + b) / 2));
+  leads.set("aVL", derive((a, b) => a - b / 2));
+  leads.set("aVF", derive((a, b) => b - a / 2));
   return leads;
 }
 
