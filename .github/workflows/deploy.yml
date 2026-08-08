@@ -102,12 +102,25 @@ jobs:
       # riding on the tool's defaults, because N is what decides how large the
       # published corpus is. Leaving it implicit is how the deployed sample and
       # the documented one drift apart without either being wrong.
+      #
+      # `--reindex` is the third line and the reason the deployed corpus was a
+      # third of the local one. The two selections barely overlap: `--atlas`
+      # picks records by *statement*, the pair fetch picks them by *pair
+      # structure*, and each writes only its own index. So after both have run
+      # there are ~722 human-validated records sitting in `records500/` that no
+      # atlas index names. `--reindex` indexes everything on disk that meets the
+      # atlas standard, whichever selection fetched it. It downloads nothing —
+      # the files are already there — and takes 324 PTB-XL cases to ~1,046.
+      #
+      # It runs last because it reads the directory, so anything fetched after
+      # it would be missed.
       - name: Fetch the corpus from PhysioNet
         if: steps.corpus.outputs.cache-hit != 'true'
         run: |
           npm run fetch:ptbxl -- --atlas 6
           npm run fetch:ptbxl
           npm run fetch:challenge -- --atlas 4
+          npm run fetch:ptbxl -- --reindex
 
       - name: Build the WASM module
         run: npm run wasm
