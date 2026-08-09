@@ -39,7 +39,6 @@ async function pdfIngest() {
     extractPageGeometry: paths.extractPageGeometry,
     classifyPolylines: classify.classifyPolylines,
     calibrateGain: calibrate.calibrateGain,
-    checkIdentities: layout.checkIdentities,
     detectLayout: layout.detectLayout,
     sampleUniform: layout.sampleUniform,
     toPhysical: layout.toPhysical,
@@ -109,7 +108,6 @@ export class EngineCore {
 
     const {
       calibrateGain,
-      checkIdentities,
       classifyPolylines,
       detectLayout,
       extractPageGeometry,
@@ -151,10 +149,13 @@ export class EngineCore {
       ...toPhysical(p.trace, cls.gridPitch!, assumptions.mmPerSec, cal.mmPerMv),
     }));
 
+    // The limb-lead identities used to be scored here, in TypeScript, at a
+    // normalisation of their own. They are now measured once in Rust on the
+    // samples as they arrive — `vcg::limb_geometry`, reported as
+    // `IdentityEvidence` and as the vector loop's refusal — so this path no
+    // longer computes a second answer to the same question.
     const sampled = new Map<string, Float32Array>();
     for (const p of physical) sampled.set(p.lead, sampleUniform(p.t, p.v));
-    const identity = checkIdentities(sampled);
-    warnings.push(...identity.notes);
 
     const builder = new StudyBuilder();
     for (const p of physical) builder.add_lead(p.lead, p.t, p.v, p.offset);
@@ -197,7 +198,6 @@ export class EngineCore {
       frameLen: analysis.frame_len,
       onsetShiftMs: analysis.onset_shift_ms,
       columnSeconds: layout.columnSeconds || null,
-      identityPassed: identity.passed,
       calibration: {
         mmPerMv: cal.mmPerMv,
         source: cal.source,
@@ -281,7 +281,6 @@ export class EngineCore {
       frameLen: analysis.frame_len,
       onsetShiftMs: analysis.onset_shift_ms,
       columnSeconds: n / fsHz,
-      identityPassed: null,
       calibration: {
         mmPerMv: 10,
         source: "pulse",

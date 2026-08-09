@@ -93,3 +93,32 @@ describe.skipIf(!present)("the limb-lead geometry gate", () => {
     expect(v.refusal?.code).toBe("LimbLeadGeometry");
   }, 30_000);
 });
+
+describe.skipIf(!present)("what the same measurement does elsewhere", () => {
+  test("the frontal axis is withheld on exactly the records the loop refuses", async () => {
+    // Consistency, which is the whole reason this was done. An axis printed
+    // beside a refused loop invites a reader to trust the number the loop
+    // declined to draw — it is measured in a frontal plane the same limb
+    // electrodes define.
+    const bad = await vcgOf("incart");
+    expect(bad.refusal?.code).toBe("LimbLeadGeometry");
+
+    const rec = load("incart");
+    const m = (await engine.analyseSignals("axis-bad", rec.leads, rec.fsHz)).measurements;
+    await engine.release(["axis-bad"]);
+
+    expect(m.axis).toBeNull();
+    expect(m.axisNote).toMatch(/not in standard 12-lead geometry/);
+  }, 30_000);
+
+  test("a standard record keeps its axis", async () => {
+    // The negative control, again first in spirit: withholding everything would
+    // satisfy the test above on its own.
+    const rec = load("control");
+    const m = (await engine.analyseSignals("axis-ok", rec.leads, rec.fsHz)).measurements;
+    await engine.release(["axis-ok"]);
+
+    expect(m.axis).not.toBeNull();
+    expect(m.axisNote).toBeNull();
+  }, 30_000);
+});

@@ -33,10 +33,11 @@ four relations per record as `rms(residual) / rms(the lead itself)`:
 
 | | worst-relation residual |
 | --- | --- |
-| INCART, all 25 | 13.3% – 234.3% |
-| `ptbxl:162` | 46.9% |
-| next highest, `chapman_shaoxing:JS00016` | 8.0% |
-| every other record | median 0.60%, p95 2.02%, p99 3.57% |
+| INCART, all 25 | 17.2% – 254.5% |
+| `ptbxl:162` | 31.5% |
+| `chapman_shaoxing:JS00016` | 11.4% |
+| next highest, `ningbo:JS10650` | 6.8% |
+| every other record | median 0.85%, p95 2.45%, p99 4.06% |
 
 INCART is a 30-minute Holter corpus. Its twelve channels are recorded
 independently from Holter electrode positions, so the standard names are labels
@@ -51,11 +52,11 @@ at 131%. It is an oddity in the source, not a property of the corpus.
 ## Decision
 
 `VcgRefusal::LimbLeadGeometry` refuses the loop when the worst relation exceeds
-`VCG_LIMB_IDENTITY_MAX = 0.10`, naming the lead and the relation it should
-satisfy. 26 records: the 25 INCART cases and `ptbxl:162`.
+`LIMB_IDENTITY_MAX = 0.10`, naming the lead and the relation it should satisfy.
+27 records: the 25 INCART cases, `ptbxl:162` and `chapman_shaoxing:JS00016`.
 
 **The threshold is a gap in the data, not a round number.** It sits in the empty
-band between 8.0% and 13.3%. That gap is real but it is *this* corpus's gap; the
+band between 6.8% and 11.4%. That gap is real but it is *this* corpus's gap; the
 survey tool is kept so recalibrating on new data is a re-run rather than a
 judgement.
 

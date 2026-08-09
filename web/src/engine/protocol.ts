@@ -50,9 +50,27 @@ export interface Measures {
   hr: number | null;
   qrs: number | null;
   qt: number | null;
+  /**
+   * Why there is no QT, when there is none.
+   *
+   * Non-null exactly when `qt` is null. The reasons are the engine's own
+   * `Unmeasurable` variants — a flat T, a shallow tangent, a T running past the
+   * search window — which existed and were named long before anything carried
+   * them out here.
+   */
+  qtNote: string | null;
   qtcF: number | null;
   qtcB: number | null;
   axis: number | null;
+  /**
+   * Why there is no frontal axis, when there is none.
+   *
+   * Set on exactly the condition the vector loop is refused on: the angle is
+   * measured in a frontal plane the limb electrodes define, and where they are
+   * not in standard geometry the number is not comparable with one from a
+   * standard recording.
+   */
+  axisNote: string | null;
   leads: LeadMeasure[];
 }
 
@@ -75,7 +93,6 @@ export interface StudySummary {
   onsetShiftMs: number;
   /** Seconds each 3x4 column covers, from the detected layout. */
   columnSeconds: number | null;
-  identityPassed: boolean | null;
   calibration: CalibrationSummary | null;
   warnings: string[];
   measurements: Measures;

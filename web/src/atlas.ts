@@ -361,9 +361,9 @@ function renderReport(summary: any): void {
     "measured by this tool, not by the cardiologist:",
     `  rate            ${n(summary.hrBpm, "bpm")}`,
     `  QRS duration    ${n(m.qrs, "ms")}`,
-    `  QT              ${n(m.qt, "ms")}`,
+    `  QT              ${m.qt == null && m.qtNote ? `not established — ${m.qtNote}` : n(m.qt, "ms")}`,
     `  QTc (Fridericia)${n(m.qtcF, "ms")}`,
-    `  frontal axis    ${n(m.axis, "°")}`,
+    `  frontal axis    ${m.axis == null && m.axisNote ? `not comparable — ${m.axisNote}` : n(m.axis, "°")}`,
     `  leads recovered ${summary.leadNames?.length ?? 0} of 12`,
   ];
 

@@ -1033,6 +1033,14 @@ body.dropzone--active { outline: 2px dashed var(--accent); outline-offset: -6px;
 .evidence__more > summary { color: var(--accent); }
 .evidence__standing { border-top: 1px solid var(--border); padding-top: 4px; }
 
+/* A number the engine could not establish, with its reason on hover.
+   Deliberately not styled as an error: a refusal is a correct outcome here, and
+   colouring it red would read as something having gone wrong. */
+.measure__absent {
+  color: var(--text-faint); font-style: italic;
+  text-decoration: underline dotted; text-underline-offset: 2px; cursor: help;
+}
+
 /* The measured column is the one the eye tracks down, so give it its own edge. */
 .evidence__measured { text-align: right; }
 .evidence__qualifier { margin-top: 2px; }

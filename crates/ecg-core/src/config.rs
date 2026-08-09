@@ -705,8 +705,8 @@ pub const VCG_RR_CV_MAX: f64 = 0.10;
 /// correlation, or a median rather than a minimum — not a lower threshold.
 pub const VCG_QRS_RHO_NOTE: f32 = 0.98;
 
-/// How far the limb leads may stray from Einthoven before a derived loop is
-/// refused, as a fraction of the lead's own RMS.
+/// How far the limb leads may stray from Einthoven before this is not treated
+/// as a standard 12-lead, as a fraction of the lead's own RMS.
 ///
 /// Three electrodes define one plane, so III, aVR, aVL and aVF are exact linear
 /// combinations of I and II — `III = II - I`, `aVR = -(I + II)/2`,
@@ -720,24 +720,50 @@ pub const VCG_QRS_RHO_NOTE: f32 = 0.98;
 ///
 /// # The threshold is a gap in the data, not a round number
 ///
-/// Worst of the four relations per record, measured over all 1,207 atlas records
-/// by `tools/survey-leads.ts`:
+/// Worst of the five relations per record, over all 1,207 atlas records:
 ///
 /// | | worst-relation residual |
 /// |---|---|
-/// | INCART, all 25 | 13.3% – 234.3% |
-/// | `ptbxl:162` | 46.9% |
-/// | next highest, `chapman_shaoxing:JS00016` | 8.0% |
-/// | every other record | median 0.60%, p95 2.02%, p99 3.57% |
+/// | INCART, all 25 | 17.2% – 254.5% |
+/// | `ptbxl:162` | 31.5%, on `aVR = -(I + II)/2` |
+/// | `chapman_shaoxing:JS00016` | 11.4%, on `aVR + aVL + aVF = 0` |
+/// | next highest, `ningbo:JS10650` | 6.8% |
+/// | every other record | median 0.85%, p95 2.45%, p99 4.06% |
 ///
-/// 0.10 sits in the empty band between 8.0% and 13.3%. INCART's twelve channels
+/// 0.10 sits in the empty band between 6.8% and 11.4%. INCART's twelve channels
 /// are recorded independently from Holter electrode positions, so the standard
 /// names are labels on channels not in the standard geometry; `ptbxl:162` is one
-/// record whose aVR is out by 46.9% while III, aVL and I reconcile at 0.1%.
+/// record whose aVR is out by 31.5% while III, aVL and I reconcile at 0.1%.
+///
+/// `chapman_shaoxing:JS00016` crossed when the Goldberger relation was added —
+/// it sat at 8.0% on `aVF = II - I/2` and reads 11.4% on the augmented sum. Two
+/// independent relations disagreeing about the same three leads is more reason
+/// to refuse it, not less, so the narrower gap is the honest one.
 ///
 /// The gap is real but it is *this* corpus's gap, and a future source could land
 /// inside it. Re-run the survey before trusting this number on new data.
-pub const VCG_LIMB_IDENTITY_MAX: f32 = 0.10;
+///
+/// # One threshold, for two questions that turned out to be one
+///
+/// This gates the vector loop (the transform maps *from* standard geometry) and
+/// the verdict gate's identity precondition (comparing V2 in one study against
+/// V3 in another reads as ST elevation that resolved one lead over). Those were
+/// argued as different questions deserving different bars — a coarse one for
+/// "is this standard geometry" and a tighter one for "are these the leads they
+/// are labelled as" — until the second was measured.
+///
+/// Spec §17 proposed `ID_LIMB_PASS = 0.03` and was never implemented. At 0.03
+/// this corpus refuses 48 records: the 25 INCART, `ptbxl:162`, and 22
+/// Chapman/Ningbo records sitting between 3.0% and 4.8% — the shoulder of the
+/// noise distribution, whose p99 is 3.57%. Refusing those would tell a reader
+/// "the panels may not be the leads they are labelled as" about ordinary
+/// quantisation, which is a strong claim to make wrongly 22 times.
+///
+/// A mislabelled lead *is* a geometry violation, and it is a large one:
+/// `ptbxl:162` is 31.5%, INCART 17.2% upward. There is one empty band in the
+/// data and both questions want a threshold inside it. So one constant, and the
+/// name no longer says VCG.
+pub const LIMB_IDENTITY_MAX: f32 = 0.10;
 
 /// Approximate direction of each lead's positive axis, in the same frame as the
 /// vectorcardiogram: X left-positive, Y inferior-positive, Z posterior-positive.

@@ -211,11 +211,7 @@ function renderStudies(): void {
         `${s.summary.leadNames.length} leads`,
         Number.isFinite(hr) ? `${hr.toFixed(0)} bpm` : "rate n/a",
       ];
-      if (s.summary.identityPassed === false) bits.push("identity check failed");
       status.textContent = bits.join(" · ");
-      if (s.summary.identityPassed === false) {
-        status.classList.add("study__status--warn");
-      }
     }
     body.appendChild(status);
 

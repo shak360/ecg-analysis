@@ -21,7 +21,7 @@ const lead = (name: string, p: Partial<LeadMeasure> = {}): LeadMeasure => ({
   sigmaSt: null, note: null, ...p,
 });
 const measures = (leads: LeadMeasure[], g: Partial<Measures> = {}): Measures => ({
-  hr: null, qrs: null, qt: null, qtcF: null, qtcB: null, axis: null, leads, ...g,
+  hr: null, qrs: null, qt: null, qtNote: null, qtcF: null, qtcB: null, axis: null, axisNote: null, leads, ...g,
 });
 
 const sokolow = CRITERIA.find((c) => c.title.includes("Sokolow-Lyon precordial"))!;

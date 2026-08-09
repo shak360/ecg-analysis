@@ -12,8 +12,10 @@
 use crate::config::{
     FS, MIN_BEATS_FOR_DELTA, ST_CAP_MS_BY_HR, ST_J60_WIN_MS, ST_J_WIN_MS, ST_SLOPE_PTS_MS,
     ST_TPEAK_GUARD_FRAC,
+    LIMB_IDENTITY_MAX,
 };
 use crate::fiducial::GlobalFiducials;
+use crate::vcg::LimbGeometry;
 
 /// Per-lead amplitudes, all in millivolts about the isoelectric line.
 #[derive(Debug, Clone, Default)]
@@ -67,6 +69,8 @@ pub struct StudyMeasurements {
     pub qtc_bazett_ms: Option<f64>,
     /// Frontal-plane QRS axis in degrees, from net areas in I and aVF.
     pub axis_deg: Option<f32>,
+    /// Why there is no frontal axis, when there is none.
+    pub axis_note: Option<&'static str>,
     /// Why QT is absent, when it is.
     pub qt_note: Option<&'static str>,
     pub leads: Vec<LeadMeasurements>,
@@ -252,6 +256,7 @@ pub fn measure_study(
     gain_relative_sigma: Option<f32>,
     n_used: &[u32],
     baselined: &[bool],
+    geometry: &LimbGeometry,
 ) -> StudyMeasurements {
     let mut s = StudyMeasurements {
         hr_bpm,
@@ -293,6 +298,26 @@ pub fn measure_study(
             s.qt_ms = None;
             s.qt_note = Some("QT exceeded the RR interval — T offset not established");
         }
+    }
+
+    // The far commoner blank, and the one that had no explanation at all.
+    //
+    // The backstop above fires on nothing: over 1,355 records the estimator now
+    // produces no QT longer than its own RR, at any rate. What it does produce
+    // is *no* QT for 155 of them — 11.4% — because a boundary could not be
+    // located, and every one of those reasons was already named in
+    // `Unmeasurable` and then discarded at the wasm boundary, which encodes a
+    // failed `t_offset` as `-1`.
+    //
+    // Taken in this order deliberately: the backstop's sentence is more specific
+    // than "the T wave has no measurable end", so where both could apply the
+    // more specific one is already set and must not be overwritten.
+    if s.qt_ms.is_none() && s.qt_note.is_none() {
+        s.qt_note = match (fid.qrs_onset, fid.t_offset) {
+            (_, Err(u)) => Some(u.reason()),
+            (Err(u), _) => Some(u.reason()),
+            _ => None,
+        };
     }
 
     // QTc. Fridericia is the default because Bazett over-corrects at tachycardia
@@ -341,6 +366,25 @@ pub fn measure_study(
         }
     }
 
+    // The axis is an angle in the frontal plane, and the frontal plane is defined
+    // by the limb electrodes. Where those are not in standard 12-lead geometry
+    // the angle is still computable and still means something about *that*
+    // recording — but not the same thing a textbook's -30 to +90 means, and not
+    // the same thing as an axis from any other record.
+    //
+    // Withheld on exactly the condition the vector loop is refused on, because
+    // it is exactly the same problem: an axis printed beside a refused loop
+    // invites a reader to trust the number the loop declined to draw.
+    if let LimbGeometry::Measured { residual, .. } = geometry {
+        if *residual > LIMB_IDENTITY_MAX {
+            s.axis_deg = None;
+            s.axis_note = Some(
+                "the limb leads are not in standard 12-lead geometry, so this angle is \
+                 not comparable with one measured from a standard recording",
+            );
+        }
+    }
+
     s
 }
 
@@ -367,13 +411,13 @@ mod tests {
     #[test]
     fn a_qt_longer_than_its_rr_is_refused() {
         // 150 bpm: RR is 400 ms, so a 420 ms QT is impossible.
-        let fast = measure_study(&[], &fid(88, 125, 300), Some(150.0), Some(0.02), &[], &[]);
+        let fast = measure_study(&[], &fid(88, 125, 300), Some(150.0), Some(0.02), &[], &[], &LimbGeometry::NotMeasurable);
         assert_eq!(fast.qt_ms, None, "an impossible QT must not be reported");
         assert!(fast.qt_note.is_some(), "and it must say why");
         assert_eq!(fast.qtc_fridericia_ms, None, "no QTc may be derived from it");
 
         // 60 bpm: RR is 1000 ms, and the same 420 ms QT is entirely ordinary.
-        let slow = measure_study(&[], &fid(88, 125, 300), Some(60.0), Some(0.02), &[], &[]);
+        let slow = measure_study(&[], &fid(88, 125, 300), Some(60.0), Some(0.02), &[], &[], &LimbGeometry::NotMeasurable);
         assert!(slow.qt_ms.is_some(), "a plausible QT must survive: {:?}", slow.qt_note);
         assert!(slow.qtc_fridericia_ms.is_some());
     }
@@ -459,7 +503,7 @@ mod tests {
     #[test]
     fn fridericia_and_bazett_diverge_with_rate_as_expected() {
         let mk = |hr: f64| {
-            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[], &[])
+            measure_study(&[], &fid(88, 125, 300), Some(hr), Some(0.02), &[], &[], &LimbGeometry::NotMeasurable)
         };
         let slow = mk(60.0);
         let fast = mk(100.0);
@@ -484,12 +528,12 @@ mod tests {
             ]
         };
         // Equal positive areas in I and aVF put the axis at +45 degrees.
-        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
+        let s = measure_study(&mk(1.0, 1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true], &LimbGeometry::NotMeasurable);
         let ax = s.axis_deg.expect("no axis");
         assert!((ax - 45.0).abs() < 5.0, "axis {ax} should be near +45");
 
         // Positive I, negative aVF is left axis deviation.
-        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true]);
+        let s2 = measure_study(&mk(1.0, -1.0), &fid(88, 112, 210), Some(60.0), Some(0.02), &[4, 4], &[true, true], &LimbGeometry::NotMeasurable);
         assert!(s2.axis_deg.unwrap() < -30.0, "expected left axis deviation");
     }
 

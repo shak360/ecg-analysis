@@ -62,6 +62,47 @@ pub enum Unmeasurable {
     RateUnknown,
 }
 
+impl Unmeasurable {
+    /// Why a reader is looking at a blank, in the register of `serial::gate`.
+    ///
+    /// These reasons already existed and were already named; what they never
+    /// had was a way out. `wasm_api` encoded `t_offset` as `-1` on failure and
+    /// dropped the variant, so 155 of 1,355 corpus records showed an empty QT
+    /// with nothing beside it — and a blank a reader cannot account for is the
+    /// one outcome this codebase's refusals exist to prevent. An absent number
+    /// is supposed to mean "not established", not "we are not saying".
+    ///
+    /// Each says what was missing and, where it is not obvious, what a reader
+    /// can do about it.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::TooFewLeads => {
+                "too few usable leads to locate the boundary across the vector"
+            }
+            Self::NoActivation => {
+                "no depolarisation rose above the noise floor in this recording"
+            }
+            Self::Implausible => {
+                "the boundary walked outside its physiological clamp, so it was refused \
+                 rather than reported at whatever it landed on"
+            }
+            Self::FlatT => "the T wave is too small to have a measurable end",
+            Self::ShallowTangent => {
+                "the T wave's descent was too shallow for its tangent to meet the \
+                 baseline at a definite point"
+            }
+            Self::TruncatedT => {
+                "the T wave ran past the end of the search window, so its end is \
+                 outside what this recording shows"
+            }
+            Self::RateUnknown => {
+                "no R-R interval was established, so the T search could not be bounded — \
+                 unbounded, it finds the next beat's R wave rather than this beat's T"
+            }
+        }
+    }
+}
+
 /// One study's fiducials, in samples relative to the frame start.
 #[derive(Debug, Clone, Copy)]
 pub struct GlobalFiducials {

@@ -19,6 +19,7 @@ use crate::beats::panels::{beat_support, project_strip_beats, verify_panel, Pane
 use crate::config::{
     KORS_LEADS, LEAD_AXES, MIN_BEATS_FOR_DELTA,
     CLINICAL_DELTA_ST_MV, FRAME_T0_S, FS, LEAD_ORDER, PANEL_WINDOW_S, ST_DISPLAY_QUANTUM_MV,
+    LIMB_IDENTITY_MAX,
 };
 use crate::dsp::detrend::{detrend, Detrended, ProvisionalSignal};
 use crate::dsp::median_filter::provisional_detrend;
@@ -605,10 +606,15 @@ impl StudyAnalysis {
                 )
             })
             .collect();
+        // `qtNote` follows `st_note` above: the reason travels beside the number
+        // it replaces, so an absent QT reads as "not established, and here is
+        // why" rather than as an empty cell.
         format!(
-            r#"{{"hr":{},"qrs":{},"qt":{},"qtcF":{},"qtcB":{},"axis":{},"leads":[{}]}}"#,
+            r#"{{"hr":{},"qrs":{},"qt":{},"qtNote":{},"qtcF":{},"qtcB":{},"axis":{},"axisNote":{},"leads":[{}]}}"#,
             optd(m.hr_bpm), optd(m.qrs_ms), optd(m.qt_ms),
+            m.qt_note.map(|n| format!(r#""{}""#, escape(n))).unwrap_or_else(|| "null".into()),
             optd(m.qtc_fridericia_ms), optd(m.qtc_bazett_ms), opt(m.axis_deg),
+            m.axis_note.map(|n| format!(r#""{}""#, escape(n))).unwrap_or_else(|| "null".into()),
             leads.join(","),
         )
     }
@@ -905,6 +911,7 @@ impl StudyAnalysis {
             self.gain.relative_sigma(),
             &self.n_used,
             &self.baselined,
+            &self.limb,
         )
     }
 
@@ -941,10 +948,24 @@ impl StudyAnalysis {
             // undetermined. Einthoven's law holds under an LA/RA reversal, so
             // the identity checks could not stand in for this even if they ran.
             swap: SwapEvidence::NotDetermined,
-            // The identity residuals live in TypeScript at a different
-            // normalisation (`layout.ts`'s EINTHOVEN_MAX 0.20 against §17's
-            // ID_LIMB_PASS 0.03), and reconciling the two is not a rename.
-            identity: IdentityEvidence::NotChecked,
+            // Measured, at last, and in one place. This was hole #4: the
+            // residuals lived in TypeScript at a different normalisation, so
+            // the gate had no number of its own and refused every pair on that
+            // ground alone.
+            //
+            // `self.limb` is that number — scored on the raw samples at
+            // `analyze()`, for every study, PDF or WFDB. `NotMeasurable` stays
+            // `NotChecked` because a record with none of III/aVR/aVL/aVF offers
+            // nothing to check, which is not the same as checking and passing.
+            identity: match self.limb {
+                LimbGeometry::Measured { residual, .. } if residual <= LIMB_IDENTITY_MAX => {
+                    IdentityEvidence::Passed
+                }
+                LimbGeometry::Measured { residual, .. } => {
+                    IdentityEvidence::Failed { limb_residual: residual }
+                }
+                LimbGeometry::NotMeasurable => IdentityEvidence::NotChecked,
+            },
             hr_bpm: if self.hr_bpm.is_finite() { Some(self.hr_bpm) } else { None },
             leads: m
                 .leads
@@ -1443,9 +1464,28 @@ mod tests {
             .collect();
         let t: Vec<f64> = (0..n).map(|k| k as f64 / FS).collect();
 
+        // The four derived limb leads are built from I and II rather than given
+        // the same trace as everything else.
+        //
+        // Twelve copies of one signal is not a 12-lead: III would have to be
+        // II - I, which is zero, and aVR minus their half-sum. The identity
+        // check scored the old fixture at 200% and reported `IdentityFailed`,
+        // which was correct about the fixture and useless as a test of the gate.
+        // Degenerate but consistent — I and II recorded identically — is enough
+        // to exercise the path honestly.
+        let zero = vec![0.0f32; n];
+        let neg: Vec<f32> = sig.iter().map(|v| -v).collect();
+        let half: Vec<f32> = sig.iter().map(|v| v * 0.5).collect();
+
         let mut b = StudyBuilder::new();
         for name in LEAD_ORDER {
-            b.add_lead(name, &t, &sig, 0.0);
+            let v = match name {
+                "III" => &zero,
+                "aVR" => &neg,
+                "aVL" | "aVF" => &half,
+                _ => &sig,
+            };
+            b.add_lead(name, &t, v, 0.0);
         }
         b.set_rhythm(&t, &sig);
         b.analyze(true)
@@ -1524,8 +1564,11 @@ mod tests {
         assert_eq!(e.filter, FilterEvidence::Unreadable);
         // 3. No permutation search for the cable arrangement (spec §17).
         assert_eq!(e.swap, SwapEvidence::NotDetermined);
-        // 4. The identity residuals live in TypeScript at another normalisation.
-        assert_eq!(e.identity, IdentityEvidence::NotChecked);
+        // 4. CLOSED. The identity residual is measured in Rust on the raw
+        //    samples and reported here. The fixture below carries no derived
+        //    limb leads, so it is `NotChecked` for the honest reason — nothing
+        //    to compare — rather than for the old one; `identity_evidence_is_
+        //    measured_now` covers a record that has them.
         // 5. The resample validity mask is dropped before the ensemble, so
         //    ST-window coverage is unmeasured in every lead.
         assert!(
@@ -1581,9 +1624,17 @@ mod tests {
         }
         // The comparison never had `set_gain` called on it, so the pair is
         // blocked on a gain nobody recorded as well as on the standing holes.
-        for code in ["GainNotRecorded", "CoverageUnmeasured", "IdentityUnchecked"] {
+        for code in ["GainNotRecorded", "CoverageUnmeasured", "LeadReversalUndetermined"] {
             assert!(json.contains(code), "missing blocker {code} in {json}");
         }
+
+        // Identity is no longer among them — hole #4 is closed and this fixture
+        // satisfies Einthoven. The verdict is still refused, on the three
+        // grounds above, and pinning that is the point: closing one hole did not
+        // open the gate, and the next reader should not have to discover that by
+        // wondering why nothing changed.
+        assert!(!json.contains("IdentityUnchecked"), "identity is measured now: {json}");
+        assert!(!json.contains("IdentityFailed"), "and this fixture passes it: {json}");
         // And the sentences are prose for a reader, not variant names.
         assert!(json.contains("can be confirmed or excluded"), "{json}");
     }

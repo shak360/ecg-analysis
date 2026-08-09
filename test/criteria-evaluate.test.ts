@@ -20,7 +20,7 @@ const lead = (name: string, p: Partial<LeadMeasure> = {}): LeadMeasure => ({
 });
 
 const measures = (leads: LeadMeasure[], g: Partial<Measures> = {}): Measures => ({
-  hr: null, qrs: null, qt: null, qtcF: null, qtcB: null, axis: null, leads, ...g,
+  hr: null, qrs: null, qt: null, qtNote: null, qtcF: null, qtcB: null, axis: null, axisNote: null, leads, ...g,
 });
 
 const EMPTY = measures([]);

@@ -19,7 +19,7 @@
 //! `docs/decisions/0004-constants-live-in-rust.md` already places on this side
 //! of the boundary.
 
-use crate::config::{KORS_LEADS, KORS_X, KORS_Y, KORS_Z, VCG_LIMB_IDENTITY_MAX, VCG_RR_CV_MAX};
+use crate::config::{KORS_LEADS, KORS_X, KORS_Y, KORS_Z, LIMB_IDENTITY_MAX, VCG_RR_CV_MAX};
 
 /// The three orthogonal leads, on the same frame as the ensemble beats they
 /// came from: X left-positive, Y inferior-positive, Z posterior-positive.
@@ -267,6 +267,43 @@ pub fn limb_geometry(signals: &[(String, Vec<f32>)], offsets_s: &[f64]) -> LimbG
             worst = Some((name.to_string(), printed.to_string(), rel));
         }
     }
+    // Goldberger, scored separately because it needs no reference to I or II.
+    //
+    // `aVR + aVL + aVF = 0` follows algebraically from the four relations above,
+    // so where all four are checkable it adds nothing. It earns its place on a
+    // 3x4 printout: there I, II and III are column one and the augmented leads
+    // are column two, so the four relations above can only reach III and an
+    // augmented-lead mislabelling would go unseen. These three share a column
+    // with each other, which is all this relation needs.
+    let aug: Option<Vec<usize>> = ["aVR", "aVL", "aVF"]
+        .iter()
+        .map(|n| at(n))
+        .collect::<Option<Vec<_>>>()
+        .filter(|ix| {
+            let o = offsets_s.get(ix[0]).copied().unwrap_or(0.0);
+            ix.iter().all(|&k| (offsets_s.get(k).copied().unwrap_or(0.0) - o).abs() <= 1e-9)
+        });
+    if let Some(ix) = aug {
+        let (r, l, f) = (&signals[ix[0]].1, &signals[ix[1]].1, &signals[ix[2]].1);
+        let n = r.len().min(l.len()).min(f.len());
+        if n > 0 && r.len() == l.len() && l.len() == f.len() {
+            let mut se = 0.0f64;
+            let mut sg = 0.0f64;
+            for t in 0..n {
+                let d = f64::from(r[t] + l[t] + f[t]);
+                se += d * d;
+                sg += f64::from(f[t]) * f64::from(f[t]);
+            }
+            let scale = (sg / n as f64).sqrt();
+            if scale >= 0.02 {
+                let rel = ((se / n as f64).sqrt() / scale) as f32;
+                if worst.as_ref().is_none_or(|(_, _, w)| rel > *w) {
+                    worst = Some(("aVR".to_string(), "-(aVL + aVF)".to_string(), rel));
+                }
+            }
+        }
+    }
+
     match worst {
         Some((lead, relation, residual)) => LimbGeometry::Measured { relation, lead, residual },
         None => LimbGeometry::NotMeasurable,
@@ -318,7 +355,7 @@ pub fn kors(
     // elsewhere. Running this first would tell a reader their printout is not a
     // standard 12-lead, which is both wrong and unactionable.
     if let LimbGeometry::Measured { relation, lead, residual } = geometry {
-        if *residual > VCG_LIMB_IDENTITY_MAX {
+        if *residual > LIMB_IDENTITY_MAX {
             return Err(VcgRefusal::LimbLeadGeometry {
                 relation: relation.clone(),
                 lead: lead.clone(),
@@ -435,7 +472,7 @@ pub fn kors_raw(
     // elsewhere. Running this first would tell a reader their printout is not a
     // standard 12-lead, which is both wrong and unactionable.
     if let LimbGeometry::Measured { relation, lead, residual } = geometry {
-        if *residual > VCG_LIMB_IDENTITY_MAX {
+        if *residual > LIMB_IDENTITY_MAX {
             return Err(VcgRefusal::LimbLeadGeometry {
                 relation: relation.clone(),
                 lead: lead.clone(),
@@ -545,16 +582,19 @@ mod tests {
         //
         // Scaling by 1.5 leaves a residual of 0.5/1.5 of the *scaled* lead's own
         // RMS, since the score is relative to the lead being checked.
+        // III rather than aVR: `aVR + aVL + aVF = 0` is scored too, and on a
+        // scaled aVR that relation is also broken and by more, so the "worst"
+        // would name Goldberger. Both answers are right; III leaves only one.
         let mut leads = twelve_lead();
-        let k = leads.iter().position(|(n, _)| n == "aVR").unwrap();
+        let k = leads.iter().position(|(n, _)| n == "III").unwrap();
         for v in leads[k].1.iter_mut() {
             *v *= 1.5;
         }
 
         match derive12(&leads) {
             Err(VcgRefusal::LimbLeadGeometry { relation, lead, residual }) => {
-                assert_eq!(lead, "aVR");
-                assert_eq!(relation, "-(I + II)/2");
+                assert_eq!(lead, "III");
+                assert_eq!(relation, "II - I");
                 assert!(
                     (residual - 1.0 / 3.0).abs() < 0.01,
                     "residual {residual} should be about 0.333"
@@ -565,9 +605,36 @@ mod tests {
     }
 
     #[test]
+    fn a_broken_augmented_lead_is_caught_without_reference_to_i_or_ii() {
+        // The relation that earns its place on a printout. There I, II and III
+        // are column one and the augmented leads are column two, so nothing
+        // referencing I or II can reach aVR — but the three augmented leads
+        // share a column with each other, and their sum is still zero.
+        let mut leads = twelve_lead();
+        let k = leads.iter().position(|(n, _)| n == "aVL").unwrap();
+        for v in leads[k].1.iter_mut() {
+            *v *= 2.0;
+        }
+        let n = leads.len();
+        // Every lead except the augmented three sits at a different offset, so
+        // only Goldberger can fire.
+        let mut offsets = vec![2.5; n];
+        for name in ["aVR", "aVL", "aVF"] {
+            offsets[leads.iter().position(|(x, _)| x == name).unwrap()] = 0.0;
+        }
+        match limb_geometry(&leads, &offsets) {
+            LimbGeometry::Measured { relation, residual, .. } => {
+                assert_eq!(relation, "-(aVL + aVF)");
+                assert!(residual > LIMB_IDENTITY_MAX, "residual {residual}");
+            }
+            other => panic!("expected a measured residual, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn a_small_departure_stays_within_the_threshold() {
         // The other side of the boundary. 2% is above the corpus median of 0.6%
-        // and well inside `VCG_LIMB_IDENTITY_MAX`, so real rounding noise in a
+        // and well inside `LIMB_IDENTITY_MAX`, so real rounding noise in a
         // cart's derived leads must not refuse.
         let mut leads = twelve_lead();
         let k = leads.iter().position(|(n, _)| n == "aVF").unwrap();

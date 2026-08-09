@@ -340,8 +340,8 @@ async function reveal(): Promise<void> {
       "measured by this tool, not by the cardiologist:",
       `  rate          ${n(s.hrBpm, "bpm")}`,
       `  QRS duration  ${n(m.qrs, "ms")}`,
-      `  QT            ${n(m.qt, "ms")}`,
-      `  frontal axis  ${n(m.axis, "°")}`,
+      `  QT            ${m.qt == null && m.qtNote ? `not established — ${m.qtNote}` : n(m.qt, "ms")}`,
+      `  frontal axis  ${m.axis == null && m.axisNote ? `not comparable — ${m.axisNote}` : n(m.axis, "°")}`,
     ].join("\n");
     el.appendChild(pre);
     await engine.release([`quiz-${current.id}`]);

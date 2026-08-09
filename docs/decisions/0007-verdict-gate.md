@@ -617,7 +617,6 @@ which constructs, today and only today:
 | `gain` | from `set_gain`, else `NotRecorded` | TS knows `cal.source`; this plumbs it |
 | `filter` | `FilterEvidence::Unreadable` | header text is not parsed |
 | `swap` | `SwapEvidence::NotDetermined` | no permutation search (§17) |
-| `identity` | `IdentityEvidence::NotChecked` | residuals live in TS at a different normalisation |
 | `hr_bpm` | `Some` when finite | already available |
 | `leads[].n_beats` | `self.n_used[i]` | already available, never plumbed |
 | `leads[].coverage_st` | `CoverageEvidence::NotMeasured` | the resample validity mask is dropped at `wasm_api.rs:132` |
@@ -795,6 +794,21 @@ has no network for binaryen and fails here.
   `StudyAnalysis::evidence`, update
   `the_boundary_declares_every_hole_it_still_has`, and delete the row from the
   table in §6 above.
+
+
+**`identity` closed, 2026-08-09.** The residual is measured in Rust now, on the
+samples as they arrive, by `vcg::limb_geometry` — the same measurement that
+refuses a vector loop whose limb leads are not in standard 12-lead geometry.
+`evidence()` reports `Passed` / `Failed { limb_residual }` / `NotChecked`, the
+last only when a record carries none of III/aVR/aVL/aVF and there is nothing to
+compare. The TypeScript `checkIdentities` is deleted; one computation answers
+the question. Threshold and calibration: `config::LIMB_IDENTITY_MAX`, and
+decision 0008.
+
+Closing it did **not** open the gate. Three blockers remain unconditional —
+`LeadReversalUndetermined`, `GainNotRecorded` and `CoverageUnmeasured` — and
+`the_payload_names_the_evidence_the_gate_is_missing` now asserts that, so the
+next reader does not have to rediscover why nothing changed.
 
 ## Out of scope
 

@@ -484,10 +484,17 @@ export function measurementsHtml(view: MeasurementsView): string {
   const globalRows: [string, (m: Measures) => string, string?][] = [
     ["Heart rate", (m) => num(m.hr, 0, "bpm")],
     ["QRS duration", (m) => num(m.qrs, 0, "ms")],
-    ["QT", (m) => num(m.qt, 0, "ms")],
+    // The reason travels with the blank. An empty cell reads as "we did not
+    // say"; the engine always knows which boundary it could not find, and 155
+    // of 1,355 corpus records land here.
+    ["QT", (m) => m.qt == null && m.qtNote
+      ? `<span class="measure__absent" title="${esc(m.qtNote)}">not established</span>`
+      : num(m.qt, 0, "ms")],
     ["QTc (Fridericia)", (m) => num(m.qtcF, 0, "ms"), "fridericia-1920"],
     ["QTc (Bazett)", (m) => num(m.qtcB, 0, "ms")],
-    ["Frontal axis", (m) => num(m.axis, 0, "°")],
+    ["Frontal axis", (m) => m.axis == null && m.axisNote
+      ? `<span class="measure__absent" title="${esc(m.axisNote)}">not comparable</span>`
+      : num(m.axis, 0, "°")],
   ];
   const globals = globalRows.map(([name, fn, ref]) =>
     `<tr><th scope="row">${name}${ref ? ` ${citeHtml(ref, "source")}` : ""}</th>${

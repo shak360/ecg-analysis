@@ -47,9 +47,11 @@ const measures = (leads: LeadMeasure[]): Measures => ({
   hr: 68,
   qrs: 92,
   qt: 380,
+  qtNote: null,
   qtcF: 400,
   qtcB: 410,
   axis: 30,
+  axisNote: null,
   leads,
 });
 
