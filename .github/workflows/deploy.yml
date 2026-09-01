@@ -136,7 +136,7 @@ jobs:
           SITE_BASE: ${{ steps.pages.outputs.base_path }}/
         run: npm run build:site
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
