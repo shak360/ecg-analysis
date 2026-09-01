@@ -81,7 +81,7 @@ jobs:
       # for, and re-fetching 374 MB is cheap next to publishing the wrong data.
       - name: Restore the corpus
         id: corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data
           key: corpus-${{ hashFiles('tools/fetch-ptbxl.ts', 'tools/fetch-challenge2021.ts', '.github/workflows/deploy.yml') }}
